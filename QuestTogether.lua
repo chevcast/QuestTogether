@@ -54,7 +54,7 @@ end;
 
 local watchQuest = function(questId)
   local questLogIndex = GetQuestLogIndexByID(questId);
-  local questTitle = GetQuestLogTitle(questId);
+  local questTitle = GetQuestLogTitle(questLogIndex);
   local numObjectives = GetNumQuestLeaderBoards(questLogIndex);
   QuestTogether.questTracker[questId] = {
     title = questTitle,
@@ -108,13 +108,13 @@ local EventHandlers = {
     table.insert(onQuestLogUpdate, function ()
       if (QuestTogether.questTracker[questId]) then
         local questTitle = QuestTogether.questTracker[questId].title;
-        QuestTogether.questTracker[questId] = nil;
         if (questsTurnedIn[questId]) then
           reportInfo("Completed: "..questTitle);
           questsTurnedIn[questId] = nil;
         else
           reportInfo("Removed: "..questTitle);
         end
+        QuestTogether.questTracker[questId] = nil;
       end
     end);
   end,
