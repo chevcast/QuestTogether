@@ -1,0 +1,13 @@
+## Interface: 70300
+## Title: QuestTogether
+## Version: 0.0.1
+## Notes: Helpful tools for keeping quests in sync between party members.
+## SavedVariablesPerCharacter: QuestTogether
+## Author: Chev
+## RequiredDeps:
+## OptionalDeps:
+## X-Website: http://www.chevtek.com
+## X-License: MIT License
+
+Libs\Libs.xml
+QuestTogether.lua
