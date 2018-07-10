@@ -10,6 +10,7 @@ QuestTogether = {
 local questTogetherFrame = CreateFrame("FRAME", "QuestTogetherFrame");
 local characterName = string.lower(UnitName("player"));
 local faction = string.lower(UnitFactionGroup("player"));
+
 questTogetherFrame:RegisterEvent("QUEST_ACCEPTED");
 questTogetherFrame:RegisterEvent("QUEST_ACCEPT_CONFIRM");
 questTogetherFrame:RegisterEvent("QUEST_AUTOCOMPLETE");
@@ -74,18 +75,17 @@ local EventHandlers = {
 
   -- Upon entering world scan quest log for quests to track.
   PLAYER_ENTERING_WORLD = function ()
-    table.insert(onQuestLogUpdate, function()
-      local numQuestLogEntries = GetNumQuestLogEntries();
-      for questLogIndex=1, numQuestLogEntries do
-        local questTitle, level, suggestedGroup, isHeader, isCollapsed, isComplete, frequencey, questId = GetQuestLogTitle(questLogIndex);
-        if (isHeader == false) then
-          if (QuestTogether.questTracker[questId] == nil) then
-            reportInfo("Tracking: "..questTitle);
-            watchQuest(questId);
-          end
-        end
+    QuestTogether.questTracker = {};
+    local numQuestLogEntries = GetNumQuestLogEntries();
+    local questsTracked = 0;
+    for questLogIndex=1, numQuestLogEntries do
+      local questTitle, level, suggestedGroup, isHeader, isCollapsed, isComplete, frequencey, questId = GetQuestLogTitle(questLogIndex);
+      if (isHeader == false) then
+        watchQuest(questId);
+        questsTracked = questsTracked + 1;
       end
-    end);
+    end
+    print(questsTracked.." quests are being monitored by QuestTogether.");
   end,
 
   -- Track newly accepted quests.
