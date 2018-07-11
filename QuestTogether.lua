@@ -65,7 +65,7 @@ local watchQuest = function(questId)
     local objectiveText, type = GetQuestObjectiveInfo(questId, objectiveIndex, false);
     if (type == "progressbar") then
       local progress = GetQuestProgressBarPercent(questId);
-      objectiveText = progress.."% "..ObjectiveText;
+      objectiveText = progress.."% "..objectiveText;
     end
     QuestTogether.questTracker[questId].objectives[objectiveIndex] = objectiveText;
   end
