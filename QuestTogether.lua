@@ -15,9 +15,7 @@ questTogetherFrame:RegisterEvent("QUEST_ACCEPTED");
 questTogetherFrame:RegisterEvent("QUEST_ACCEPT_CONFIRM");
 questTogetherFrame:RegisterEvent("QUEST_AUTOCOMPLETE");
 questTogetherFrame:RegisterEvent("QUEST_COMPLETE");
-questTogetherFrame:RegisterEvent("QUEST_NOT_COMPLETED");
 questTogetherFrame:RegisterEvent("QUEST_POI_UPDATE");
-questTogetherFrame:RegisterEvent("QUEST_QUERY_COMPLETE");
 questTogetherFrame:RegisterEvent("QUEST_DETAIL");
 questTogetherFrame:RegisterEvent("QUEST_FINISHED");
 questTogetherFrame:RegisterEvent("QUEST_GREETING");
@@ -28,7 +26,6 @@ questTogetherFrame:RegisterEvent("QUEST_REMOVED");
 questTogetherFrame:RegisterEvent("QUEST_TURNED_IN");
 questTogetherFrame:RegisterEvent("QUEST_WATCH_UPDATE");
 questTogetherFrame:RegisterEvent("QUEST_WATCH_LIST_CHANGED");
-questTogetherFrame:RegisterEvent("QUEST_WATCH_OBJECTIVES_CHANGED");
 questTogetherFrame:RegisterEvent("QUEST_LOG_CRITERIA_UPDATE");
 questTogetherFrame:RegisterEvent("UNIT_QUEST_LOG_CHANGED");
 questTogetherFrame:RegisterEvent("PARTY_MEMBER_ENABLE");
@@ -91,10 +88,12 @@ local EventHandlers = {
   -- Track newly accepted quests.
   QUEST_ACCEPTED = function (questLogIndex, questId)
     table.insert(onQuestLogUpdate, function ()
-      local questLogIndex = GetQuestLogIndexByID(questId);
-      local questTitle = GetQuestLogTitle(questLogIndex);
-      reportInfo("Picked Up: "..questTitle);
-      watchQuest(questId);
+      if (QuestTogether.questTracker[questId] == nil) then
+        local questLogIndex = GetQuestLogIndexByID(questId);
+        local questTitle = GetQuestLogTitle(questLogIndex);
+        reportInfo("Picked Up: "..questTitle);
+        watchQuest(questId);
+      end
     end);
   end,
 
@@ -106,16 +105,18 @@ local EventHandlers = {
   -- Unwatch quest and report completed or removed.
   QUEST_REMOVED = function (questId)
     table.insert(onQuestLogUpdate, function ()
-      if (QuestTogether.questTracker[questId]) then
-        local questTitle = QuestTogether.questTracker[questId].title;
-        if (questsTurnedIn[questId]) then
-          reportInfo("Completed: "..questTitle);
-          questsTurnedIn[questId] = nil;
-        else
-          reportInfo("Removed: "..questTitle);
+      C_Timer.After(0.5, function()
+        if (QuestTogether.questTracker[questId]) then
+          local questTitle = QuestTogether.questTracker[questId].title;
+          if (questsTurnedIn[questId]) then
+            reportInfo("Completed: "..questTitle);
+            questsTurnedIn[questId] = nil;
+          else
+            reportInfo("Removed: "..questTitle);
+          end
+          QuestTogether.questTracker[questId] = nil;
         end
-        QuestTogether.questTracker[questId] = nil;
-      end
+      end);
     end);
   end,
 

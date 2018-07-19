@@ -1,6 +1,6 @@
-## Interface: 70300
+## Interface: 80000
 ## Title: QuestTogether
-## Version: 1.0.4
+## Version: 1.0.5
 ## Notes: Helpful tools for keeping quests in sync between party members.
 ## SavedVariablesPerCharacter: QuestTogether
 ## Author: Chev
