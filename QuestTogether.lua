@@ -1,15 +1,18 @@
 QuestTogether = {
   questTracker = {},
   DEBUG = {
-    events = false,
     messages = false,
-    questLogUpdate = false
-  }
+    questLogUpdate = false,
+    events = false
+  },
+  showDebugInfo = false
 };
 
 local questTogetherFrame = CreateFrame("FRAME", "QuestTogetherFrame");
 local characterName = string.lower(UnitName("player"));
 local faction = string.lower(UnitFactionGroup("player"));
+
+C_ChatInfo.RegisterAddonMessagePrefix("QuestTogether");
 
 questTogetherFrame:RegisterEvent("QUEST_ACCEPTED");
 questTogetherFrame:RegisterEvent("QUEST_ACCEPT_CONFIRM");
@@ -38,15 +41,23 @@ questTogetherFrame:RegisterEvent("SUPER_TRACKED_QUEST_CHANGED");
 questTogetherFrame:RegisterEvent("QUESTLINE_UPDATE");
 questTogetherFrame:RegisterEvent("SUPER_TRACKED_QUEST_CHANGED");
 questTogetherFrame:RegisterEvent("PLAYER_ENTERING_WORLD");
+questTogetherFrame:RegisterEvent("CHAT_MSG_ADDON");
 
 local onQuestLogUpdate = {};
 local questsTurnedIn = {};
+
+local sendDebugInfo = function(msg)
+    C_ChatInfo.SendAddonMessage("QuestTogether", msg, "PARTY");
+end;
 
 local reportInfo = function(msg)
   if (UnitInParty("player")) then
     SendChatMessage(msg, "PARTY");
   elseif (QuestTogether.DEBUG.messages) then
     SendChatMessage(msg, "SAY");
+  end
+  if (QuestTogether.DEBUG.messages) then
+    sendDebugInfo("[messages]: "..msg);
   end
 end;
 
@@ -69,6 +80,13 @@ local watchQuest = function(questId)
 end;
 
 local EventHandlers = {
+
+  CHAT_MSG_ADDON = function (prefix, message, type, sender)
+    if (prefix == "QuestTogether" and QuestTogether.showDebugInfo) then
+      sender = string.match(sender, "^([a-zA-Z]+)-");
+      print("<"..sender..">:"..message);
+    end
+  end,
 
   -- Upon entering world scan quest log for quests to track.
   PLAYER_ENTERING_WORLD = function ()
@@ -150,18 +168,19 @@ local EventHandlers = {
   QUEST_LOG_UPDATE = function()
     local hasUpdates = false;
     if (QuestTogether.DEBUG.questLogUpdate and #onQuestLogUpdate > 0) then
-      print(#onQuestLogUpdate.." scheduled tasks detected.");
+      sendDebugInfo("[questLogUpdate]: "..#onQuestLogUpdate.." scheduled tasks detected.");
       hasUpdates = true;
     end
-    while #onQuestLogUpdate > 0 do
-      onQuestLogUpdate[1]();
-      table.remove(onQuestLogUpdate, 1);
+    local numTasks = #onQuestLogUpdate;
+    for index = 1, numTasks, 1 do
+      onQuestLogUpdate[index]();
+      table.remove(onQuestLogUpdate, index);
     end
     if (QuestTogether.DEBUG.questLogUpdate and hasUpdates) then
       if (#onQuestLogUpdate == 0) then
-        print("All tasks completed.");
+        sendDebugInfo("[questLogUpdate]: All tasks completed.");
       else
-        print("Somehow tasks are not zero...");
+        sendDebugInfo("[questLogUpdate]: Somehow tasks are not zero...");
       end
       hasUpdates = false;
     end
@@ -174,9 +193,10 @@ local function eventHandler(self, event, ...)
     EventHandlers[event](...);
   end
   if (QuestTogether.DEBUG.events and (event ~= "QUEST_LOG_UPDATE" or QuestTogether.DEBUG.questLogUpdate)) then
-    print("-------------------------------");
-    print("Event fired: " .. event);
-    DevTools_Dump({ n = select("#", ...); ... });
+    sendDebugInfo("[events]: -------------------------------");
+    sendDebugInfo("[events]: Event fired: " .. event);
+		-- UIParentLoadAddOn("Blizzard_DebugTools");
+    -- DevTools_Dump({ n = select("#", ...); ... });
   end
 end
 questTogetherFrame:SetScript("OnEvent", eventHandler);
