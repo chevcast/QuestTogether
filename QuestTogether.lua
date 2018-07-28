@@ -47,14 +47,16 @@ local onQuestLogUpdate = {};
 local questsTurnedIn = {};
 
 local debugCmd = function(cmd, msg)
-    C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "PARTY");
+  if (UnitInParty("player")) then
+    C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "RAID");
+  else
+    C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "GUILD");
+  end
 end;
 
 local reportInfo = function(msg)
   if (UnitInParty("player")) then
     SendChatMessage(msg, "PARTY");
-  elseif (QuestTogether.DEBUG.messages) then
-    SendChatMessage(msg, "SAY");
   end
   if (QuestTogether.DEBUG.messages) then
     debugCmd("info", "reportInfo: "..msg);
@@ -84,12 +86,12 @@ local EventHandlers = {
   CHAT_MSG_ADDON = function (prefix, message, type, sender)
     if (prefix == "QuestTogether") then
       local cmd, data = string.match(message, "^%[(.+)%]:(.+)$");
-      if (string.match(cmd, "^debug%-") and data == characterName) then
+      if (string.match(cmd, "^debug%-") and (data == characterName or data == "everyone")) then
         local option, value = string.match(cmd, "^debug%-([a-zA-Z]+)%-([a-zA-Z]+)$");
         QuestTogether.DEBUG[option] = value == "true" and true or false;
       elseif (cmd == "info" and QuestTogether.showDebugInfo) then
         sender = string.match(sender, "^([a-zA-Z]+)%-");
-        print("<"..sender..">:"..message);
+        print("<"..sender..">:"..data);
       end
     end
   end,
@@ -107,6 +109,9 @@ local EventHandlers = {
       end
     end
     print(questsTracked.." quests are being monitored by QuestTogether.");
+    if (QuestTogether.DEBUG.messages) then
+      debugCmd("info", questsTracked.." quests are being monitored by QuestTogether.");
+    end
   end,
 
   -- Track newly accepted quests.
@@ -173,11 +178,11 @@ local EventHandlers = {
   -- Run all scheduled tasks after QUEST_LOG_UPDATE.
   QUEST_LOG_UPDATE = function()
     local hasUpdates = false;
-    if (QuestTogether.DEBUG.questLogUpdate and #onQuestLogUpdate > 0) then
+    local numTasks = #onQuestLogUpdate;
+    if (QuestTogether.DEBUG.questLogUpdate and numTasks > 0) then
       debugCmd("info", "questLogUpdate: "..#onQuestLogUpdate.." scheduled tasks detected.");
       hasUpdates = true;
     end
-    local numTasks = #onQuestLogUpdate;
     if (numTasks ~= nil) then
       for index = 1, numTasks, 1 do
         onQuestLogUpdate[index]();
@@ -185,11 +190,7 @@ local EventHandlers = {
       onQuestLogUpdate = {};
     end
     if (QuestTogether.DEBUG.questLogUpdate and hasUpdates) then
-      if (#onQuestLogUpdate == 0) then
-        debugCmd("info", "questLogUpdate: All tasks completed.");
-      else
-        debugCmd("info", "questLogUpdate: Somehow tasks are not zero...");
-      end
+      debugCmd("info", "questLogUpdate: All tasks completed.");
       hasUpdates = false;
     end
   end
