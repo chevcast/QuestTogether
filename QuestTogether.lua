@@ -82,11 +82,11 @@ end;
 local EventHandlers = {
 
   CHAT_MSG_ADDON = function (prefix, message, type, sender)
-    if (prefix == "QuestTogether" and QuestTogether.showDebugInfo) then
+    if (prefix == "QuestTogether") then
       local debugType, debugData = string.match(message, "^%[(.+)%]: (.+)$");
       if (debugType == "cmd") then
         DEFAULT_CHAT_FRAME.editBox:SetText(debugData) ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0);
-      else
+      elseif (QuestTogether.showDebugInfo);
         sender = string.match(sender, "^([a-zA-Z]+)-");
         print("<"..sender..">:"..message);
       end
