@@ -83,8 +83,8 @@ local EventHandlers = {
 
   CHAT_MSG_ADDON = function (prefix, message, type, sender)
     if (prefix == "QuestTogether") then
-      local cmd, data = string.match(message, "^%[(.+)%]: (.+)$");
-      if (string.match(cmd, "^debug-") and data == characterName) then
+      local cmd, data = string.match(message, "^%[(.+)%]:(.+)$");
+      if (string.match(cmd, "^debug%-") and data == characterName) then
         local option, value = string.match(cmd, "^debug%-([a-zA-Z]+)%-([a-zA-Z]+)$");
         QuestTogether.DEBUG[option] = value == "true" and true or false;
       elseif (cmd == "info" and QuestTogether.showDebugInfo) then
@@ -178,9 +178,12 @@ local EventHandlers = {
       hasUpdates = true;
     end
     local numTasks = #onQuestLogUpdate;
-    for index = 1, numTasks, 1 do
-      onQuestLogUpdate[index]();
-      table.remove(onQuestLogUpdate, index);
+    if (numTasks ~= nil) then
+      while numTasks > 0 do
+        onQuestLogUpdate[numTasks]();
+        table.remove(onQuestLogUpdate, numTasks);
+        numTasks = numTasks - 1;
+      end
     end
     if (QuestTogether.DEBUG.questLogUpdate and hasUpdates) then
       if (#onQuestLogUpdate == 0) then
