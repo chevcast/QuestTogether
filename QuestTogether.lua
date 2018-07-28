@@ -83,8 +83,13 @@ local EventHandlers = {
 
   CHAT_MSG_ADDON = function (prefix, message, type, sender)
     if (prefix == "QuestTogether" and QuestTogether.showDebugInfo) then
-      sender = string.match(sender, "^([a-zA-Z]+)-");
-      print("<"..sender..">:"..message);
+      local debugType, debugData = string.match(message, "^%[(.+)%]: (.+)$");
+      if (debugType == "cmd") then
+        DEFAULT_CHAT_FRAME.editBox:SetText(debugData) ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0);
+      else
+        sender = string.match(sender, "^([a-zA-Z]+)-");
+        print("<"..sender..">:"..message);
+      end
     end
   end,
 
@@ -192,9 +197,9 @@ local function eventHandler(self, event, ...)
   if (EventHandlers[event] ~= nil) then
     EventHandlers[event](...);
   end
-  if (QuestTogether.DEBUG.events and (event ~= "QUEST_LOG_UPDATE" or QuestTogether.DEBUG.questLogUpdate)) then
+  if (QuestTogether.DEBUG.events and event ~= "CHAT_MSG_ADDON" and (event ~= "QUEST_LOG_UPDATE" or QuestTogether.DEBUG.questLogUpdate)) then
     sendDebugInfo("[events]: -------------------------------");
-    sendDebugInfo("[events]: Event fired: " .. event);
+    sendDebugInfo("[events]: "..event);
 		-- UIParentLoadAddOn("Blizzard_DebugTools");
     -- DevTools_Dump({ n = select("#", ...); ... });
   end
