@@ -179,11 +179,10 @@ local EventHandlers = {
     end
     local numTasks = #onQuestLogUpdate;
     if (numTasks ~= nil) then
-      while numTasks > 0 do
-        onQuestLogUpdate[numTasks]();
-        table.remove(onQuestLogUpdate, numTasks);
-        numTasks = numTasks - 1;
+      for index = 1, numTasks, 1 do
+        onQuestLogUpdate[index]();
       end
+      onQuestLogUpdate = {};
     end
     if (QuestTogether.DEBUG.questLogUpdate and hasUpdates) then
       if (#onQuestLogUpdate == 0) then
