@@ -46,8 +46,8 @@ questTogetherFrame:RegisterEvent("CHAT_MSG_ADDON");
 local onQuestLogUpdate = {};
 local questsTurnedIn = {};
 
-local sendDebugInfo = function(msg)
-    C_ChatInfo.SendAddonMessage("QuestTogether", msg, "PARTY");
+local debugCmd = function(cmd, msg)
+    C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "PARTY");
 end;
 
 local reportInfo = function(msg)
@@ -57,7 +57,7 @@ local reportInfo = function(msg)
     SendChatMessage(msg, "SAY");
   end
   if (QuestTogether.DEBUG.messages) then
-    sendDebugInfo("[messages]: "..msg);
+    debugCmd("info", "reportInfo: "..msg);
   end
 end;
 
@@ -85,12 +85,11 @@ local EventHandlers = {
     if (prefix == "QuestTogether") then
       local cmd, data = string.match(message, "^%[(.+)%]: (.+)$");
       if (string.match(cmd, "^debug-") and data == characterName) then
-        local option, value = string.match("^debug-(.+)-(.+)$");
-        QuestTogether.DEBUG[option] = if value == "true" then true else false end;
-      elseif (cmd == "info" and QuestTogether.showDebugInfo);
-          sender = string.match(sender, "^([a-zA-Z]+)-");
-          print("<"..sender..">:"..message);
-        end
+        local option, value = string.match(cmd, "^debug%-([a-z]+)%-([a-z]+)$");
+        QuestTogether.DEBUG[option] = value == "true" and true or false;
+      elseif (cmd == "info" and QuestTogether.showDebugInfo) then
+        sender = string.match(sender, "^([a-zA-Z]+)%-");
+        print("<"..sender..">:"..message);
       end
     end
   end,
@@ -175,7 +174,7 @@ local EventHandlers = {
   QUEST_LOG_UPDATE = function()
     local hasUpdates = false;
     if (QuestTogether.DEBUG.questLogUpdate and #onQuestLogUpdate > 0) then
-      sendDebugInfo("[questLogUpdate]: "..#onQuestLogUpdate.." scheduled tasks detected.");
+      debugCmd("info", "questLogUpdate: "..#onQuestLogUpdate.." scheduled tasks detected.");
       hasUpdates = true;
     end
     local numTasks = #onQuestLogUpdate;
@@ -185,9 +184,9 @@ local EventHandlers = {
     end
     if (QuestTogether.DEBUG.questLogUpdate and hasUpdates) then
       if (#onQuestLogUpdate == 0) then
-        sendDebugInfo("[questLogUpdate]: All tasks completed.");
+        debugCmd("info", "questLogUpdate: All tasks completed.");
       else
-        sendDebugInfo("[questLogUpdate]: Somehow tasks are not zero...");
+        debugCmd("info", "questLogUpdate: Somehow tasks are not zero...");
       end
       hasUpdates = false;
     end
@@ -200,8 +199,7 @@ local function eventHandler(self, event, ...)
     EventHandlers[event](...);
   end
   if (QuestTogether.DEBUG.events and event ~= "CHAT_MSG_ADDON" and (event ~= "QUEST_LOG_UPDATE" or QuestTogether.DEBUG.questLogUpdate)) then
-    sendDebugInfo("[events]: -------------------------------");
-    sendDebugInfo("[events]: "..event);
+    debugCmd("info", "event fired: "..event);
 		-- UIParentLoadAddOn("Blizzard_DebugTools");
     -- DevTools_Dump({ n = select("#", ...); ... });
   end
