@@ -85,7 +85,7 @@ local EventHandlers = {
     if (prefix == "QuestTogether") then
       local cmd, data = string.match(message, "^%[(.+)%]: (.+)$");
       if (string.match(cmd, "^debug-") and data == characterName) then
-        local option, value = string.match(cmd, "^debug%-([a-z]+)%-([a-z]+)$");
+        local option, value = string.match(cmd, "^debug%-([a-zA-Z]+)%-([a-zA-Z]+)$");
         QuestTogether.DEBUG[option] = value == "true" and true or false;
       elseif (cmd == "info" and QuestTogether.showDebugInfo) then
         sender = string.match(sender, "^([a-zA-Z]+)%-");
