@@ -3,9 +3,9 @@ QuestTogether = {
   DEBUG = {
     messages = false,
     questLogUpdate = false,
-    events = false
+    events = false,
+    showDebugInfo = false
   },
-  showDebugInfo = false
 };
 
 local questTogetherFrame = CreateFrame("FRAME", "QuestTogetherFrame");
@@ -48,7 +48,7 @@ local questsTurnedIn = {};
 
 local debugCmd = function(cmd, msg)
   if (UnitInParty("player")) then
-    C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "RAID");
+    C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "PARTY");
   else
     C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "GUILD");
   end
@@ -81,15 +81,38 @@ local watchQuest = function(questId)
   end
 end;
 
+SLASH_QT1 = "/qt";
+SlashCmdList["QT"] = function(msg)
+  local qtCmd, subCmd, arg = string.match(msg, "^([a-zA-Z]+) ([^ ]+) (.+)$");
+  local qtCmds = {
+    debug = function(subCmd, arg)
+      debugCmd(subCmd, arg);
+    end
+  };
+  if (qtCmds[qtCmd] ~= nil) then
+    qtCmds[qtCmd](subCmd, arg);
+  end
+end
+
 local EventHandlers = {
 
   CHAT_MSG_ADDON = function (prefix, message, type, sender)
     if (prefix == "QuestTogether") then
       local cmd, data = string.match(message, "^%[(.+)%]:(.+)$");
-      if (string.match(cmd, "^debug%-") and (data == characterName or data == "everyone")) then
-        local option, value = string.match(cmd, "^debug%-([a-zA-Z]+)%-([a-zA-Z]+)$");
-        QuestTogether.DEBUG[option] = value == "true" and true or false;
-      elseif (cmd == "info" and QuestTogether.showDebugInfo) then
+      if (cmd == "set-debug-option") then
+        local targetCharacter, option, value = string.match(data, "^([a-zA-Z]+);([a-zA-Z]+);([a-zA-Z]+)$");
+        if (string.lower(targetCharacter) == characterName or targetCharacter == "all") then
+          QuestTogether.DEBUG[option] = value == "true" and true or false;
+        end
+      elseif (cmd == "get-debug-options") then
+        if (string.lower(data) == characterName) then
+          debugCmd("info", "\nevents="..tostring(QuestTogether.DEBUG.events).."\nmessages="..tostring(QuestTogether.DEBUG.messages).."\nquestLogUpdate="..tostring(QuestTogether.DEBUG.questLogUpdate).."\nshowDebugInfo="..tostring(QuestTogether.DEBUG.showDebugInfo));
+        end
+      elseif (cmd == "ping") then
+        if (string.lower(data) == characterName or string.lower(data) == "all") then
+          debugCmd("info", "pong!");
+        end
+      elseif (cmd == "info" and QuestTogether.DEBUG.showDebugInfo) then
         sender = string.match(sender, "^([a-zA-Z]+)%-");
         print("<"..sender..">:"..data);
       end
