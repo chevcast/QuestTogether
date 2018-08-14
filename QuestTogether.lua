@@ -8,6 +8,15 @@ QuestTogether = {
   },
 };
 
+if not QuestTogether.DEBUG then
+  QuestTogether.DEBUG = {
+    messages = false,
+    questLogupdate = false,
+    events = false,
+    showDebugInfo = false
+  };
+end
+
 local questTogetherFrame = CreateFrame("FRAME", "QuestTogetherFrame");
 local characterName = string.lower(UnitName("player"));
 local faction = string.lower(UnitFactionGroup("player"));
