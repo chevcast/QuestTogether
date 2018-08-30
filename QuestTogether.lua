@@ -90,6 +90,23 @@ local watchQuest = function(questId)
   end
 end;
 
+local scanQuestLog = function()
+  QuestTogether.questTracker = {};
+  local numQuestLogEntries = GetNumQuestLogEntries();
+  local questsTracked = 0;
+  for questLogIndex=1, numQuestLogEntries do
+    local questTitle, level, suggestedGroup, isHeader, isCollapsed, isComplete, frequencey, questId = GetQuestLogTitle(questLogIndex);
+    if (isHeader == false) then
+      watchQuest(questId);
+      questsTracked = questsTracked + 1;
+    end
+  end
+  print(questsTracked.." quests are being monitored by QuestTogether.");
+  if (QuestTogether.DEBUG.messages) then
+    debugCmd("info", questsTracked.." quests are being monitored by QuestTogether.");
+  end
+end;
+
 SLASH_QT1 = "/qt";
 SlashCmdList["QT"] = function(msg)
   local qtCmd, subCmd, arg = string.match(msg, "^([a-zA-Z]+) ([^ ]+) (.+)$");
@@ -130,20 +147,9 @@ local EventHandlers = {
 
   -- Upon entering world scan quest log for quests to track.
   PLAYER_ENTERING_WORLD = function ()
-    QuestTogether.questTracker = {};
-    local numQuestLogEntries = GetNumQuestLogEntries();
-    local questsTracked = 0;
-    for questLogIndex=1, numQuestLogEntries do
-      local questTitle, level, suggestedGroup, isHeader, isCollapsed, isComplete, frequencey, questId = GetQuestLogTitle(questLogIndex);
-      if (isHeader == false) then
-        watchQuest(questId);
-        questsTracked = questsTracked + 1;
-      end
-    end
-    print(questsTracked.." quests are being monitored by QuestTogether.");
-    if (QuestTogether.DEBUG.messages) then
-      debugCmd("info", questsTracked.." quests are being monitored by QuestTogether.");
-    end
+    C_Timer.After(10, function ()
+      scanQuestLog();
+    end);
   end,
 
   -- Track newly accepted quests.
