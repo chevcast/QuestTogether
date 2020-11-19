@@ -46,9 +46,8 @@ questTogetherFrame:RegisterEvent("GROUP_ROSTER_UPDATE");
 questTogetherFrame:RegisterEvent("AJ_QUEST_LOG_OPEN");
 questTogetherFrame:RegisterEvent("QUEST_TURNED_IN");
 questTogetherFrame:RegisterEvent("ADVENTURE_MAP_QUEST_UPDATE");
-questTogetherFrame:RegisterEvent("SUPER_TRACKED_QUEST_CHANGED");
+questTogetherFrame:RegisterEvent("SUPER_TRACKING_CHANGED");
 questTogetherFrame:RegisterEvent("QUESTLINE_UPDATE");
-questTogetherFrame:RegisterEvent("SUPER_TRACKED_QUEST_CHANGED");
 questTogetherFrame:RegisterEvent("PLAYER_ENTERING_WORLD");
 questTogetherFrame:RegisterEvent("CHAT_MSG_ADDON");
 
@@ -73,8 +72,9 @@ local reportInfo = function(msg)
 end;
 
 local watchQuest = function(questId)
-  local questLogIndex = GetQuestLogIndexByID(questId);
-  local questTitle = GetQuestLogTitle(questLogIndex);
+  local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId);
+  local info = C_QuestLog.GetInfo(questLogIndex);
+  local questTitle = info.title;
   local numObjectives = GetNumQuestLeaderBoards(questLogIndex);
   QuestTogether.questTracker[questId] = {
     title = questTitle,
@@ -92,10 +92,12 @@ end;
 
 local scanQuestLog = function()
   QuestTogether.questTracker = {};
-  local numQuestLogEntries = GetNumQuestLogEntries();
+  local numQuestLogEntries = C_QuestLog.GetNumQuestLogEntries();
   local questsTracked = 0;
   for questLogIndex=1, numQuestLogEntries do
-    local questTitle, level, suggestedGroup, isHeader, isCollapsed, isComplete, frequencey, questId = GetQuestLogTitle(questLogIndex);
+    local info = C_QuestLog.GetInfo(questLogIndex);
+    local isHeader = info.isHeader;
+    local questId = info.questID;
     if (isHeader == false) then
       watchQuest(questId);
       questsTracked = questsTracked + 1;
@@ -153,11 +155,12 @@ local EventHandlers = {
   end,
 
   -- Track newly accepted quests.
-  QUEST_ACCEPTED = function (questLogIndex, questId)
+  QUEST_ACCEPTED = function (questId)
     table.insert(onQuestLogUpdate, function ()
       if (QuestTogether.questTracker[questId] == nil) then
-        local questLogIndex = GetQuestLogIndexByID(questId);
-        local questTitle = GetQuestLogTitle(questLogIndex);
+        local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId);       
+        local info = C_QuestLog.GetInfo(questLogIndex);
+        local questTitle = info.title;
         reportInfo("Picked Up: "..questTitle);
         watchQuest(questId);
       end
@@ -192,7 +195,7 @@ local EventHandlers = {
     if (unit == "player") then
       table.insert(onQuestLogUpdate, function()
         for questId, quest in pairs(QuestTogether.questTracker) do
-          local questLogIndex = GetQuestLogIndexByID(questId);
+          local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId);
           local numObjectives = GetNumQuestLeaderBoards(questLogIndex);
           for objectiveIndex=1, numObjectives do
             local objectiveText, type, complete, currentValue, maxValue = GetQuestObjectiveInfo(questId, objectiveIndex, false);
