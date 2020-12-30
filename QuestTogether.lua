@@ -236,8 +236,6 @@ local EventHandlers = {
 
 local function eventHandler(self, event, ...)
   if (EventHandlers[event] ~= nil) then
-    print(event);
-    print(...);
     EventHandlers[event](...);
   end
   if (QuestTogether.DEBUG.events and event ~= "CHAT_MSG_ADDON" and (event ~= "QUEST_LOG_UPDATE" or QuestTogether.DEBUG.questLogUpdate)) then
