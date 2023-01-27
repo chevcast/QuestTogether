@@ -58,7 +58,7 @@ local debugCmd = function(cmd, msg)
   if (UnitInParty("player")) then
     C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "PARTY");
   else
-    C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "GUILD");
+    C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "SAY");
   end
 end;
 
