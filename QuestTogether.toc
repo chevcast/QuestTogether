@@ -1,12 +1,12 @@
-## Interface: 90002
+## Interface: 100005
 ## Title: QuestTogether
-## Version: 2.1.17
+## Version: 2.2.0
 ## Notes: Helpful tools for keeping quests in sync between party members.
 ## SavedVariablesPerCharacter: QuestTogether
 ## Author: Chev
 ## RequiredDeps:
 ## OptionalDeps:
-## X-Website: http://www.chevtek.com
+## X-Website: https://www.chevtek.io
 ## X-License: MIT License
 
 Libs\Libs.xml
