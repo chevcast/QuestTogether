@@ -1,26 +1,41 @@
 QuestTogether = {
-  questTracker = {},
-  DEBUG = {
-    messages = false,
-    questLogUpdate = false,
-    events = false,
-    showDebugInfo = false
-  },
+	questTracker = {},
+	DEBUG = {
+		messages = false,
+		questLogUpdate = false,
+		events = false,
+		showDebugInfo = false,
+	},
 }
 
 if not QuestTogether.DEBUG then
-  QuestTogether.DEBUG = {
-    messages = false,
-    questLogupdate = false,
-    events = false,
-    showDebugInfo = false
-  }
+	QuestTogether.DEBUG = {
+		messages = false,
+		questLogupdate = false,
+		events = false,
+		showDebugInfo = false,
+	}
 end
 
 local questTogetherFrame = CreateFrame("FRAME", "QuestTogetherFrame")
 local characterName = string.lower(UnitName("player"))
 local faction = string.lower(UnitFactionGroup("player"))
-local chevCharacters = {"Ronon","Torres","Gowron","Stamets","Adami","Janewei","Riker","Lenova","Carter","Geordi","Bratac","Yar","Suder","Damar"}
+local chevCharacters = {
+	"Ronon",
+	"Torres",
+	"Gowron",
+	"Stamets",
+	"Adami",
+	"Janewei",
+	"Riker",
+	"Lenova",
+	"Carter",
+	"Geordi",
+	"Bratac",
+	"Yar",
+	"Suder",
+	"Damar",
+}
 
 C_ChatInfo.RegisterAddonMessagePrefix("QuestTogether")
 
@@ -56,195 +71,210 @@ local onQuestLogUpdate = {}
 local questsTurnedIn = {}
 
 local debugCmd = function(cmd, msg)
-  if (UnitInParty("player")) then
-    C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "PARTY")
-  else
-    for index, name in ipairs(chevCharacters) do
-      C_ChatInfo.SendAddonMessage("QuestTogether", "["..cmd.."]:"..msg, "WHISPER", name)
-    end
-  end
+	if UnitInParty("player") then
+		C_ChatInfo.SendAddonMessage("QuestTogether", "[" .. cmd .. "]:" .. msg, "PARTY")
+	else
+		for index, name in ipairs(chevCharacters) do
+			C_ChatInfo.SendAddonMessage("QuestTogether", "[" .. cmd .. "]:" .. msg, "WHISPER", name)
+		end
+	end
 end
 
 local reportInfo = function(msg)
-  if (UnitInParty("player")) then
-    SendChatMessage(msg, "PARTY")
-  end
-  if (QuestTogether.DEBUG.messages) then
-    debugCmd("info", msg)
-  end
+	if UnitInParty("player") then
+		SendChatMessage(msg, "PARTY")
+	end
+	if QuestTogether.DEBUG.messages then
+		debugCmd("info", msg)
+	end
 end
 
 local watchQuest = function(questId)
-  local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
-  local info = C_QuestLog.GetInfo(questLogIndex)
-  local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
-  QuestTogether.questTracker[questId] = {
-    title = info.title,
-    objectives = {}
-  }
-  for objectiveIndex=1, numObjectives do
-    local objectiveText, type = GetQuestObjectiveInfo(questId, objectiveIndex, false)
-    if (type == "progressbar") then
-      local progress = GetQuestProgressBarPercent(questId)
-      objectiveText = progress.."% "..objectiveText
-    end
-    QuestTogether.questTracker[questId].objectives[objectiveIndex] = objectiveText
-  end
+	local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
+	local info = C_QuestLog.GetInfo(questLogIndex)
+	local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
+	QuestTogether.questTracker[questId] = {
+		title = info.title,
+		objectives = {},
+	}
+	for objectiveIndex = 1, numObjectives do
+		local objectiveText, type = GetQuestObjectiveInfo(questId, objectiveIndex, false)
+		if type == "progressbar" then
+			local progress = GetQuestProgressBarPercent(questId)
+			objectiveText = progress .. "% " .. objectiveText
+		end
+		QuestTogether.questTracker[questId].objectives[objectiveIndex] = objectiveText
+	end
 end
 
 local scanQuestLog = function()
-  QuestTogether.questTracker = {}
-  local numQuestLogEntries = C_QuestLog.GetNumQuestLogEntries()
-  local questsTracked = 0
-  for questLogIndex=1, numQuestLogEntries do
-    local info = C_QuestLog.GetInfo(questLogIndex)
-    if (info.isHeader == false) then
-      watchQuest(info.questID)
-      questsTracked = questsTracked + 1
-    end
-  end
-  print(questsTracked.." quests are being monitored by QuestTogether.")
-  if (QuestTogether.DEBUG.messages) then
-    debugCmd("info", questsTracked.." quests are being monitored by QuestTogether.")
-  end
+	QuestTogether.questTracker = {}
+	local numQuestLogEntries = C_QuestLog.GetNumQuestLogEntries()
+	local questsTracked = 0
+	for questLogIndex = 1, numQuestLogEntries do
+		local info = C_QuestLog.GetInfo(questLogIndex)
+		if info.isHeader == false then
+			watchQuest(info.questID)
+			questsTracked = questsTracked + 1
+		end
+	end
+	print(questsTracked .. " quests are being monitored by QuestTogether.")
+	if QuestTogether.DEBUG.messages then
+		debugCmd("info", questsTracked .. " quests are being monitored by QuestTogether.")
+	end
 end
 
 SLASH_QT1 = "/qt"
 SlashCmdList["QT"] = function(msg)
-  local qtCmd, subCmd, arg = string.match(msg, "^([a-zA-Z]+) ([^ ]+) (.+)$")
-  local qtCmds = {
-    debug = function(subCmd, arg)
-      debugCmd(subCmd, arg)
-    end
-  }
-  if (qtCmds[qtCmd] ~= nil) then
-    qtCmds[qtCmd](subCmd, arg)
-  end
+	local qtCmd, subCmd, arg = string.match(msg, "^([a-zA-Z]+) ([^ ]+) (.+)$")
+	local qtCmds = {
+		debug = function(subCmd, arg)
+			debugCmd(subCmd, arg)
+		end,
+	}
+	if qtCmds[qtCmd] ~= nil then
+		qtCmds[qtCmd](subCmd, arg)
+	end
 end
 
 local EventHandlers = {
 
-  CHAT_MSG_ADDON = function (prefix, message, channel, sender)
-    if (prefix == "QuestTogether") then
-      local cmd, data = string.match(message, "^%[(.+)%]:(.+)$")
-      if (cmd == "set-debug-option") then
-        local targetCharacter, option, value = string.match(data, "^([a-zA-Z]+);([a-zA-Z]+);([a-zA-Z]+)$")
-        if (string.lower(targetCharacter) == characterName or targetCharacter == "all") then
-          QuestTogether.DEBUG[option] = value == "true" and true or false
-        end
-      elseif (cmd == "get-debug-options") then
-        if (string.lower(data) == characterName) then
-          debugCmd("info", "\nevents="..tostring(QuestTogether.DEBUG.events).."\nmessages="..tostring(QuestTogether.DEBUG.messages).."\nquestLogUpdate="..tostring(QuestTogether.DEBUG.questLogUpdate).."\nshowDebugInfo="..tostring(QuestTogether.DEBUG.showDebugInfo))
-        end
-      elseif (cmd == "ping") then
-        if (string.lower(data) == characterName or string.lower(data) == "all") then
-          debugCmd("info", "pong!")
-        end
-      elseif (cmd == "info" and QuestTogether.DEBUG.showDebugInfo) then
-        sender = string.match(sender, "^([a-zA-Z]+)%-")
-        print("<"..sender.."> "..data)
-      end
-    end
-  end,
+	CHAT_MSG_ADDON = function(prefix, message, channel, sender)
+		if prefix == "QuestTogether" then
+			local cmd, data = string.match(message, "^%[(.+)%]:(.+)$")
+			if cmd == "set-debug-option" then
+				local targetCharacter, option, value = string.match(data, "^([a-zA-Z]+);([a-zA-Z]+);([a-zA-Z]+)$")
+				if string.lower(targetCharacter) == characterName or targetCharacter == "all" then
+					QuestTogether.DEBUG[option] = value == "true" and true or false
+				end
+			elseif cmd == "get-debug-options" then
+				if string.lower(data) == characterName then
+					debugCmd(
+						"info",
+						"\nevents="
+							.. tostring(QuestTogether.DEBUG.events)
+							.. "\nmessages="
+							.. tostring(QuestTogether.DEBUG.messages)
+							.. "\nquestLogUpdate="
+							.. tostring(QuestTogether.DEBUG.questLogUpdate)
+							.. "\nshowDebugInfo="
+							.. tostring(QuestTogether.DEBUG.showDebugInfo)
+					)
+				end
+			elseif cmd == "ping" then
+				if string.lower(data) == characterName or string.lower(data) == "all" then
+					debugCmd("info", "pong!")
+				end
+			elseif cmd == "info" and QuestTogether.DEBUG.showDebugInfo then
+				sender = string.match(sender, "^([a-zA-Z]+)%-")
+				print("<" .. sender .. "> " .. data)
+			end
+		end
+	end,
 
-  -- Upon entering world scan quest log for quests to track.
-  PLAYER_ENTERING_WORLD = function ()
-    C_Timer.After(10, function ()
-      scanQuestLog()
-    end)
-  end,
+	-- Upon entering world scan quest log for quests to track.
+	PLAYER_ENTERING_WORLD = function()
+		C_Timer.After(10, function()
+			scanQuestLog()
+		end)
+	end,
 
-  -- Track newly accepted quests.
-  QUEST_ACCEPTED = function (questId)
-    table.insert(onQuestLogUpdate, function ()
-      if (QuestTogether.questTracker[questId] == nil) then
-        local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
-        local info = C_QuestLog.GetInfo(questLogIndex)
-        reportInfo("Picked Up: "..info.title)
-        watchQuest(questId)
-      end
-    end)
-  end,
+	-- Track newly accepted quests.
+	QUEST_ACCEPTED = function(questId)
+		table.insert(onQuestLogUpdate, function()
+			if QuestTogether.questTracker[questId] == nil then
+				local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
+				local info = C_QuestLog.GetInfo(questLogIndex)
+				reportInfo("Picked Up: " .. info.title)
+				watchQuest(questId)
+			end
+		end)
+	end,
 
-  -- Track if quest was turned in rather than abandoned.
-  QUEST_TURNED_IN = function (questId)
-    questsTurnedIn[questId] = true
-  end,
+	-- Track if quest was turned in rather than abandoned.
+	QUEST_TURNED_IN = function(questId)
+		questsTurnedIn[questId] = true
+	end,
 
-  -- Unwatch quest and report completed or removed.
-  QUEST_REMOVED = function (questId)
-    table.insert(onQuestLogUpdate, function ()
-      C_Timer.After(0.5, function()
-        if (QuestTogether.questTracker[questId]) then
-          local questTitle = QuestTogether.questTracker[questId].title
-          if (questsTurnedIn[questId]) then
-            reportInfo("Completed: "..questTitle)
-            questsTurnedIn[questId] = nil
-          else
-            reportInfo("Removed: "..questTitle)
-          end
-          QuestTogether.questTracker[questId] = nil
-        end
-      end)
-    end)
-  end,
+	-- Unwatch quest and report completed or removed.
+	QUEST_REMOVED = function(questId)
+		table.insert(onQuestLogUpdate, function()
+			C_Timer.After(0.5, function()
+				if QuestTogether.questTracker[questId] then
+					local questTitle = QuestTogether.questTracker[questId].title
+					if questsTurnedIn[questId] then
+						reportInfo("Completed: " .. questTitle)
+						questsTurnedIn[questId] = nil
+					else
+						reportInfo("Removed: " .. questTitle)
+					end
+					QuestTogether.questTracker[questId] = nil
+				end
+			end)
+		end)
+	end,
 
-  -- Look for objective updates to tracked quests.
-  UNIT_QUEST_LOG_CHANGED = function (unit)
-    if (unit == "player") then
-      table.insert(onQuestLogUpdate, function()
-        for questId, quest in pairs(QuestTogether.questTracker) do
-          local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
-          local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
-          for objectiveIndex=1, numObjectives do
-            local objectiveText, type, complete, currentValue, maxValue = GetQuestObjectiveInfo(questId, objectiveIndex, false)
-            if (type=="progressbar") then
-              local progress = GetQuestProgressBarPercent(questId)
-              objectiveText = progress.."% "..objectiveText
-              currentValue = progress
-            end
-            if (QuestTogether.questTracker[questId].objectives[objectiveIndex] ~= objectiveText) then
-              if (currentValue > 0) then
-                reportInfo(objectiveText)
-              end
-              QuestTogether.questTracker[questId].objectives[objectiveIndex] = objectiveText
-            end
-          end
-        end
-      end)
-    end
-  end,
+	-- Look for objective updates to tracked quests.
+	UNIT_QUEST_LOG_CHANGED = function(unit)
+		if unit == "player" then
+			table.insert(onQuestLogUpdate, function()
+				for questId, quest in pairs(QuestTogether.questTracker) do
+					local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
+					local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
+					for objectiveIndex = 1, numObjectives do
+						local objectiveText, type, complete, currentValue, maxValue =
+							GetQuestObjectiveInfo(questId, objectiveIndex, false)
+						if type == "progressbar" then
+							local progress = GetQuestProgressBarPercent(questId)
+							objectiveText = progress .. "% " .. objectiveText
+							currentValue = progress
+						end
+						if QuestTogether.questTracker[questId].objectives[objectiveIndex] ~= objectiveText then
+							if currentValue > 0 then
+								reportInfo(objectiveText)
+							end
+							QuestTogether.questTracker[questId].objectives[objectiveIndex] = objectiveText
+						end
+					end
+				end
+			end)
+		end
+	end,
 
-  -- Run all scheduled tasks after QUEST_LOG_UPDATE.
-  QUEST_LOG_UPDATE = function()
-    local hasUpdates = false
-    local numTasks = #onQuestLogUpdate
-    if (QuestTogether.DEBUG.questLogUpdate and numTasks > 0) then
-      debugCmd("info", "questLogUpdate: "..#onQuestLogUpdate.." scheduled tasks detected.")
-      hasUpdates = true
-    end
-    if (numTasks ~= nil) then
-      for index = 1, numTasks, 1 do
-        onQuestLogUpdate[index]()
-      end
-      onQuestLogUpdate = {}
-    end
-    if (QuestTogether.DEBUG.questLogUpdate and hasUpdates) then
-      debugCmd("info", "questLogUpdate: All tasks completed.")
-      hasUpdates = false
-    end
-  end
-
+	-- Run all scheduled tasks after QUEST_LOG_UPDATE.
+	QUEST_LOG_UPDATE = function()
+		local hasUpdates = false
+		local numTasks = #onQuestLogUpdate
+		if QuestTogether.DEBUG.questLogUpdate and numTasks > 0 then
+			debugCmd("info", "questLogUpdate: " .. #onQuestLogUpdate .. " scheduled tasks detected.")
+			hasUpdates = true
+		end
+		if numTasks ~= nil then
+			for index = 1, numTasks, 1 do
+				onQuestLogUpdate[index]()
+			end
+			onQuestLogUpdate = {}
+		end
+		if QuestTogether.DEBUG.questLogUpdate and hasUpdates then
+			debugCmd("info", "questLogUpdate: All tasks completed.")
+			hasUpdates = false
+		end
+	end,
 }
 
 local function eventHandler(self, event, ...)
-  if (EventHandlers[event] ~= nil) then
-    EventHandlers[event](...)
-  end
-  if (QuestTogether.DEBUG.events and event ~= "CHAT_MSG_ADDON" and (event ~= "QUEST_LOG_UPDATE" or QuestTogether.DEBUG.questLogUpdate)) then
-    debugCmd("info", "event fired: "..event)
+	if EventHandlers[event] ~= nil then
+		EventHandlers[event](...)
+	end
+	if
+		QuestTogether.DEBUG.events
+		and event ~= "CHAT_MSG_ADDON"
+		and (event ~= "QUEST_LOG_UPDATE" or QuestTogether.DEBUG.questLogUpdate)
+	then
+		debugCmd("info", "event fired: " .. event)
 		-- UIParentLoadAddOn("Blizzard_DebugTools")
-    -- DevTools_Dump({ n = select("#", ...); ... })
-  end
+		-- DevTools_Dump({ n = select("#", ...); ... })
+	end
 end
 questTogetherFrame:SetScript("OnEvent", eventHandler)
+
