@@ -1,4 +1,4 @@
-QuestTogether = {
+QuestTogetherDB = {
 	questTracker = {},
 	DEBUG = {
 		messages = false,
@@ -8,8 +8,8 @@ QuestTogether = {
 	},
 }
 
-if not QuestTogether.DEBUG then
-	QuestTogether.DEBUG = {
+if not QuestTogetherDB.DEBUG then
+	QuestTogetherDB.DEBUG = {
 		messages = false,
 		questLogupdate = false,
 		events = false,
@@ -20,22 +20,6 @@ end
 local questTogetherFrame = CreateFrame("FRAME", "QuestTogetherFrame")
 local characterName = string.lower(UnitName("player"))
 local faction = string.lower(UnitFactionGroup("player"))
-local chevCharacters = {
-	"Ronon",
-	"Torres",
-	"Gowron",
-	"Stamets",
-	"Adami",
-	"Janewei",
-	"Riker",
-	"Lenova",
-	"Carter",
-	"Geordi",
-	"Bratac",
-	"Yar",
-	"Suder",
-	"Damar",
-}
 
 C_ChatInfo.RegisterAddonMessagePrefix("QuestTogether")
 
@@ -74,9 +58,7 @@ local debugCmd = function(cmd, msg)
 	if UnitInParty("player") then
 		C_ChatInfo.SendAddonMessage("QuestTogether", "[" .. cmd .. "]:" .. msg, "PARTY")
 	else
-		for index, name in ipairs(chevCharacters) do
-			C_ChatInfo.SendAddonMessage("QuestTogether", "[" .. cmd .. "]:" .. msg, "WHISPER", name)
-		end
+		C_ChatInfo.SendAddonMessage("QuestTogether", "[" .. cmd .. "]:" .. msg, "YELL", name)
 	end
 end
 
@@ -84,7 +66,7 @@ local reportInfo = function(msg)
 	if UnitInParty("player") then
 		SendChatMessage(msg, "PARTY")
 	end
-	if QuestTogether.DEBUG.messages then
+	if QuestTogetherDB.DEBUG.messages then
 		debugCmd("info", msg)
 	end
 end
@@ -93,7 +75,7 @@ local watchQuest = function(questId)
 	local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 	local info = C_QuestLog.GetInfo(questLogIndex)
 	local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
-	QuestTogether.questTracker[questId] = {
+	QuestTogetherDB.questTracker[questId] = {
 		title = info.title,
 		objectives = {},
 	}
@@ -103,12 +85,12 @@ local watchQuest = function(questId)
 			local progress = GetQuestProgressBarPercent(questId)
 			objectiveText = progress .. "% " .. objectiveText
 		end
-		QuestTogether.questTracker[questId].objectives[objectiveIndex] = objectiveText
+		QuestTogetherDB.questTracker[questId].objectives[objectiveIndex] = objectiveText
 	end
 end
 
 local scanQuestLog = function()
-	QuestTogether.questTracker = {}
+	QuestTogetherDB.questTracker = {}
 	local numQuestLogEntries = C_QuestLog.GetNumQuestLogEntries()
 	local questsTracked = 0
 	for questLogIndex = 1, numQuestLogEntries do
@@ -119,7 +101,7 @@ local scanQuestLog = function()
 		end
 	end
 	print(questsTracked .. " quests are being monitored by QuestTogether.")
-	if QuestTogether.DEBUG.messages then
+	if QuestTogetherDB.DEBUG.messages then
 		debugCmd("info", questsTracked .. " quests are being monitored by QuestTogether.")
 	end
 end
@@ -145,27 +127,27 @@ local EventHandlers = {
 			if cmd == "set-debug-option" then
 				local targetCharacter, option, value = string.match(data, "^([a-zA-Z]+);([a-zA-Z]+);([a-zA-Z]+)$")
 				if string.lower(targetCharacter) == characterName or targetCharacter == "all" then
-					QuestTogether.DEBUG[option] = value == "true" and true or false
+					QuestTogetherDB.DEBUG[option] = value == "true" and true or false
 				end
 			elseif cmd == "get-debug-options" then
 				if string.lower(data) == characterName then
 					debugCmd(
 						"info",
 						"\nevents="
-							.. tostring(QuestTogether.DEBUG.events)
+							.. tostring(QuestTogetherDB.DEBUG.events)
 							.. "\nmessages="
-							.. tostring(QuestTogether.DEBUG.messages)
+							.. tostring(QuestTogetherDB.DEBUG.messages)
 							.. "\nquestLogUpdate="
-							.. tostring(QuestTogether.DEBUG.questLogUpdate)
+							.. tostring(QuestTogetherDB.DEBUG.questLogUpdate)
 							.. "\nshowDebugInfo="
-							.. tostring(QuestTogether.DEBUG.showDebugInfo)
+							.. tostring(QuestTogetherDB.DEBUG.showDebugInfo)
 					)
 				end
 			elseif cmd == "ping" then
 				if string.lower(data) == characterName or string.lower(data) == "all" then
 					debugCmd("info", "pong!")
 				end
-			elseif cmd == "info" and QuestTogether.DEBUG.showDebugInfo then
+			elseif cmd == "info" and QuestTogetherDB.DEBUG.showDebugInfo then
 				sender = string.match(sender, "^([a-zA-Z]+)%-")
 				print("<" .. sender .. "> " .. data)
 			end
@@ -182,7 +164,7 @@ local EventHandlers = {
 	-- Track newly accepted quests.
 	QUEST_ACCEPTED = function(questId)
 		table.insert(onQuestLogUpdate, function()
-			if QuestTogether.questTracker[questId] == nil then
+			if QuestTogetherDB.questTracker[questId] == nil then
 				local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 				local info = C_QuestLog.GetInfo(questLogIndex)
 				reportInfo("Picked Up: " .. info.title)
@@ -200,15 +182,15 @@ local EventHandlers = {
 	QUEST_REMOVED = function(questId)
 		table.insert(onQuestLogUpdate, function()
 			C_Timer.After(0.5, function()
-				if QuestTogether.questTracker[questId] then
-					local questTitle = QuestTogether.questTracker[questId].title
+				if QuestTogetherDB.questTracker[questId] then
+					local questTitle = QuestTogetherDB.questTracker[questId].title
 					if questsTurnedIn[questId] then
 						reportInfo("Completed: " .. questTitle)
 						questsTurnedIn[questId] = nil
 					else
 						reportInfo("Removed: " .. questTitle)
 					end
-					QuestTogether.questTracker[questId] = nil
+					QuestTogetherDB.questTracker[questId] = nil
 				end
 			end)
 		end)
@@ -218,7 +200,7 @@ local EventHandlers = {
 	UNIT_QUEST_LOG_CHANGED = function(unit)
 		if unit == "player" then
 			table.insert(onQuestLogUpdate, function()
-				for questId, quest in pairs(QuestTogether.questTracker) do
+				for questId, quest in pairs(QuestTogetherDB.questTracker) do
 					local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 					local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
 					for objectiveIndex = 1, numObjectives do
@@ -229,11 +211,11 @@ local EventHandlers = {
 							objectiveText = progress .. "% " .. objectiveText
 							currentValue = progress
 						end
-						if QuestTogether.questTracker[questId].objectives[objectiveIndex] ~= objectiveText then
+						if QuestTogetherDB.questTracker[questId].objectives[objectiveIndex] ~= objectiveText then
 							if currentValue > 0 then
 								reportInfo(objectiveText)
 							end
-							QuestTogether.questTracker[questId].objectives[objectiveIndex] = objectiveText
+							QuestTogetherDB.questTracker[questId].objectives[objectiveIndex] = objectiveText
 						end
 					end
 				end
@@ -245,7 +227,7 @@ local EventHandlers = {
 	QUEST_LOG_UPDATE = function()
 		local hasUpdates = false
 		local numTasks = #onQuestLogUpdate
-		if QuestTogether.DEBUG.questLogUpdate and numTasks > 0 then
+		if QuestTogetherDB.DEBUG.questLogUpdate and numTasks > 0 then
 			debugCmd("info", "questLogUpdate: " .. #onQuestLogUpdate .. " scheduled tasks detected.")
 			hasUpdates = true
 		end
@@ -255,7 +237,7 @@ local EventHandlers = {
 			end
 			onQuestLogUpdate = {}
 		end
-		if QuestTogether.DEBUG.questLogUpdate and hasUpdates then
+		if QuestTogetherDB.DEBUG.questLogUpdate and hasUpdates then
 			debugCmd("info", "questLogUpdate: All tasks completed.")
 			hasUpdates = false
 		end
@@ -267,9 +249,9 @@ local function eventHandler(self, event, ...)
 		EventHandlers[event](...)
 	end
 	if
-		QuestTogether.DEBUG.events
+		QuestTogetherDB.DEBUG.events
 		and event ~= "CHAT_MSG_ADDON"
-		and (event ~= "QUEST_LOG_UPDATE" or QuestTogether.DEBUG.questLogUpdate)
+		and (event ~= "QUEST_LOG_UPDATE" or QuestTogetherDB.DEBUG.questLogUpdate)
 	then
 		debugCmd("info", "event fired: " .. event)
 		-- UIParentLoadAddOn("Blizzard_DebugTools")
@@ -277,4 +259,3 @@ local function eventHandler(self, event, ...)
 	end
 end
 questTogetherFrame:SetScript("OnEvent", eventHandler)
-
