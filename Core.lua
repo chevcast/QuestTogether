@@ -219,7 +219,7 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 					if self.db.profile.announceCompleted then
 						self:Announce("Quest Completed: " .. questTitle)
 					end
-					self.db.profile.questsCompleted[questId] = nil
+					self.db.char.questsCompleted[questId] = nil
 				else
 					if self.db.profile.announceRemoved then
 						self:Announce("Quest Removed: " .. questTitle)
