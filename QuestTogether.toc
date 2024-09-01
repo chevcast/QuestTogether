@@ -1,13 +1,15 @@
 ## Interface: 110002
 ## Title: QuestTogether
-## Version: 2.2.1
+## Version: 2.2.2
 ## Notes: Helpful tools for keeping quests in sync between party members.
-## SavedVariablesPerCharacter: QuestTogether
+## SavedVariablesPerCharacter: QuestTogetherDB
 ## Author: Chev
 ## RequiredDeps:
 ## OptionalDeps:
 ## X-Website: https://www.chevtek.io
 ## X-License: MIT License
 
-Libs\Libs.xml
-QuestTogether.lua
+Embeds.xml
+
+Core.lua
+Options.lua
