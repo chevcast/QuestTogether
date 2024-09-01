@@ -95,7 +95,7 @@ function QuestTogether:SlashCmd(input)
 		self:Print("Debug Mode: " .. tostring(self.db.profile.debugMode))
 	elseif command == "nearby" then
 		self.db.profile.showNearby = not self.db.profile.showNearby
-		self:Print("Show Nearby: " .. tostring(self.db.profile.debugMode))
+		self:Print("Show Nearby: " .. tostring(self.db.profile.showNearby))
 	elseif command == "enable" then
 		self:Enable()
 	elseif command == "disable" then
