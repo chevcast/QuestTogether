@@ -256,7 +256,7 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(event, unit)
 						currentValue = progress
 					end
 					if QuestTogether.db.char.questTracker[questId].objectives[objectiveIndex] ~= objectiveText then
-						if currenvValue and currentValue > 0 then
+						if currentValue and currentValue > 0 then
 							self:SendCommMessage("QuestTogetherComm", objectiveText, "YELL")
 							if QuestTogether.db.profile.announceProgress then
 								self:Announce(objectiveText)
