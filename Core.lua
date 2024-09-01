@@ -9,32 +9,27 @@ function QuestTogether:Debug(message)
 end
 
 function QuestTogether:OnInitialize()
-	self:Debug("OnInitialize()")
-
 	-- Initialize settings database.
-	self:Debug("Registering QuestTogetherDB...")
 	self.db = LibStub("AceDB-3.0"):New("QuestTogetherDB", self.defaultOptions, true)
 
 	-- Register options table with Blizzard UI.
-	self:Debug("Registering Options Table...")
 	AceConfig:RegisterOptionsTable("QuestTogether", self.options)
 	self.optionsFrame = AceConfigDialog:AddToBlizOptions("QuestTogether", "QuestTogether")
 
 	-- Register the profiles panel with Blizzard UI.
-	self:Debug("Registering profiles table...")
 	local profiles = LibStub("AceDBOptions-3.0"):GetOptionsTable(self.db)
 	AceConfig:RegisterOptionsTable("QuestTogether_Profiles", profiles)
 	AceConfigDialog:AddToBlizOptions("QuestTogether_Profiles", "Profiles", "QuestTogether")
 
 	-- Register slash commands.
-	self:Debug("Registering slash commands...")
 	self:RegisterChatCommand("qt", "SlashCmd")
 	self:RegisterChatCommand("questtogether", "SlashCmd")
 	self:RegisterChatCommand("questogether", "SlashCmd") -- Typo fallback.
 
 	-- Register comm prefix.
-	self:Debug("Registering comm prefix...")
 	self:RegisterComm("QuestTogetherComm")
+
+	self:Debug("Initialized.")
 end
 
 function QuestTogether:StripColorData(text)
@@ -50,6 +45,8 @@ function QuestTogether:OnEnable()
 	self:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 	self:RegisterEvent("QUEST_LOG_UPDATE")
 	self:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+	self:Debug("OnEnable() end")
 end
 
 function QuestTogether:OnDisable()

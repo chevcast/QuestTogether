@@ -1,3 +1,6 @@
+-- This file is the old addon (v2.x and lower). If you wish to rever to the old version for any reason
+-- then simply add this file to QuestTogehter.toc and remove Core.lua and Options.lua from the toc file.
+
 QuestTogether = {
 	questTracker = {},
 	DEBUG = {
@@ -277,4 +280,3 @@ local function eventHandler(self, event, ...)
 	end
 end
 questTogetherFrame:SetScript("OnEvent", eventHandler)
-
