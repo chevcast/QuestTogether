@@ -196,7 +196,9 @@ function QuestTogether:QUEST_ACCEPTED(event, questId)
 		if QuestTogether.db.char.questTracker[questId] == nil then
 			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 			local info = C_QuestLog.GetInfo(questLogIndex)
-			self:Announce("Quest Accepted: " .. info.title)
+			if self.db.profile.announceAccepted then
+				self:Announce("Quest Accepted: " .. info.title)
+			end
 			self:WatchQuest(questId)
 		end
 	end)
@@ -214,10 +216,14 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 			if QuestTogether.db.char.questTracker[questId] then
 				local questTitle = QuestTogether.db.char.questTracker[questId].title
 				if self.db.char.questsCompleted[questId] then
-					self:Announce("Quest Completed: " .. questTitle)
-					self.db.char.questsCompleted[questId] = nil
+					if self.db.profile.announceCompleted then
+						self:Announce("Quest Completed: " .. questTitle)
+					end
+					self.db.profile.questsCompleted[questId] = nil
 				else
-					self:Announce("Quest Removed: " .. questTitle)
+					if self.db.profile.announceRemoved then
+						self:Announce("Quest Removed: " .. questTitle)
+					end
 				end
 				QuestTogether.db.char.questTracker[questId] = nil
 			end
@@ -242,7 +248,9 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(event, unit)
 					end
 					if QuestTogether.db.char.questTracker[questId].objectives[objectiveIndex] ~= objectiveText then
 						if currentValue > 0 then
-							self:Announce(objectiveText)
+							if QuestTogether.db.profile.announceProgress then
+								self:Announce(objectiveText)
+							end
 						end
 						QuestTogether.db.char.questTracker[questId].objectives[objectiveIndex] = objectiveText
 					end
