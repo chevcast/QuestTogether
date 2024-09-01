@@ -2,10 +2,8 @@ QuestTogether = LibStub("AceAddon-3.0"):NewAddon("QuestTogether", "AceConsole-3.
 local AceConfig = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
-QuestTogether.debug = false
-
 function QuestTogether:Debug(message)
-	if QuestTogether.debug then
+	if self.db.profile.debugMode then
 		self:Print("Debug: " .. message)
 	end
 end
@@ -18,7 +16,7 @@ function QuestTogether:OnInitialize()
 	self.db = LibStub("AceDB-3.0"):New("QuestTogetherDB", self.defaultOptions, true)
 
 	-- Register options table with Blizzard UI.
-	self:Debug("REgistering Options Table...")
+	self:Debug("Registering Options Table...")
 	AceConfig:RegisterOptionsTable("QuestTogether", self.options)
 	self.optionsFrame = AceConfigDialog:AddToBlizOptions("QuestTogether", "QuestTogether")
 
@@ -36,7 +34,7 @@ function QuestTogether:OnInitialize()
 
 	-- Register comm prefix.
 	self:Debug("Registering comm prefix...")
-	self:RegisterComm("QuestTogether")
+	self:RegisterComm("QuestTogetherComm")
 end
 
 function QuestTogether:StripColorData(text)
@@ -95,7 +93,11 @@ end
 function QuestTogether:SlashCmd(input)
 	self:Debug("WatchQuest(" .. input .. ")")
 	local command, arg = self:GetArgs(input, 2)
-	if command == "enable" then
+	if command == "debug" then
+		self.db.profile.debugMode = not self.db.profile.debugMode
+	elseif command == "nearby" then
+		self.db.profile.showNearby = not self.db.profile.showNearby
+	elseif command == "enable" then
 		self:Enable()
 	elseif command == "disable" then
 		self:Disable()
@@ -144,15 +146,19 @@ end
 
 function QuestTogether:OnCommReceived(prefix, message, channel, sender)
 	self:Debug("OnCommReceived(" .. prefix .. ", " .. message .. ", " .. channel .. ", " .. sender .. ")")
-	self:Print("Not implemented.")
+	-- Ignore messages from other addons.
+	if prefix ~= "QuestTogetherComm" then
+		return
+	end
+	if self.db.profile.showNearby then
+		self:Print(sender .. ": " .. message)
+	end
 end
 
 function QuestTogether:Announce(message)
 	self:Debug("Announce(" .. message .. ")")
-	local primaryChannel = self.db.profile.primaryChannel
+	local primaryChannel = channel or self.db.profile.primaryChannel
 	local fallbackChannel = self.db.profile.fallbackChannel
-	self:Debug("Primary Channel: " .. primaryChannel)
-	self:Debug("Fallback Channel: " .. fallbackChannel)
 	if primaryChannel == "console" then
 		self:Print(message)
 	elseif primaryChannel == "guild" and IsInGuild() then
@@ -196,8 +202,10 @@ function QuestTogether:QUEST_ACCEPTED(event, questId)
 		if QuestTogether.db.char.questTracker[questId] == nil then
 			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 			local info = C_QuestLog.GetInfo(questLogIndex)
+			local message = "Quest Accepted: " .. info.title
+			self:SendCommMessage("QuestTogetherComm", message, "YELL")
 			if self.db.profile.announceAccepted then
-				self:Announce("Quest Accepted: " .. info.title)
+				self:Announce(message)
 			end
 			self:WatchQuest(questId)
 		end
@@ -216,13 +224,17 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 			if QuestTogether.db.char.questTracker[questId] then
 				local questTitle = QuestTogether.db.char.questTracker[questId].title
 				if self.db.char.questsCompleted[questId] then
+					local message = "Quest Completed: " .. questTitle
+					self:SendCommMessage("QuestTogetherComm", message, "YELL")
 					if self.db.profile.announceCompleted then
-						self:Announce("Quest Completed: " .. questTitle)
+						self:Announce(message)
 					end
 					self.db.char.questsCompleted[questId] = nil
 				else
+					local message = "Quest Removed: " .. questTitle
+					self:SendCommMessage("QuestTogetherComm", message, "YELL")
 					if self.db.profile.announceRemoved then
-						self:Announce("Quest Removed: " .. questTitle)
+						self:Announce(message)
 					end
 				end
 				QuestTogether.db.char.questTracker[questId] = nil
@@ -248,6 +260,7 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(event, unit)
 					end
 					if QuestTogether.db.char.questTracker[questId].objectives[objectiveIndex] ~= objectiveText then
 						if currenvValue and currentValue > 0 then
+							self:SendCommMessage("QuestTogetherComm", objectiveText, "YELL")
 							if QuestTogether.db.profile.announceProgress then
 								self:Announce(objectiveText)
 							end

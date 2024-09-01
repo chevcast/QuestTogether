@@ -1,7 +1,9 @@
 QuestTogether.defaultOptions = {
 	profile = {
-		primaryChannel = "instance",
-		fallbackChannel = "party",
+		debugMode = false,
+		showNearby = false,
+		primaryChannel = "party",
+		fallbackChannel = "console",
 		announceAccepted = true,
 		announceCompleted = true,
 		announceRemoved = true,
