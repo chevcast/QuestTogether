@@ -27,7 +27,7 @@ function QuestTogether:OnInitialize()
 	self:RegisterChatCommand("questogether", "SlashCmd") -- Typo fallback.
 
 	-- Register comm prefix.
-	self:RegisterComm("QuestTogetherComm")
+	self:RegisterComm("QuestTogether")
 
 	self:Debug("Initialized.")
 end
@@ -144,7 +144,7 @@ end
 function QuestTogether:OnCommReceived(prefix, message, channel, sender)
 	self:Debug("OnCommReceived(" .. prefix .. ", " .. message .. ", " .. channel .. ", " .. sender .. ")")
 	-- Ignore messages from other addons.
-	if prefix ~= "QuestTogetherComm" then
+	if prefix ~= "QuestTogether" then
 		return
 	end
 	if self.db.profile.showNearby then
