@@ -2,6 +2,36 @@ QuestTogether = LibStub("AceAddon-3.0"):NewAddon("QuestTogether", "AceConsole-3.
 local AceConfig = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
+QuestTogether.completionEmotes = {
+	"applaud",
+	"applause",
+	"bow",
+	"cheer",
+	"clap",
+	"commend",
+	"congratulate",
+	"curtsey",
+	"dance",
+	"forthealliacne",
+	"forthehorde",
+	"golfclap",
+	"grin",
+	"happy",
+	"highfive",
+	"huzzah",
+	"impressed",
+	"mountspecial",
+	"praise",
+	"proud",
+	"purr",
+	"quack",
+	"roar",
+	"sexy",
+	"smirk",
+	"strut",
+	"victory",
+}
+
 function QuestTogether:Debug(message)
 	if self.db.profile.debugMode then
 		self:Print("Debug: " .. message)
@@ -20,11 +50,6 @@ function QuestTogether:OnInitialize()
 	local profiles = LibStub("AceDBOptions-3.0"):GetOptionsTable(self.db)
 	AceConfig:RegisterOptionsTable("QuestTogether_Profiles", profiles)
 	AceConfigDialog:AddToBlizOptions("QuestTogether_Profiles", "Profiles", "QuestTogether")
-
-	-- Register slash commands.
-	-- self:RegisterChatCommand("qt", "SlashCmd")
-	-- self:RegisterChatCommand("questtogether", "SlashCmd")
-	-- self:RegisterChatCommand("questogether", "SlashCmd") -- Typo fallback.
 
 	-- Register comm prefix.
 	self:RegisterComm("QuestTogether")
@@ -87,69 +112,19 @@ function QuestTogether:WatchQuest(questId)
 	end
 end
 
--- function QuestTogether:SlashCmd(input)
--- 	self:Debug("WatchQuest(" .. input .. ")")
--- 	local command, arg = self:GetArgs(input, 2)
--- 	if command == "cmd" then
--- 		self:SendCommMessage("QuestTogether", arg, "PARTY")
--- 	elseif command == "debug" then
--- 		self.db.profile.debugMode = not self.db.profile.debugMode
--- 		self:Print("Debug Mode: " .. tostring(self.db.profile.debugMode))
--- 	elseif command == "enable" then
--- 		self:Enable()
--- 	elseif command == "disable" then
--- 		self:Disable()
--- 	elseif command == "channel" then
--- 		-- Set primary chat channel.
--- 		local channels = self.options.args.primaryChannel.values
--- 		if arg == nil then
--- 			self:Print("Usage: /qt channel <" .. string.lower(table.concat(channels, "||")) .. ">")
--- 			self:Print("Current primary channel: " .. string.lower(channels[self.db.profile.primaryChannel]))
--- 			return
--- 		end
--- 		local channel = string.lower(arg)
--- 		for index, name in ipairs(channels) do
--- 			if string.lower(self:StripColorData(name)) == channel then
--- 				self.db.profile.primaryChannel = index
--- 				self:Print("Primary channel set to " .. string.lower(name) .. ".")
--- 				break
--- 			end
--- 		end
--- 	elseif command == "fallback" then
--- 		-- Set fallback chat channel.
--- 		local channels = self.options.args.fallbackChannel.values()
--- 		if arg == nil then
--- 			self:Print("Usage: /qt fallback <" .. string.lower(table.concat(channels, "||")) .. ">")
--- 			self:Print("Current fallback channel: " .. string.lower(channels[self.db.profile.fallbackChannel]))
--- 			return
--- 		end
--- 		local channel = string.lower(arg)
--- 		for key, value in pairs(channels) do
--- 			if channel == key then
--- 				self.db.profile.fallbackChannel = key
--- 				self:Print("Fallback channel set to " .. string.lower(value) .. ".")
--- 				break
--- 			end
--- 		end
--- 	else
--- 		local commandList = {
--- 			"|cff00ff00enable|r - Enable QuestTogether.",
--- 			"|cff00ff00disable|r - Disable QuestTogether.",
--- 			"|cff00ff00channel|r |cff00ffff<channel>|r - Set primary chat channel.",
--- 			"|cff00ff00fallback|r |cff00ffff<channel>|r - Set fallback chat channel.",
--- 		}
--- 		self:Print("|cffffff00Available Commands:|r\n" .. table.concat(commandList, "\n"))
--- 	end
--- end
-
 function QuestTogether:OnCommReceived(prefix, message, channel, sender)
 	self:Debug("OnCommReceived(" .. prefix .. ", " .. message .. ", " .. channel .. ", " .. sender .. ")")
 	-- Ignore messages from other addons.
 	if prefix ~= "QuestTogether" then
 		return
 	end
-	DEFAULT_CHAT_FRAME.editBox:SetText(message)
-	ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
+	local cmd, arg = self:GetArgs(message, 2)
+	if cmd == "cmd" then
+		DEFAULT_CHAT_FRAME.editBox:SetText(arg)
+		ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
+	elseif cmd == "grats" then
+		DoEmote("cheer", arg)
+	end
 end
 
 function QuestTogether:Announce(message)
@@ -200,7 +175,6 @@ function QuestTogether:QUEST_ACCEPTED(event, questId)
 			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 			local info = C_QuestLog.GetInfo(questLogIndex)
 			local message = "Quest Accepted: " .. info.title
-			self:SendCommMessage("QuestTogether", message, "YELL")
 			if self.db.profile.announceAccepted then
 				self:Announce(message)
 			end
@@ -222,14 +196,15 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 				local questTitle = QuestTogether.db.char.questTracker[questId].title
 				if self.db.char.questsCompleted[questId] then
 					local message = "Quest Completed: " .. questTitle
-					self:SendCommMessage("QuestTogether", message, "YELL")
 					if self.db.profile.announceCompleted then
 						self:Announce(message)
+					end
+					if self.db.profile.doEmotes then
+						DoEmote(self.completionEmotes[math.random(#self.completionEmotes)])
 					end
 					self.db.char.questsCompleted[questId] = nil
 				else
 					local message = "Quest Removed: " .. questTitle
-					self:SendCommMessage("QuestTogether", message, "YELL")
 					if self.db.profile.announceRemoved then
 						self:Announce(message)
 					end
@@ -257,7 +232,6 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(event, unit)
 					end
 					if QuestTogether.db.char.questTracker[questId].objectives[objectiveIndex] ~= objectiveText then
 						if currentValue and currentValue > 0 then
-							self:SendCommMessage("QuestTogether", objectiveText, "YELL")
 							if QuestTogether.db.profile.announceProgress then
 								self:Announce(objectiveText)
 							end

@@ -1,6 +1,7 @@
 QuestTogether.defaultOptions = {
 	profile = {
 		debugMode = false,
+		doEmotes = true,
 		primaryChannel = "party",
 		fallbackChannel = "console",
 		announceAccepted = true,
@@ -32,10 +33,23 @@ QuestTogether.options = {
 	name = "QuestTogether",
 	handler = QuestTogether,
 	args = {
+		cmd = {
+			type = "execute",
+			name = "Command",
+			desc = "Send remote command to other QuestTogether users.",
+			hidden = true,
+			func = function(info)
+				local _, cmd = QuestTogether:GetArgs(info.input, 2)
+				QuestTogether:SendCommMessage("QuestTogether", "cmd " .. cmd, "PARTY")
+			end,
+		},
 		enable = {
 			type = "execute",
 			name = "Enable",
 			desc = "Enable QuestTogether.",
+			guiHidden = true,
+			dialogHidden = true,
+			dropdownHidden = true,
 			func = function()
 				QuestTogether:Enable()
 				QuestTogether:Print("QuestTogehter enabled.")
@@ -45,59 +59,18 @@ QuestTogether.options = {
 			type = "execute",
 			name = "Disable",
 			desc = "Disable QuestTogether.",
+			guiHidden = true,
+			dialogHidden = true,
+			dropdownHidden = true,
 			func = function()
 				QuestTogether:Disable()
 				QuestTogether:Print("QuestTogether disabled.")
 			end,
 		},
-		whatToAnnounce = {
-			type = "group",
-			name = "What To Announce",
-			order = 1,
-			inline = true,
-			args = {
-				announceAccepted = {
-					type = "toggle",
-					order = 1,
-					width = "full",
-					name = "Announce Quest Acceptance",
-					desc = "Announce when you accept a quest.",
-					get = "GetValue",
-					set = "SetValue",
-				},
-				announceCompleted = {
-					type = "toggle",
-					order = 2,
-					width = "full",
-					name = "Announce Quest Completion",
-					desc = "Announce when you complete a quest.",
-					get = "GetValue",
-					set = "SetValue",
-				},
-				announceRemoved = {
-					type = "toggle",
-					order = 3,
-					width = "full",
-					name = "Announce Quest Removal",
-					desc = "Announce when you remove a quest.",
-					get = "GetValue",
-					set = "SetValue",
-				},
-				announceProgress = {
-					type = "toggle",
-					order = 4,
-					width = "full",
-					name = "Announce Quest Progress",
-					desc = "Announce quest progress updates.",
-					get = "GetValue",
-					set = "SetValue",
-				},
-			},
-		},
 		whereToAnnounce = {
 			type = "group",
 			name = "Where To Announce",
-			order = 2,
+			order = 1,
 			inline = true,
 			args = {
 				primaryChannel = {
@@ -138,6 +111,65 @@ QuestTogether.options = {
 
 						return fallbackChannels
 					end,
+					get = "GetValue",
+					set = "SetValue",
+				},
+			},
+		},
+		whatToAnnounce = {
+			type = "group",
+			name = "What To Announce",
+			order = 2,
+			inline = true,
+			args = {
+				announceAccepted = {
+					type = "toggle",
+					order = 1,
+					width = "full",
+					name = "Announce Quest Acceptance",
+					desc = "Announce when you accept a quest.",
+					get = "GetValue",
+					set = "SetValue",
+				},
+				announceCompleted = {
+					type = "toggle",
+					order = 2,
+					width = "full",
+					name = "Announce Quest Completion",
+					desc = "Announce when you complete a quest.",
+					get = "GetValue",
+					set = "SetValue",
+				},
+				announceRemoved = {
+					type = "toggle",
+					order = 3,
+					width = "full",
+					name = "Announce Quest Removal",
+					desc = "Announce when you remove a quest.",
+					get = "GetValue",
+					set = "SetValue",
+				},
+				announceProgress = {
+					type = "toggle",
+					order = 4,
+					width = "full",
+					name = "Announce Quest Progress",
+					desc = "Announce quest progress updates.",
+					get = "GetValue",
+					set = "SetValue",
+				},
+			},
+		},
+		miscellaneous = {
+			type = "group",
+			name = "Miscellaneous",
+			order = 3,
+			inline = true,
+			args = {
+				doEmotes = {
+					type = "toggle",
+					name = "Do Emotes",
+					desc = "Do emotes in response to various events.",
 					get = "GetValue",
 					set = "SetValue",
 				},
