@@ -13,7 +13,7 @@ function QuestTogether:OnInitialize()
 	self.db = LibStub("AceDB-3.0"):New("QuestTogetherDB", self.defaultOptions, true)
 
 	-- Register options table with Blizzard UI.
-	AceConfig:RegisterOptionsTable("QuestTogether", self.options)
+	AceConfig:RegisterOptionsTable("QuestTogether", self.options, { "qt", "questtogether", "questogether" })
 	self.optionsFrame = AceConfigDialog:AddToBlizOptions("QuestTogether", "QuestTogether")
 
 	-- Register the profiles panel with Blizzard UI.
@@ -22,9 +22,9 @@ function QuestTogether:OnInitialize()
 	AceConfigDialog:AddToBlizOptions("QuestTogether_Profiles", "Profiles", "QuestTogether")
 
 	-- Register slash commands.
-	self:RegisterChatCommand("qt", "SlashCmd")
-	self:RegisterChatCommand("questtogether", "SlashCmd")
-	self:RegisterChatCommand("questogether", "SlashCmd") -- Typo fallback.
+	-- self:RegisterChatCommand("qt", "SlashCmd")
+	-- self:RegisterChatCommand("questtogether", "SlashCmd")
+	-- self:RegisterChatCommand("questogether", "SlashCmd") -- Typo fallback.
 
 	-- Register comm prefix.
 	self:RegisterComm("QuestTogether")
@@ -87,61 +87,60 @@ function QuestTogether:WatchQuest(questId)
 	end
 end
 
-function QuestTogether:SlashCmd(input)
-	self:Debug("WatchQuest(" .. input .. ")")
-	local command, arg = self:GetArgs(input, 2)
-	if command == "debug" then
-		self.db.profile.debugMode = not self.db.profile.debugMode
-		self:Print("Debug Mode: " .. tostring(self.db.profile.debugMode))
-	elseif command == "nearby" then
-		self.db.profile.showNearby = not self.db.profile.showNearby
-		self:Print("Show Nearby: " .. tostring(self.db.profile.showNearby))
-	elseif command == "enable" then
-		self:Enable()
-	elseif command == "disable" then
-		self:Disable()
-	elseif command == "channel" then
-		-- Set primary chat channel.
-		local channels = self.options.args.primaryChannel.values
-		if arg == nil then
-			self:Print("Usage: /qt channel <" .. string.lower(table.concat(channels, "||")) .. ">")
-			self:Print("Current primary channel: " .. string.lower(channels[self.db.profile.primaryChannel]))
-			return
-		end
-		local channel = string.lower(arg)
-		for index, name in ipairs(channels) do
-			if string.lower(self:StripColorData(name)) == channel then
-				self.db.profile.primaryChannel = index
-				self:Print("Primary channel set to " .. string.lower(name) .. ".")
-				break
-			end
-		end
-	elseif command == "fallback" then
-		-- Set fallback chat channel.
-		local channels = self.options.args.fallbackChannel.values()
-		if arg == nil then
-			self:Print("Usage: /qt fallback <" .. string.lower(table.concat(channels, "||")) .. ">")
-			self:Print("Current fallback channel: " .. string.lower(channels[self.db.profile.fallbackChannel]))
-			return
-		end
-		local channel = string.lower(arg)
-		for key, value in pairs(channels) do
-			if channel == key then
-				self.db.profile.fallbackChannel = key
-				self:Print("Fallback channel set to " .. string.lower(value) .. ".")
-				break
-			end
-		end
-	else
-		local commandList = {
-			"|cff00ff00enable|r - Enable QuestTogether.",
-			"|cff00ff00disable|r - Disable QuestTogether.",
-			"|cff00ff00channel|r |cff00ffff<channel>|r - Set primary chat channel.",
-			"|cff00ff00fallback|r |cff00ffff<channel>|r - Set fallback chat channel.",
-		}
-		self:Print("|cffffff00Available Commands:|r\n" .. table.concat(commandList, "\n"))
-	end
-end
+-- function QuestTogether:SlashCmd(input)
+-- 	self:Debug("WatchQuest(" .. input .. ")")
+-- 	local command, arg = self:GetArgs(input, 2)
+-- 	if command == "cmd" then
+-- 		self:SendCommMessage("QuestTogether", arg, "PARTY")
+-- 	elseif command == "debug" then
+-- 		self.db.profile.debugMode = not self.db.profile.debugMode
+-- 		self:Print("Debug Mode: " .. tostring(self.db.profile.debugMode))
+-- 	elseif command == "enable" then
+-- 		self:Enable()
+-- 	elseif command == "disable" then
+-- 		self:Disable()
+-- 	elseif command == "channel" then
+-- 		-- Set primary chat channel.
+-- 		local channels = self.options.args.primaryChannel.values
+-- 		if arg == nil then
+-- 			self:Print("Usage: /qt channel <" .. string.lower(table.concat(channels, "||")) .. ">")
+-- 			self:Print("Current primary channel: " .. string.lower(channels[self.db.profile.primaryChannel]))
+-- 			return
+-- 		end
+-- 		local channel = string.lower(arg)
+-- 		for index, name in ipairs(channels) do
+-- 			if string.lower(self:StripColorData(name)) == channel then
+-- 				self.db.profile.primaryChannel = index
+-- 				self:Print("Primary channel set to " .. string.lower(name) .. ".")
+-- 				break
+-- 			end
+-- 		end
+-- 	elseif command == "fallback" then
+-- 		-- Set fallback chat channel.
+-- 		local channels = self.options.args.fallbackChannel.values()
+-- 		if arg == nil then
+-- 			self:Print("Usage: /qt fallback <" .. string.lower(table.concat(channels, "||")) .. ">")
+-- 			self:Print("Current fallback channel: " .. string.lower(channels[self.db.profile.fallbackChannel]))
+-- 			return
+-- 		end
+-- 		local channel = string.lower(arg)
+-- 		for key, value in pairs(channels) do
+-- 			if channel == key then
+-- 				self.db.profile.fallbackChannel = key
+-- 				self:Print("Fallback channel set to " .. string.lower(value) .. ".")
+-- 				break
+-- 			end
+-- 		end
+-- 	else
+-- 		local commandList = {
+-- 			"|cff00ff00enable|r - Enable QuestTogether.",
+-- 			"|cff00ff00disable|r - Disable QuestTogether.",
+-- 			"|cff00ff00channel|r |cff00ffff<channel>|r - Set primary chat channel.",
+-- 			"|cff00ff00fallback|r |cff00ffff<channel>|r - Set fallback chat channel.",
+-- 		}
+-- 		self:Print("|cffffff00Available Commands:|r\n" .. table.concat(commandList, "\n"))
+-- 	end
+-- end
 
 function QuestTogether:OnCommReceived(prefix, message, channel, sender)
 	self:Debug("OnCommReceived(" .. prefix .. ", " .. message .. ", " .. channel .. ", " .. sender .. ")")
@@ -149,9 +148,8 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender)
 	if prefix ~= "QuestTogether" then
 		return
 	end
-	if self.db.profile.showNearby then
-		self:Print(sender .. ": " .. message)
-	end
+	DEFAULT_CHAT_FRAME.editBox:SetText(message)
+	ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
 end
 
 function QuestTogether:Announce(message)

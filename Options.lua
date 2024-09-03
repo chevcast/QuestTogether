@@ -1,7 +1,6 @@
 QuestTogether.defaultOptions = {
 	profile = {
 		debugMode = false,
-		showNearby = false,
 		primaryChannel = "party",
 		fallbackChannel = "console",
 		announceAccepted = true,
@@ -33,6 +32,24 @@ QuestTogether.options = {
 	name = "QuestTogether",
 	handler = QuestTogether,
 	args = {
+		enable = {
+			type = "execute",
+			name = "Enable",
+			desc = "Enable QuestTogether.",
+			func = function()
+				QuestTogether:Enable()
+				QuestTogether:Print("QuestTogehter enabled.")
+			end,
+		},
+		disable = {
+			type = "execute",
+			name = "Disable",
+			desc = "Disable QuestTogether.",
+			func = function()
+				QuestTogether:Disable()
+				QuestTogether:Print("QuestTogether disabled.")
+			end,
+		},
 		whatToAnnounce = {
 			type = "group",
 			name = "What To Announce",
@@ -130,9 +147,11 @@ QuestTogether.options = {
 }
 
 function QuestTogether:GetValue(info)
+	self:Print(info[#info])
 	return self.db.profile[info[#info]]
 end
 
 function QuestTogether:SetValue(info, value)
+	self:Print(info[#info] .. " = " .. value)
 	self.db.profile[info[#info]] = value
 end
