@@ -1,36 +1,7 @@
-QuestTogether = LibStub("AceAddon-3.0"):NewAddon("QuestTogether", "AceConsole-3.0", "AceEvent-3.0", "AceComm-3.0")
+QuestTogether =
+	LibStub("AceAddon-3.0"):NewAddon("QuestTogether", "AceConsole-3.0", "AceEvent-3.0", "AceComm-3.0", "AceHook-3.0")
 local AceConfig = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
-
-QuestTogether.completionEmotes = {
-	"applaud",
-	"applause",
-	"bow",
-	"cheer",
-	"clap",
-	"commend",
-	"congratulate",
-	"curtsey",
-	"dance",
-	"forthealliacne",
-	"forthehorde",
-	"golfclap",
-	"grin",
-	"happy",
-	"highfive",
-	"huzzah",
-	"impressed",
-	"mountspecial",
-	"praise",
-	"proud",
-	"purr",
-	"quack",
-	"roar",
-	"sexy",
-	"smirk",
-	"strut",
-	"victory",
-}
 
 function QuestTogether:Debug(message)
 	if self.db.profile.debugMode then
@@ -64,12 +35,18 @@ end
 function QuestTogether:OnEnable()
 	self:Debug("OnEnable()")
 
+	-- Register events.
 	self:RegisterEvent("QUEST_ACCEPTED")
 	self:RegisterEvent("QUEST_TURNED_IN")
 	self:RegisterEvent("QUEST_REMOVED")
 	self:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 	self:RegisterEvent("QUEST_LOG_UPDATE")
-	self:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+	-- Schedule task to run initial quest log scan.
+	table.insert(self.onQuestLogUpdate, function()
+		QuestTogether:Debug("Running initial quest log scan...")
+		QuestTogether:ScanQuestLog()
+	end)
 
 	self:Debug("OnEnable() end")
 end
@@ -85,7 +62,7 @@ function QuestTogether:ScanQuestLog()
 	local questsTracked = 0
 	for questLogIndex = 1, numQuestLogEntries do
 		local info = C_QuestLog.GetInfo(questLogIndex)
-		if info.isHeader == false then
+		if info.isHeader == false and info.isHidden == false then
 			self:WatchQuest(info.questID)
 			questsTracked = questsTracked + 1
 		end
@@ -158,99 +135,5 @@ function QuestTogether:Announce(message)
 			)
 			return
 		end
-	end
-end
-
-function QuestTogether:PLAYER_ENTERING_WORLD()
-	self:Debug("PLAYER_ENTERING_WORLD()")
-	C_Timer.After(10, function()
-		self:ScanQuestLog()
-	end)
-end
-
-function QuestTogether:QUEST_ACCEPTED(event, questId)
-	self:Debug("QUEST_ACCEPTED(" .. questId .. ")")
-	table.insert(self.db.char.onQuestLogUpdate, function()
-		if QuestTogether.db.char.questTracker[questId] == nil then
-			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
-			local info = C_QuestLog.GetInfo(questLogIndex)
-			local message = "Quest Accepted: " .. info.title
-			if self.db.profile.announceAccepted then
-				self:Announce(message)
-			end
-			self:WatchQuest(questId)
-		end
-	end)
-end
-
-function QuestTogether:QUEST_TURNED_IN(event, questId)
-	self:Debug("QUEST_TURNED_IN(" .. questId .. ")")
-	self.db.char.questsCompleted[questId] = true
-end
-
-function QuestTogether:QUEST_REMOVED(event, questId)
-	self:Debug("QUEST_REMOVED(" .. questId .. ")")
-	table.insert(self.db.char.onQuestLogUpdate, function()
-		C_Timer.After(0.5, function()
-			if QuestTogether.db.char.questTracker[questId] then
-				local questTitle = QuestTogether.db.char.questTracker[questId].title
-				if self.db.char.questsCompleted[questId] then
-					local message = "Quest Completed: " .. questTitle
-					if self.db.profile.announceCompleted then
-						self:Announce(message)
-					end
-					if self.db.profile.doEmotes then
-						DoEmote(self.completionEmotes[math.random(#self.completionEmotes)], UnitName("player"))
-					end
-					self.db.char.questsCompleted[questId] = nil
-				else
-					local message = "Quest Removed: " .. questTitle
-					if self.db.profile.announceRemoved then
-						self:Announce(message)
-					end
-				end
-				QuestTogether.db.char.questTracker[questId] = nil
-			end
-		end)
-	end)
-end
-
-function QuestTogether:UNIT_QUEST_LOG_CHANGED(event, unit)
-	self:Debug("UNIT_QUEST_LOG_CHANGED(" .. unit .. ")")
-	if unit == "player" then
-		table.insert(self.db.char.onQuestLogUpdate, function()
-			for questId, quest in pairs(QuestTogether.db.char.questTracker) do
-				local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
-				local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
-				for objectiveIndex = 1, numObjectives do
-					local objectiveText, type, complete, currentValue, maxValue =
-						GetQuestObjectiveInfo(questId, objectiveIndex, false)
-					if type == "progressbar" then
-						local progress = GetQuestProgressBarPercent(questId)
-						objectiveText = progress .. "% " .. objectiveText
-						currentValue = progress
-					end
-					if QuestTogether.db.char.questTracker[questId].objectives[objectiveIndex] ~= objectiveText then
-						if currentValue and currentValue > 0 then
-							if QuestTogether.db.profile.announceProgress then
-								self:Announce(objectiveText)
-							end
-						end
-						QuestTogether.db.char.questTracker[questId].objectives[objectiveIndex] = objectiveText
-					end
-				end
-			end
-		end)
-	end
-end
-
-function QuestTogether:QUEST_LOG_UPDATE(event)
-	self:Debug("QUEST_LOG_UPDATE()")
-	local numTasks = #self.db.char.onQuestLogUpdate
-	if numTasks ~= nil then
-		for index = 1, numTasks, 1 do
-			self.db.char.onQuestLogUpdate[index]()
-		end
-		self.db.char.onQuestLogUpdate = {}
 	end
 end

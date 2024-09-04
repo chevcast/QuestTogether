@@ -13,3 +13,4 @@ Embeds.xml
 
 Core.lua
 Options.lua
+EventHandlers.lua

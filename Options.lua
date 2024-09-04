@@ -11,10 +11,11 @@ QuestTogether.defaultOptions = {
 	},
 	char = {
 		questTracker = {},
-		onQuestLogUpdate = {},
-		questsCompleted = {},
 	},
 }
+
+QuestTogether.onQuestLogUpdate = {}
+QuestTogether.questsCompleted = {}
 
 QuestTogether.channels = {
 	none = "|cff777777None|r",
@@ -42,6 +43,14 @@ QuestTogether.options = {
 				local _, cmd = QuestTogether:GetArgs(info.input, 2)
 				QuestTogether:SendCommMessage("QuestTogether", "cmd " .. cmd, "PARTY")
 			end,
+		},
+		debugMode = {
+			type = "toggle",
+			name = "Debug Mode",
+			desc = "Enable/Disable debug mode.",
+			hidden = true,
+			get = "GetValue",
+			set = "SetValue",
 		},
 		enable = {
 			type = "execute",
@@ -178,12 +187,40 @@ QuestTogether.options = {
 	},
 }
 
+QuestTogether.completionEmotes = {
+	"applaud",
+	"bow",
+	"cheer",
+	"clap",
+	-- "commend",
+	-- "congratulate",
+	-- "curtsey",
+	"dance",
+	-- "forthealliacne",
+	-- "forthehorde",
+	"golfclap",
+	"happy",
+	"highfive",
+	"huzzah",
+	-- "impressed",
+	-- "mountspecial",
+	-- "praise",
+	"proud",
+	-- "purr",
+	-- "quack",
+	-- "roar",
+	"sexy",
+	"smirk",
+	-- "strut",
+	"victory",
+}
+
 function QuestTogether:GetValue(info)
 	self:Print(info[#info])
 	return self.db.profile[info[#info]]
 end
 
 function QuestTogether:SetValue(info, value)
-	self:Print(info[#info] .. " = " .. value)
+	self:Print(info[#info] .. " = " .. tostring(value))
 	self.db.profile[info[#info]] = value
 end
