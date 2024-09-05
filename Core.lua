@@ -113,11 +113,13 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender)
 			end
 		else
 			-- If the player is not mounted or the emote is not for their faction, roll for a different emote.
-			repeat
-				randomEmote = self.completionEmotes[math.random(#self.completionEmotes)]
-			until randomEmote ~= "mountspecial"
-				and randomEmote ~= "forthealliance"
-				and randomEmote ~= "forthehorde"
+			if randomEmote == "mountspecial" or randomEmote == "forthealliance" or randomEmote == "forthehorde" then
+				repeat
+					randomEmote = self.completionEmotes[math.random(#self.completionEmotes)]
+				until randomEmote ~= "mountspecial"
+					and randomEmote ~= "forthealliance"
+					and randomEmote ~= "forthehorde"
+			end
 			DoEmote(randomEmote, sender)
 		end
 	end
