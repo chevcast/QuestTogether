@@ -36,9 +36,10 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 					local message = "Quest Completed: " .. questTitle
 					if self.db.profile.announceCompleted then
 						self:Announce(message)
-					end
-					if self.db.profile.doEmotes then
-						DoEmote(self.completionEmotes[math.random(#self.completionEmotes)], UnitName("player"))
+						if self.db.profile.doEmotes then
+							local randomEmote = self.completionEmotes[math.random(#self.completionEmotes)]
+							self:SendCommMessage("QuestTogether", "emote " .. randomEmote, "PARTY")
+						end
 					end
 					self.questsCompleted[questId] = nil
 				else

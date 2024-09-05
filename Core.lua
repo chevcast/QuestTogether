@@ -99,8 +99,27 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender)
 	if cmd == "cmd" then
 		DEFAULT_CHAT_FRAME.editBox:SetText(arg)
 		ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
-	elseif cmd == "grats" then
-		DoEmote("cheer", arg)
+	elseif cmd == "emote" then
+		local faction, _ = UnitFactionGroup("player")
+		local randomEmote = arg
+
+		if IsMounted() and randomEmote == "mountspecial" then
+			DoEmote("mountspecial")
+		elseif randomEmote == "forthealliance" or randomEmote == "forthehorde" then
+			if faction == "Alliance" then
+				DoEmote("forthealliance", sender)
+			elseif faction == "Horde" then
+				DoEmote("forthehorde", sender)
+			end
+		else
+			-- If the player is not mounted or the emote is not for their faction, roll for a different emote.
+			repeat
+				randomEmote = self.completionEmotes[math.random(#self.completionEmotes)]
+			until randomEmote ~= "mountspecial"
+				and randomEmote ~= "forthealliance"
+				and randomEmote ~= "forthehorde"
+			DoEmote(randomEmote, sender)
+		end
 	end
 end
 
