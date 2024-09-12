@@ -1,31 +1,18 @@
-QuestTogether =
-	LibStub("AceAddon-3.0"):NewAddon("QuestTogether", "AceConsole-3.0", "AceEvent-3.0", "AceComm-3.0", "AceHook-3.0")
+QuestTogether = LibStub("AceAddon-3.0"):NewAddon(
+	"QuestTogether",
+	"AceComm-3.0",
+	"AceConsole-3.0",
+	"AceEvent-3.0",
+	"AceHook-3.0",
+	"AceSerializer-3.0"
+)
 local AceConfig = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
-function ClearAllActionBars()
-	-- Iterate over all action bars
-	for i = 1, NUM_ACTIONBAR_BUTTONS do
-		-- Clear each action bar
-		ClearActionBar(i)
-	end
-
-	-- ElvUI adds extra action bars, so we need to clear those as well
-	local numExtraBars = GetNumShapeshiftForms()
-	for i = 1, numExtraBars do
-		-- Clear each extra action bar
-		ClearActionBar(i + NUM_ACTIONBAR_BUTTONS)
-	end
-end
-
-function ClearActionBar(bar)
-	-- Iterate over all buttons on the action bar
-	for i = 1, 12 do
-		-- Get the action ID for the button
-		local actionID = (bar - 1) * 12 + i
-		-- Clear the action
-		PickupAction(actionID)
-		ClearCursor()
+function QuestTogether:Broadcast(cmd, ...)
+	local serializedData = self:Serialize(...)
+	if UnitInParty("player") then
+		self:SendCommMessage("QuestTogether", cmd .. ' "' .. serializedData .. '"', "PARTY")
 	end
 end
 
@@ -67,14 +54,13 @@ function QuestTogether:OnEnable()
 	self:RegisterEvent("QUEST_REMOVED")
 	self:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 	self:RegisterEvent("QUEST_LOG_UPDATE")
+	self:RegisterEvent("SUPER_TRACKING_CHANGED")
 
 	-- Schedule task to run initial quest log scan.
 	table.insert(self.onQuestLogUpdate, function()
 		QuestTogether:Debug("Running initial quest log scan...")
 		QuestTogether:ScanQuestLog()
 	end)
-
-	self:Debug("OnEnable() end")
 end
 
 function QuestTogether:OnDisable()
@@ -83,7 +69,7 @@ end
 
 function QuestTogether:ScanQuestLog()
 	self:Debug("ScanQuestLog()")
-	QuestTogether.db.char.questTracker = {}
+	QuestTogether.db.global.questTrackers[UnitName("player")] = {}
 	local numQuestLogEntries = C_QuestLog.GetNumQuestLogEntries()
 	local questsTracked = 0
 	for questLogIndex = 1, numQuestLogEntries do
@@ -101,7 +87,7 @@ function QuestTogether:WatchQuest(questId)
 	local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 	local info = C_QuestLog.GetInfo(questLogIndex)
 	local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
-	self.db.char.questTracker[questId] = {
+	self.db.global.questTrackers[UnitName("player")][questId] = {
 		title = info.title,
 		objectives = {},
 	}
@@ -111,23 +97,24 @@ function QuestTogether:WatchQuest(questId)
 			local progress = GetQuestProgressBarPercent(questId)
 			objectiveText = progress .. "% " .. objectiveText
 		end
-		self.db.char.questTracker[questId].objectives[objectiveIndex] = objectiveText
+		self.db.global.questTrackers[UnitName("player")][questId].objectives[objectiveIndex] = objectiveText
 	end
 end
 
 function QuestTogether:OnCommReceived(prefix, message, channel, sender)
-	self:Debug("OnCommReceived(" .. prefix .. ", " .. message .. ", " .. channel .. ", " .. sender .. ")")
-	-- Ignore messages from other addons.
-	if prefix ~= "QuestTogether" then
+	-- Ignore messages from other addons and messages from the player.
+	if prefix ~= "QuestTogether" or sender == UnitName("player") then
 		return
 	end
-	local cmd, arg = self:GetArgs(message, 2)
+	self:Debug("OnCommReceived(" .. message .. ", " .. channel .. ", " .. sender .. ")")
+	local cmd, serializedData = self:GetArgs(message, 2)
 	if cmd == "cmd" then
-		DEFAULT_CHAT_FRAME.editBox:SetText(arg)
+		local text = self:Deserialize(serializedData)
+		DEFAULT_CHAT_FRAME.editBox:SetText(text)
 		ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
 	elseif cmd == "emote" then
 		local faction, _ = UnitFactionGroup("player")
-		local randomEmote = arg
+		local randomEmote = self:Deserialize(serializedData)
 
 		if IsMounted() and randomEmote == "mountspecial" then
 			DoEmote("mountspecial")
@@ -148,12 +135,17 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender)
 			end
 			DoEmote(randomEmote, sender)
 		end
+	elseif cmd == "update-quest-tracker" then
+		local action, data = self:Deserialize(serializedData)
+		if action == "full" then
+			self.db.global.questTrackers[sender] = data
+		end
 	end
 end
 
 function QuestTogether:Announce(message)
 	self:Debug("Announce(" .. message .. ")")
-	local primaryChannel = channel or self.db.profile.primaryChannel
+	local primaryChannel = self.db.profile.primaryChannel
 	local fallbackChannel = self.db.profile.fallbackChannel
 	if primaryChannel == "console" then
 		self:Print(message)

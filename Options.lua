@@ -1,16 +1,18 @@
 QuestTogether.defaultOptions = {
 	profile = {
-		debugMode = false,
-		doEmotes = true,
-		primaryChannel = "party",
-		fallbackChannel = "console",
 		announceAccepted = true,
 		announceCompleted = true,
 		announceRemoved = true,
 		announceProgress = true,
+		debugMode = false,
+		doEmotes = true,
+		fallbackChannel = "console",
+		primaryChannel = "party",
+		syncActiveQuest = true,
+		syncTrackedQuests = false,
 	},
-	char = {
-		questTracker = {},
+	global = {
+		questTrackers = {},
 	},
 }
 
@@ -169,10 +171,31 @@ QuestTogether.options = {
 				},
 			},
 		},
+		trackingSync = {
+			type = "group",
+			name = "Quest Tracking Synchronization",
+			order = 3,
+			inline = true,
+			args = {
+				syncActiveQuest = {
+					type = "toggle",
+					name = "Synchronize Active Quest",
+					desc = "Automatically track the same quest as other party members.",
+					get = "GetValue",
+					set = "SetValue",
+					order = 1,
+				},
+				syncTrackedQuests = {
+					type = "toggle",
+					name = "Synchronize Tracked Quests",
+					desc = "Automatically untrack quests that your party does not share and track any they do.",
+				},
+			},
+		},
 		miscellaneous = {
 			type = "group",
 			name = "Miscellaneous",
-			order = 3,
+			order = 4,
 			inline = true,
 			args = {
 				doEmotes = {
@@ -214,7 +237,6 @@ QuestTogether.completionEmotes = {
 }
 
 function QuestTogether:GetValue(info)
-	self:Print(info[#info])
 	return self.db.profile[info[#info]]
 end
 

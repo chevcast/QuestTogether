@@ -5,7 +5,7 @@
 function QuestTogether:QUEST_ACCEPTED(event, questId)
 	self:Debug("QUEST_ACCEPTED(" .. questId .. ")")
 	table.insert(self.onQuestLogUpdate, function()
-		if QuestTogether.db.char.questTracker[questId] == nil then
+		if QuestTogether.db.global.questTrackers[UnitName("player")][questId] == nil then
 			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 			local info = C_QuestLog.GetInfo(questLogIndex)
 			local message = "Quest Accepted: " .. info.title
@@ -30,14 +30,15 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 	self:Debug("QUEST_REMOVED(" .. questId .. ")")
 	table.insert(self.onQuestLogUpdate, function()
 		C_Timer.After(0.5, function()
-			if QuestTogether.db.char.questTracker[questId] then
-				local questTitle = QuestTogether.db.char.questTracker[questId].title
+			if QuestTogether.db.global.questTrackers[UnitName("player")][questId] then
+				local questTitle = QuestTogether.db.global.questTrackers[UnitName("player")][questId].title
 				if self.questsCompleted[questId] then
 					local message = "Quest Completed: " .. questTitle
 					if self.db.profile.announceCompleted then
 						self:Announce(message)
 						if self.db.profile.doEmotes then
 							local randomEmote = self.completionEmotes[math.random(#self.completionEmotes)]
+							DoEmote(randomEmote, UnitName("player"))
 							self:SendCommMessage("QuestTogether", "emote " .. randomEmote, "PARTY")
 						end
 					end
@@ -48,10 +49,15 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 						self:Announce(message)
 					end
 				end
-				QuestTogether.db.char.questTracker[questId] = nil
+				QuestTogether.db.global.questTrackers[UnitName("player")][questId] = nil
 			end
 		end)
 	end)
+end
+
+function QuestTogether:SUPER_TRACKING_CHANGED(event)
+	local questId = C_SuperTrack.GetSuperTrackedQuestID()
+	self:Print("Super tracking changed to: " .. questId)
 end
 
 -- When the player's quest log changes it's usually an indicator that the player has updated quest objective information.
@@ -60,7 +66,7 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(event, unit)
 	self:Debug("UNIT_QUEST_LOG_CHANGED(" .. unit .. ")")
 	if unit == "player" then
 		table.insert(self.onQuestLogUpdate, function()
-			for questId, quest in pairs(QuestTogether.db.char.questTracker) do
+			for questId, quest in pairs(QuestTogether.db.global.questTrackers[UnitName("player")]) do
 				local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 				local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
 				for objectiveIndex = 1, numObjectives do
@@ -71,13 +77,17 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(event, unit)
 						objectiveText = progress .. "% " .. objectiveText
 						currentValue = progress
 					end
-					if QuestTogether.db.char.questTracker[questId].objectives[objectiveIndex] ~= objectiveText then
+					if
+						QuestTogether.db.global.questTrackers[UnitName("player")][questId].objectives[objectiveIndex]
+						~= objectiveText
+					then
 						if currentValue and currentValue > 0 then
 							if QuestTogether.db.profile.announceProgress then
 								self:Announce(objectiveText)
 							end
 						end
-						QuestTogether.db.char.questTracker[questId].objectives[objectiveIndex] = objectiveText
+						QuestTogether.db.global.questTrackers[UnitName("player")][questId].objectives[objectiveIndex] =
+							objectiveText
 					end
 				end
 			end
