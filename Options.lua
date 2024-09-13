@@ -43,7 +43,7 @@ QuestTogether.options = {
 			hidden = true,
 			func = function(info)
 				local _, cmd = QuestTogether:GetArgs(info.input, 2)
-				QuestTogether:SendCommMessage("QuestTogether", "cmd " .. cmd, "PARTY")
+				QuestTogether:Broadcast("CMD", cmd)
 			end,
 		},
 		debugMode = {

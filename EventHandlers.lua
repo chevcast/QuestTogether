@@ -7,12 +7,15 @@ function QuestTogether:QUEST_ACCEPTED(event, questId)
 	table.insert(self.onQuestLogUpdate, function()
 		if QuestTogether.db.global.questTrackers[UnitName("player")][questId] == nil then
 			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
-			local info = C_QuestLog.GetInfo(questLogIndex)
-			local message = "Quest Accepted: " .. info.title
+			local questInfo = C_QuestLog.GetInfo(questLogIndex)
+			if questInfo.isHidden then
+				return
+			end
+			local message = "Quest Accepted: " .. questInfo.title
 			if self.db.profile.announceAccepted then
 				self:Announce(message)
 			end
-			self:WatchQuest(questId)
+			self:WatchQuest(questId, questInfo)
 		end
 	end)
 end
@@ -39,7 +42,7 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 						if self.db.profile.doEmotes then
 							local randomEmote = self.completionEmotes[math.random(#self.completionEmotes)]
 							DoEmote(randomEmote, UnitName("player"))
-							self:SendCommMessage("QuestTogether", "emote " .. randomEmote, "PARTY")
+							self:Broadcase("EMOTE", randomEmote)
 						end
 					end
 					self.questsCompleted[questId] = nil
@@ -55,10 +58,10 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 	end)
 end
 
-function QuestTogether:SUPER_TRACKING_CHANGED(event)
-	local questId = C_SuperTrack.GetSuperTrackedQuestID()
-	self:Print("Super tracking changed to: " .. questId)
-end
+-- function QuestTogether:SUPER_TRACKING_CHANGED(event)
+-- 	local questId = C_SuperTrack.GetSuperTrackedQuestID()
+-- 	self:Print("Super tracking changed to: " .. questId)
+-- end
 
 -- When the player's quest log changes it's usually an indicator that the player has updated quest objective information.
 -- To ensure quest API functions return updated information we schedule our tracking logic to run after QUEST_LOG_UPDATE.
@@ -97,7 +100,7 @@ end
 
 -- When this event fires it indicates that the quest log has up to date information.
 -- We run any scheduled tasks at this time to ensure those tasks have access to the latest information.
-function QuestTogether:QUEST_LOG_UPDATE(event)
+function QuestTogether:QUEST_LOG_UPDATE()
 	self:Debug("QUEST_LOG_UPDATE()")
 	local numTasks = #self.onQuestLogUpdate
 	if numTasks ~= nil then
@@ -105,5 +108,16 @@ function QuestTogether:QUEST_LOG_UPDATE(event)
 			self.onQuestLogUpdate[index]()
 		end
 		self.onQuestLogUpdate = {}
+		if UnitInParty("player") then
+			self:Broadcast("UPDATE_QUEST_TRACKER", self.db.global.questTrackers[UnitName("player")])
+		end
 	end
+end
+
+function QuestTogether:GROUP_JOINED()
+	self:Broadcast("UPDATE_QUEST_TRACKER", self.db.global.questTrackers[UnitName("player")])
+end
+
+function QuestTogether:GROUP_ROSTER_UPDATE()
+	self:Broadcast("UPDATE_QUEST_TRACKER", self.db.global.questTrackers[UnitName("player")])
 end

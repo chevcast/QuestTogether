@@ -9,13 +9,6 @@ QuestTogether = LibStub("AceAddon-3.0"):NewAddon(
 local AceConfig = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 
-function QuestTogether:Broadcast(cmd, ...)
-	local serializedData = self:Serialize(...)
-	if UnitInParty("player") then
-		self:SendCommMessage("QuestTogether", cmd .. ' "' .. serializedData .. '"', "PARTY")
-	end
-end
-
 function QuestTogether:Debug(message)
 	if self.db.profile.debugMode then
 		self:Print("Debug: " .. message)
@@ -41,9 +34,9 @@ function QuestTogether:OnInitialize()
 	self:Debug("Initialized.")
 end
 
-function QuestTogether:StripColorData(text)
-	return text:gsub("|c%x%x%x%x%x%x%x%x(.-)|r", "%1")
-end
+-- function QuestTogether:StripColorData(text)
+-- 	return text:gsub("|c%x%x%x%x%x%x%x%x(.-)|r", "%1")
+-- end
 
 function QuestTogether:OnEnable()
 	self:Debug("OnEnable()")
@@ -54,7 +47,9 @@ function QuestTogether:OnEnable()
 	self:RegisterEvent("QUEST_REMOVED")
 	self:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 	self:RegisterEvent("QUEST_LOG_UPDATE")
-	self:RegisterEvent("SUPER_TRACKING_CHANGED")
+	-- self:RegisterEvent("SUPER_TRACKING_CHANGED")
+	self:RegisterEvent("GROUP_JOINED")
+	self:RegisterEvent("GROUP_ROSTER_UPDATE")
 
 	-- Schedule task to run initial quest log scan.
 	table.insert(self.onQuestLogUpdate, function()
@@ -73,22 +68,21 @@ function QuestTogether:ScanQuestLog()
 	local numQuestLogEntries = C_QuestLog.GetNumQuestLogEntries()
 	local questsTracked = 0
 	for questLogIndex = 1, numQuestLogEntries do
-		local info = C_QuestLog.GetInfo(questLogIndex)
-		if info.isHeader == false and info.isHidden == false then
-			self:WatchQuest(info.questID)
+		local questInfo = C_QuestLog.GetInfo(questLogIndex)
+		if questInfo.isHeader == false and questInfo.isHidden == false then
+			self:WatchQuest(questInfo.questID, questInfo)
 			questsTracked = questsTracked + 1
 		end
 	end
 	self:Print(questsTracked .. " quests are being monitored.")
 end
 
-function QuestTogether:WatchQuest(questId)
+function QuestTogether:WatchQuest(questId, questInfo)
 	self:Debug("WatchQuest(" .. questId .. ")")
 	local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
-	local info = C_QuestLog.GetInfo(questLogIndex)
 	local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
 	self.db.global.questTrackers[UnitName("player")][questId] = {
-		title = info.title,
+		title = questInfo.title,
 		objectives = {},
 	}
 	for objectiveIndex = 1, numObjectives do
@@ -98,48 +92,6 @@ function QuestTogether:WatchQuest(questId)
 			objectiveText = progress .. "% " .. objectiveText
 		end
 		self.db.global.questTrackers[UnitName("player")][questId].objectives[objectiveIndex] = objectiveText
-	end
-end
-
-function QuestTogether:OnCommReceived(prefix, message, channel, sender)
-	-- Ignore messages from other addons and messages from the player.
-	if prefix ~= "QuestTogether" or sender == UnitName("player") then
-		return
-	end
-	self:Debug("OnCommReceived(" .. message .. ", " .. channel .. ", " .. sender .. ")")
-	local cmd, serializedData = self:GetArgs(message, 2)
-	if cmd == "cmd" then
-		local text = self:Deserialize(serializedData)
-		DEFAULT_CHAT_FRAME.editBox:SetText(text)
-		ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
-	elseif cmd == "emote" then
-		local faction, _ = UnitFactionGroup("player")
-		local randomEmote = self:Deserialize(serializedData)
-
-		if IsMounted() and randomEmote == "mountspecial" then
-			DoEmote("mountspecial")
-		elseif randomEmote == "forthealliance" or randomEmote == "forthehorde" then
-			if faction == "Alliance" then
-				DoEmote("forthealliance", sender)
-			elseif faction == "Horde" then
-				DoEmote("forthehorde", sender)
-			end
-		else
-			-- If the player is not mounted or the emote is not for their faction, roll for a different emote.
-			if randomEmote == "mountspecial" or randomEmote == "forthealliance" or randomEmote == "forthehorde" then
-				repeat
-					randomEmote = self.completionEmotes[math.random(#self.completionEmotes)]
-				until randomEmote ~= "mountspecial"
-					and randomEmote ~= "forthealliance"
-					and randomEmote ~= "forthehorde"
-			end
-			DoEmote(randomEmote, sender)
-		end
-	elseif cmd == "update-quest-tracker" then
-		local action, data = self:Deserialize(serializedData)
-		if action == "full" then
-			self.db.global.questTrackers[sender] = data
-		end
 	end
 end
 
