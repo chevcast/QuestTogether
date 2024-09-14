@@ -43,7 +43,7 @@ function QuestTogether:OnEnable()
 	self:RegisterEvent("QUEST_REMOVED")
 	self:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
 	self:RegisterEvent("QUEST_LOG_UPDATE")
-	-- self:RegisterEvent("SUPER_TRACKING_CHANGED")
+	self:RegisterEvent("SUPER_TRACKING_CHANGED")
 	self:RegisterEvent("GROUP_JOINED")
 	self:RegisterEvent("GROUP_ROSTER_UPDATE")
 
