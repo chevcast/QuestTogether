@@ -1,8 +1,8 @@
 --- Send/Receive Methods ---
 
 function QuestTogether:Broadcast(cmd, ...)
-	self:Debug("Broadcast(" .. cmd .. ", " .. ... .. ")")
 	local serializedData = self:Serialize(...)
+	self:Debug("Broadcast(" .. cmd .. ", " .. serializedData .. ")")
 	if UnitInParty("player") then
 		self:SendCommMessage("QuestTogether", cmd .. " " .. serializedData, "PARTY")
 	end
