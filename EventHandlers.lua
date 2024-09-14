@@ -58,10 +58,11 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 	end)
 end
 
--- function QuestTogether:SUPER_TRACKING_CHANGED(event)
--- 	local questId = C_SuperTrack.GetSuperTrackedQuestID()
--- 	self:Print("Super tracking changed to: " .. questId)
--- end
+function QuestTogether:SUPER_TRACKING_CHANGED(event)
+	local questId = C_SuperTrack.GetSuperTrackedQuestID()
+	self:Debug("SUPER_TRACKING_CHANGED(" .. questId .. ")")
+	self:Broadcast("SUPER_TRACK", questId)
+end
 
 -- When the player's quest log changes it's usually an indicator that the player has updated quest objective information.
 -- To ensure quest API functions return updated information we schedule our tracking logic to run after QUEST_LOG_UPDATE.
