@@ -60,12 +60,13 @@ function QuestTogether:UPDATE_QUEST_TRACKER(serializedData, sender)
 end
 
 function QuestTogether:SUPER_TRACK(serializedData, sender)
-	if not self.db.profile.syncActiveQuest then
+	self:Debug("SUPER_TRACK(" .. serializedData .. ", " .. sender .. ")")
+	if self.db.profile.syncActiveQuest == false then
 		return
 	end
 	local success, questId = self:Deserialize(serializedData)
-	-- get quest title by questIld
 	local questTitle = C_QuestLog.GetTitleForQuestID(questId)
+	local questTracker = self.db.global.questTrackers[UnitName("player")]
 	if questTracker[questId] then
 		C_SuperTrack.SetSuperTrackedQuestID(questId)
 		self:Announce(sender .. ' changed tracked quest to "' .. questTitle .. '"')
