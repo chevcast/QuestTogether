@@ -26,6 +26,7 @@ function QuestTogether:CMD(serializedData, sender)
 	self:Debug("CMD(" .. text .. ")")
 	DEFAULT_CHAT_FRAME.editBox:SetText(text)
 	ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
+	DEFAULT_CHAT_FRAME.editBox:SetText("")
 end
 
 function QuestTogether:EMOTE(serializedData, sender)

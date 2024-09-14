@@ -45,6 +45,7 @@ QuestTogether.options = {
 				local _, cmd = QuestTogether:GetArgs(info.input, 2)
 				DEFAULT_CHAT_FRAME.editBox:SetText(cmd)
 				ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
+				DEFAULT_CHAT_FRAME.editBox:SetText("")
 				QuestTogether:Broadcast("CMD", cmd)
 			end,
 		},
