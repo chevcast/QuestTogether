@@ -60,8 +60,9 @@ end
 
 function QuestTogether:SUPER_TRACKING_CHANGED(event)
 	local questId = C_SuperTrack.GetSuperTrackedQuestID()
-	self:Debug("SUPER_TRACKING_CHANGED(" .. questId .. ")")
-	self:Broadcast("SUPER_TRACK", questId)
+	local questTitle = self.db.global.questTrackers[UnitName("player")][questId].title
+	self:Debug("SUPER_TRACKING_CHANGED(" .. questId .. ", " .. questTitle .. ")")
+	self:Broadcast("SUPER_TRACK", questId, questTitle)
 end
 
 -- When the player's quest log changes it's usually an indicator that the player has updated quest objective information.
