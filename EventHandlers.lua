@@ -59,6 +59,9 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 end
 
 function QuestTogether:SUPER_TRACKING_CHANGED(event)
+	if self.db.profile.syncActiveQuest == false then
+		return
+	end
 	local questId = C_SuperTrack.GetSuperTrackedQuestID()
 	local questTitle = self.db.global.questTrackers[UnitName("player")][questId].title
 	self:Debug("SUPER_TRACKING_CHANGED(" .. questId .. ", " .. questTitle .. ")")
