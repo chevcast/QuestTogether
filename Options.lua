@@ -188,11 +188,11 @@ QuestTogether.options = {
 					set = "SetValue",
 					order = 1,
 				},
-				syncTrackedQuests = {
-					type = "toggle",
-					name = "Synchronize Tracked Quests",
-					desc = "Automatically untrack quests that your party does not share and track any they do.",
-				},
+				-- syncTrackedQuests = {
+				-- 	type = "toggle",
+				-- 	name = "Synchronize Tracked Quests",
+				-- 	desc = "Automatically untrack quests that your party does not share and track any they do.",
+				-- },
 			},
 		},
 		miscellaneous = {
