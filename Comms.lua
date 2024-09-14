@@ -3,33 +3,32 @@
 function QuestTogether:Broadcast(cmd, ...)
 	self:Debug("Broadcast(" .. cmd .. ", " .. ... .. ")")
 	local serializedData = self:Serialize(...)
-	-- if UnitInParty("player") then
-	-- 	self:SendCommMessage("QuestTogether", cmd .. " " .. serializedData, "PARTY")
-	-- end
-	self:SendCommMessage("QuestTogether", cmd .. " " .. serializedData, "WHISPER", "Stamets")
+	if UnitInParty("player") then
+		self:SendCommMessage("QuestTogether", cmd .. " " .. serializedData, "PARTY")
+	end
+	-- self:SendCommMessage("QuestTogether", cmd .. " " .. serializedData, "WHISPER", UnitName("player"))
 end
 
 function QuestTogether:OnCommReceived(prefix, message, channel, sender)
 	-- Ignore messages from other addons and messages from the player.
-	-- if prefix ~= "QuestTogether" or sender == UnitName("player") then
-	-- 	return
-	-- end
+	if prefix ~= "QuestTogether" or sender == UnitName("player") then
+		return
+	end
 	self:Debug("OnCommReceived(" .. prefix .. ", " .. message .. ", " .. channel .. ", " .. sender .. ")")
 	local cmd, serializedData = self:GetArgs(message, 2)
-	self:Debug("cmd: " .. cmd .. ", serializedData: " .. serializedData)
-	self[cmd](self, serializedData)
+	self[cmd](self, serializedData, sender)
 end
 
 --- Comm Event Handlers ---
 
-function QuestTogether:CMD(serializedData)
+function QuestTogether:CMD(serializedData, sender)
 	local success, text = QuestTogether:Deserialize(serializedData)
 	self:Debug("CMD(" .. text .. ")")
 	DEFAULT_CHAT_FRAME.editBox:SetText(text)
 	ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
 end
 
-function QuestTogether:EMOTE(serializedData)
+function QuestTogether:EMOTE(serializedData, sender)
 	local faction, _ = UnitFactionGroup("player")
 	local success, randomEmote = self:Deserialize(serializedData)
 
@@ -54,7 +53,7 @@ function QuestTogether:EMOTE(serializedData)
 	end
 end
 
-function QuestTogether:UPDATE_QUEST_TRACKER(serializedData)
+function QuestTogether:UPDATE_QUEST_TRACKER(serializedData, sender)
 	local success, data = self:Deserialize(serializedData)
 	self.db.global.questTrackers[sender] = data
 end

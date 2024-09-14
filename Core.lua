@@ -34,10 +34,6 @@ function QuestTogether:OnInitialize()
 	self:Debug("Initialized.")
 end
 
--- function QuestTogether:StripColorData(text)
--- 	return text:gsub("|c%x%x%x%x%x%x%x%x(.-)|r", "%1")
--- end
-
 function QuestTogether:OnEnable()
 	self:Debug("OnEnable()")
 

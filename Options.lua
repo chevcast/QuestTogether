@@ -43,6 +43,8 @@ QuestTogether.options = {
 			hidden = true,
 			func = function(info)
 				local _, cmd = QuestTogether:GetArgs(info.input, 2)
+				DEFAULT_CHAT_FRAME.editBox:SetText(cmd)
+				ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
 				QuestTogether:Broadcast("CMD", cmd)
 			end,
 		},
