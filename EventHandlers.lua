@@ -42,7 +42,7 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 						if self.db.profile.doEmotes then
 							local randomEmote = self.completionEmotes[math.random(#self.completionEmotes)]
 							DoEmote(randomEmote, UnitName("player"))
-							self:Broadcase("EMOTE", randomEmote)
+							self:Broadcast("EMOTE", randomEmote)
 						end
 					end
 					self.questsCompleted[questId] = nil
@@ -59,13 +59,11 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 end
 
 function QuestTogether:SUPER_TRACKING_CHANGED(event)
-	if self.db.profile.syncActiveQuest == false then
-		return
-	end
-	local questId = C_SuperTrack.GetSuperTrackedQuestID()
-	local questTitle = self.db.global.questTrackers[UnitName("player")][questId].title
-	self:Debug("SUPER_TRACKING_CHANGED(" .. questId .. ", " .. questTitle .. ")")
-	self:Broadcast("SUPER_TRACK", questId, questTitle)
+	self:Debug("Not Implemented")
+	-- local questId = C_SuperTrack.GetSuperTrackedQuestID()
+	-- local questTitle = self.db.global.questTrackers[UnitName("player")][questId].title
+	-- self:Debug("SUPER_TRACKING_CHANGED(" .. questId .. ", " .. questTitle .. ")")
+	-- self:Broadcast("SUPER_TRACK", questId, questTitle)
 end
 
 -- When the player's quest log changes it's usually an indicator that the player has updated quest objective information.

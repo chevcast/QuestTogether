@@ -8,8 +8,6 @@ QuestTogether.defaultOptions = {
 		doEmotes = true,
 		fallbackChannel = "console",
 		primaryChannel = "party",
-		syncActiveQuest = true,
-		syncTrackedQuests = false,
 	},
 	global = {
 		questTrackers = {},
@@ -172,27 +170,6 @@ QuestTogether.options = {
 					get = "GetValue",
 					set = "SetValue",
 				},
-			},
-		},
-		trackingSync = {
-			type = "group",
-			name = "Quest Tracking Synchronization",
-			order = 3,
-			inline = true,
-			args = {
-				syncActiveQuest = {
-					type = "toggle",
-					name = "Synchronize Active Quest",
-					desc = "Automatically track the same quest as other party members.",
-					get = "GetValue",
-					set = "SetValue",
-					order = 1,
-				},
-				-- syncTrackedQuests = {
-				-- 	type = "toggle",
-				-- 	name = "Synchronize Tracked Quests",
-				-- 	desc = "Automatically untrack quests that your party does not share and track any they do.",
-				-- },
 			},
 		},
 		miscellaneous = {
