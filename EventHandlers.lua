@@ -126,9 +126,11 @@ function QuestTogether:QUEST_LOG_UPDATE()
 end
 
 function QuestTogether:GROUP_JOINED()
+	self:Debug("GROUP_JOINED()")
 	self:Broadcast("UPDATE_QUEST_TRACKER", self.db.global.questTrackers[UnitName("player")])
 end
 
 function QuestTogether:GROUP_ROSTER_UPDATE()
+	self:Debug("GROUP_ROSTER_UPDATE()")
 	self:Broadcast("UPDATE_QUEST_TRACKER", self.db.global.questTrackers[UnitName("player")])
 end
