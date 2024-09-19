@@ -7,7 +7,10 @@ function QuestTogether:QUEST_ACCEPTED(event, questId)
 	table.insert(self.onQuestLogUpdate, function()
 		if QuestTogether.db.global.questTrackers[UnitName("player")][questId] == nil then
 			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
-			QuestTogether:Debug("QUEST_ACCEPTED questLogIndex " .. questLogIndex)
+			if questLogIndex == nil then
+				QuestTogether:Debug("Quest " .. questId .. " not found in quest log.")
+				return
+			end
 			local questInfo = C_QuestLog.GetInfo(questLogIndex)
 			if questInfo.isHidden then
 				return
@@ -75,7 +78,10 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(event, unit)
 		table.insert(self.onQuestLogUpdate, function()
 			for questId, quest in pairs(QuestTogether.db.global.questTrackers[UnitName("player")]) do
 				local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
-				QuestTogether:Debug("UNIT_QUEST_LOG_CHANGED questLogIndex " .. questLogIndex)
+				if questLogIndex == nil then
+					QuestTogether:Debug("Quest " .. questId .. " not found in quest log.")
+					return
+				end
 				local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
 				for objectiveIndex = 1, numObjectives do
 					local objectiveText, type, complete, currentValue, maxValue =
