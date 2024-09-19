@@ -35,6 +35,7 @@
 		"GetFramerate",
 		"GetLocale",
 		"GetMacroInfo",
+		"GetNumGroupMembers",
 		"GetNumQuestLeaderBoards",
 		"GetQuestObjectiveInfo",
 		"GetQuestProgressBarPercent",

@@ -10,6 +10,7 @@ QuestTogether.defaultOptions = {
 		primaryChannel = "party",
 	},
 	global = {
+		partySize = 0,
 		questTrackers = {},
 	},
 }

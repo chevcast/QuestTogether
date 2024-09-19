@@ -127,10 +127,16 @@ end
 
 function QuestTogether:GROUP_JOINED()
 	self:Debug("GROUP_JOINED()")
+	self.db.global.partySize = GetNumGroupMembers()
 	self:Broadcast("UPDATE_QUEST_TRACKER", self.db.global.questTrackers[UnitName("player")])
 end
 
 function QuestTogether:GROUP_ROSTER_UPDATE()
 	self:Debug("GROUP_ROSTER_UPDATE()")
-	self:Broadcast("UPDATE_QUEST_TRACKER", self.db.global.questTrackers[UnitName("player")])
+	local partySize = self.db.global.partySize
+	local newPartySize = GetNumGroupMembers()
+	if partySize ~= newPartySize then
+		self.db.global.partySize = newPartySize
+		self:Broadcast("UPDATE_QUEST_TRACKER", self.db.global.questTrackers[UnitName("player")])
+	end
 end
