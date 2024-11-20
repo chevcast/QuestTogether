@@ -16,6 +16,9 @@ function QuestTogether:QUEST_ACCEPTED(event, questId)
 				return
 			end
 			local message = "Quest Accepted: " .. questInfo.title
+			if C_QuestLog.IsWorldQuest(questId) then
+				message = "World Quest Entered: " .. questInfo.title
+			end
 			if self.db.profile.announceAccepted then
 				self:Announce(message)
 			end
@@ -41,6 +44,9 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 				local questTitle = QuestTogether.db.global.questTrackers[UnitName("player")][questId].title
 				if self.questsCompleted[questId] then
 					local message = "Quest Completed: " .. questTitle
+					if C_QuestLog.IsWorldQuest(questId) then
+						message = "World Quest Completed: " .. questTitle
+					end
 					if self.db.profile.announceCompleted then
 						self:Announce(message)
 						if self.db.profile.doEmotes then
@@ -52,6 +58,9 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 					self.questsCompleted[questId] = nil
 				else
 					local message = "Quest Removed: " .. questTitle
+					if C_QuestLog.IsWorldQuest(questId) then
+						message = "World Quest Removed: " .. questTitle
+					end
 					if self.db.profile.announceRemoved then
 						self:Announce(message)
 					end
