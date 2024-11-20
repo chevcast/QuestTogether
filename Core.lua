@@ -69,6 +69,7 @@ function QuestTogether:ScanQuestLog()
 			questInfo.isHeader == false
 			and questInfo.isHidden == false
 			and not C_QuestLog.IsWorldQuest(questInfo.questID)
+			and not C_QuestLog.IsQuestTask(questInfo.questID)
 		then
 			self:WatchQuest(questInfo.questID, questInfo)
 			questsTracked = questsTracked + 1

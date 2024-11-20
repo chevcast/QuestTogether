@@ -12,12 +12,14 @@ function QuestTogether:QUEST_ACCEPTED(event, questId)
 				return
 			end
 			local questInfo = C_QuestLog.GetInfo(questLogIndex)
-			if questInfo.isHidden and not C_QuestLog.IsWorldQuest(questId) then
+			if questInfo.isHidden and not C_QuestLog.IsWorldQuest(questId) and not C_QuestLog.IsQuestTask(questId) then
 				return
 			end
 			local message = "Quest Accepted: " .. questInfo.title
 			if C_QuestLog.IsWorldQuest(questId) then
 				message = "World Quest Entered: " .. questInfo.title
+			elseif C_QuestLog.IsQuestTask(questId) then
+				message = "Bonus Objective Entered: " .. questInfo.title
 			end
 			if self.db.profile.announceAccepted then
 				self:Announce(message)
@@ -46,6 +48,8 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 					local message = "Quest Completed: " .. questTitle
 					if C_QuestLog.IsWorldQuest(questId) then
 						message = "World Quest Completed: " .. questTitle
+					elseif C_QuestLog.IsQuestTask(questId) then
+						message = "Bonus Objective Completed: " .. questTitle
 					end
 					if self.db.profile.announceCompleted then
 						self:Announce(message)
@@ -60,6 +64,8 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 					local message = "Quest Removed: " .. questTitle
 					if C_QuestLog.IsWorldQuest(questId) then
 						message = "World Quest Left: " .. questTitle
+					elseif C_QuestLog.IsQuestTask(questId) then
+						message = "Bonus Objective Left: " .. questTitle
 					end
 					if self.db.profile.announceRemoved then
 						self:Announce(message)
