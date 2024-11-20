@@ -85,6 +85,7 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		title = questInfo.title,
 		objectives = {},
 	}
+	self:Announce(questInfo.title)
 	for objectiveIndex = 1, numObjectives do
 		local objectiveText, type = GetQuestObjectiveInfo(questId, objectiveIndex, false)
 		if type == "progressbar" then
@@ -92,34 +93,62 @@ function QuestTogether:WatchQuest(questId, questInfo)
 			objectiveText = progress .. "% " .. objectiveText
 		end
 		self.db.global.questTrackers[UnitName("player")][questId].objectives[objectiveIndex] = objectiveText
+		self:Announce(objectiveText)
 	end
 end
 
+function QuestTogether:SanitizeChatInput(input)
+	-- Remove texture links (e.g., |TtexturePath:size|t)
+	input = input:gsub("|T.-|t", "")
+
+	-- Remove color codes (e.g., |cAARRGGBBtext|r)
+	input = input:gsub("|c%x%x%x%x%x%x%x%x", "") -- Remove opening color tags
+	input = input:gsub("|r", "") -- Remove closing color tags
+
+	-- Remove any other escape sequences (e.g., |Hhyperlink|htext|h)
+	input = input:gsub("|H.-|h", "") -- Remove hyperlink tags
+	input = input:gsub("|%a", "") -- Remove any remaining "|X" sequences
+
+	-- Remove any invalid characters
+	input = input:gsub("[^a-zA-Z0-9 !@#$%%%^&*()%-=_+%[%]{};:'\",.<>%?/|\\~`]", "")
+
+	return input
+end
+
 function QuestTogether:Announce(message)
+	message = self:SanitizeChatInput(message)
 	self:Debug("Announce(" .. message .. ")")
+	local function sendMessage(channel)
+		local success, err = pcall(function()
+			SendChatMessage(message, channel)
+		end)
+		if not success then
+			self:Debug('Error sending "' .. message .. '" to ' .. channel .. ": " .. err)
+		end
+	end
 	local primaryChannel = self.db.profile.primaryChannel
 	local fallbackChannel = self.db.profile.fallbackChannel
 	if primaryChannel == "console" then
 		self:Print(message)
 	elseif primaryChannel == "guild" and IsInGuild() then
-		SendChatMessage(message, "GUILD")
+		sendMessage("GUILD")
 	elseif primaryChannel == "instance" and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-		SendChatMessage(message, "INSTANCE_CHAT")
+		sendMessage("INSTANCE_CHAT")
 	elseif primaryChannel == "party" and UnitInParty("player") then
-		SendChatMessage(message, "PARTY")
+		sendMessage("PARTY")
 	elseif primaryChannel == "raid" and IsInRaid() then
-		SendChatMessage(message, "RAID")
+		sendMessage("RAID")
 	else
 		if fallbackChannel == "console" then
 			self:Print(message)
 		elseif fallbackChannel == "guild" and IsInGuild() then
-			SendChatMessage(message, "GUILD")
+			sendMessage("GUILD")
 		elseif fallbackChannel == "instance" and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
-			SendChatMessage(message, "INSTANCE_CHAT")
+			sendMessage("INSTANCE_CHAT")
 		elseif fallbackChannel == "party" and UnitInParty("player") then
-			SendChatMessage(message, "PARTY")
+			sendMessage("PARTY")
 		elseif fallbackChannel == "raid" and IsInRaid() then
-			SendChatMessage(message, "RAID")
+			sendMessage("RAID")
 		else
 			self:Debug(
 				"Unable to send message to primary or fallback channel: " .. primaryChannel .. "|" .. fallbackChannel
