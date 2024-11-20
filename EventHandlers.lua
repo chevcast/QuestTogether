@@ -59,7 +59,7 @@ function QuestTogether:QUEST_REMOVED(event, questId)
 				else
 					local message = "Quest Removed: " .. questTitle
 					if C_QuestLog.IsWorldQuest(questId) then
-						message = "World Quest Removed: " .. questTitle
+						message = "World Quest Left: " .. questTitle
 					end
 					if self.db.profile.announceRemoved then
 						self:Announce(message)
