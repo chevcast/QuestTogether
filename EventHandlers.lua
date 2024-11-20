@@ -12,7 +12,7 @@ function QuestTogether:QUEST_ACCEPTED(event, questId)
 				return
 			end
 			local questInfo = C_QuestLog.GetInfo(questLogIndex)
-			if questInfo.isHidden then
+			if questInfo.isHidden and not C_QuestLog.IsWorldQuest(questId) then
 				return
 			end
 			local message = "Quest Accepted: " .. questInfo.title
