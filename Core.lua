@@ -85,7 +85,6 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		title = questInfo.title,
 		objectives = {},
 	}
-	self:Announce(questInfo.title)
 	for objectiveIndex = 1, numObjectives do
 		local objectiveText, type = GetQuestObjectiveInfo(questId, objectiveIndex, false)
 		if type == "progressbar" then
@@ -93,7 +92,6 @@ function QuestTogether:WatchQuest(questId, questInfo)
 			objectiveText = progress .. "% " .. objectiveText
 		end
 		self.db.global.questTrackers[UnitName("player")][questId].objectives[objectiveIndex] = objectiveText
-		self:Announce(objectiveText)
 	end
 end
 
