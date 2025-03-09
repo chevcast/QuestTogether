@@ -1,4 +1,4 @@
-## Interface: 110002
+## Interface: 110007, 110100
 ## Title: QuestTogether
 ## Version: 2.2.2
 ## Notes: Helpful tools for keeping quests in sync between party members.
