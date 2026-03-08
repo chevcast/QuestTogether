@@ -86,7 +86,22 @@ local function WithIsolatedState(testFn)
 	local originalAPI = QuestTogether.API
 	local originalPrint = QuestTogether.Print
 	local originalBroadcast = QuestTogether.Broadcast
+	local originalSendQuestDelta = QuestTogether.SendQuestDelta
+	local originalSendSnapshotToMember = QuestTogether.SendSnapshotToMember
+	local originalPendingObjectiveDeltas = QuestTogether.pendingObjectiveDeltas
+	local originalObjectiveDeltaFlushScheduled = QuestTogether.objectiveDeltaFlushScheduled
+	local originalPendingSnapshotChunks = QuestTogether.pendingSnapshotChunks
+	local originalPartyMembers = QuestTogether.partyMembers
+	local originalPartyMemberOrder = QuestTogether.partyMemberOrder
+	local originalPartyRosterFingerprint = QuestTogether.partyRosterFingerprint
+	local originalRemoteQuestState = QuestTogether.remoteQuestState
+	local originalRemoteQuestRevision = QuestTogether.remoteQuestRevision
+	local originalLocalQuestRevision = QuestTogether.localQuestRevision
+	local originalDebugPartyTemplates = QuestTogether.debugPartyTemplates
 	local originalIsEnabled = QuestTogether.isEnabled
+
+	-- Keep tests deterministic regardless of the player's current debugMode setting.
+	QuestTogether.db.profile.debugMode = false
 
 	local ok, err = pcall(testFn)
 
@@ -95,7 +110,64 @@ local function WithIsolatedState(testFn)
 	QuestTogether.API = originalAPI
 	QuestTogether.Print = originalPrint
 	QuestTogether.Broadcast = originalBroadcast
+	QuestTogether.SendQuestDelta = originalSendQuestDelta
+	QuestTogether.SendSnapshotToMember = originalSendSnapshotToMember
+	QuestTogether.pendingObjectiveDeltas = originalPendingObjectiveDeltas
+	QuestTogether.objectiveDeltaFlushScheduled = originalObjectiveDeltaFlushScheduled
+	QuestTogether.pendingSnapshotChunks = originalPendingSnapshotChunks
+	QuestTogether.partyMembers = originalPartyMembers
+	QuestTogether.partyMemberOrder = originalPartyMemberOrder
+	QuestTogether.partyRosterFingerprint = originalPartyRosterFingerprint
+	QuestTogether.remoteQuestState = originalRemoteQuestState
+	QuestTogether.remoteQuestRevision = originalRemoteQuestRevision
+	QuestTogether.localQuestRevision = originalLocalQuestRevision
+	QuestTogether.debugPartyTemplates = originalDebugPartyTemplates
 	QuestTogether.isEnabled = originalIsEnabled
+
+	if not ok then
+		error(err, 0)
+	end
+end
+
+local function WithMockUnitFunctions(unitsByToken, fn)
+	local oldUnitExists = UnitExists
+	local oldUnitFullName = UnitFullName
+	local oldUnitClass = UnitClass
+	local oldUnitName = UnitName
+	local oldGetRealmName = GetRealmName
+
+	UnitExists = function(unitToken)
+		return unitsByToken[unitToken] ~= nil
+	end
+	UnitFullName = function(unitToken)
+		local unit = unitsByToken[unitToken]
+		if not unit then
+			return nil, nil
+		end
+		return unit.name, unit.realm
+	end
+	UnitClass = function(unitToken)
+		local unit = unitsByToken[unitToken]
+		if not unit then
+			return nil, nil
+		end
+		return unit.classFile, unit.classFile
+	end
+	UnitName = function(unitToken)
+		local unit = unitsByToken[unitToken]
+		return unit and unit.name or nil
+	end
+	GetRealmName = function()
+		return "Realm"
+	end
+
+	local ok, err = pcall(fn)
+
+	UnitExists = oldUnitExists
+	UnitFullName = oldUnitFullName
+	UnitClass = oldUnitClass
+	UnitName = oldUnitName
+	GetRealmName = oldGetRealmName
 
 	if not ok then
 		error(err, 0)
@@ -360,4 +432,244 @@ QuestTogether:RegisterTest("on-comm ignores self sender", function()
 	QuestTogether.IsSelfSender = oldMethod
 	QuestTogether.CMD = oldCMD
 	AssertFalse(triggered)
+end)
+
+QuestTogether:RegisterTest("quest record encode/decode keeps completion and revision", function()
+	local record = QuestTogether:EncodeQuestRecord(777, {
+		title = "Test Quest",
+		objectives = { "One", "Two" },
+		isComplete = true,
+	}, 9)
+
+	local questId, questData, revision = QuestTogether:DecodeQuestRecord(record)
+	AssertEquals(questId, 777)
+	AssertEquals(revision, 9)
+	AssertEquals(questData.title, "Test Quest")
+	AssertTrue(questData.isComplete)
+	AssertEquals(questData.objectives[1], "One")
+	AssertEquals(questData.objectives[2], "Two")
+end)
+
+QuestTogether:RegisterTest("objective delta encode/decode roundtrip", function()
+	local payload = QuestTogether:EncodeObjectiveDelta(451, 12, {
+		[1] = "Collect 3/10",
+		[3] = "",
+	}, false)
+
+	local questId, revision, changedObjectives, isComplete = QuestTogether:DecodeObjectiveDelta(payload)
+	AssertEquals(questId, 451)
+	AssertEquals(revision, 12)
+	AssertEquals(changedObjectives[1], "Collect 3/10")
+	AssertEquals(changedObjectives[3], "")
+	AssertFalse(isComplete)
+end)
+
+QuestTogether:RegisterTest("objective delta coalescing merges rapid updates", function()
+	local delayedCallback
+	local sent = {}
+
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(_, callback)
+			delayedCallback = callback
+		end,
+	})
+
+	QuestTogether.SendQuestDelta = function(_, kind, questId, payload)
+		sent[#sent + 1] = {
+			kind = kind,
+			questId = questId,
+			payload = payload,
+		}
+		return true
+	end
+
+	QuestTogether:QueueQuestObjectiveDelta(91, { [1] = "A 1/2" }, nil)
+	QuestTogether:QueueQuestObjectiveDelta(91, { [1] = "A 2/2", [2] = "Bonus 1/1" }, true)
+
+	AssertEquals(#sent, 0)
+	AssertTrue(type(delayedCallback) == "function")
+	delayedCallback()
+
+	AssertEquals(#sent, 1)
+	AssertEquals(sent[1].kind, "Q_OBJ")
+	AssertEquals(sent[1].questId, 91)
+	AssertEquals(sent[1].payload.changedObjectives[1], "A 2/2")
+	AssertEquals(sent[1].payload.changedObjectives[2], "Bonus 1/1")
+	AssertTrue(sent[1].payload.isComplete)
+end)
+
+QuestTogether:RegisterTest("request party sync emits SYNC_REQ only", function()
+	local sent = {}
+	QuestTogether.isEnabled = true
+
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInParty = function()
+			return true
+		end,
+		IsInInstanceGroup = function()
+			return false
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+		end,
+	})
+
+	QuestTogether:RequestPartySync()
+	AssertEquals(#sent, 1)
+	AssertTrue(string.find(sent[1].message, "^SYNC_REQ|") ~= nil)
+	AssertEquals(sent[1].channel, "PARTY")
+end)
+
+QuestTogether:RegisterTest("sync request receives snapshot response", function()
+	local snapshotsSent = 0
+	QuestTogether.isEnabled = true
+
+	QuestTogether.SendSnapshotToMember = function(_, target)
+		if target == "Friend-Realm" then
+			snapshotsSent = snapshotsSent + 1
+		end
+	end
+
+	QuestTogether:SYNC_REQ("", "Friend-Realm")
+	AssertEquals(snapshotsSent, 1)
+end)
+
+QuestTogether:RegisterTest("stale remote revisions are ignored", function()
+	if QuestTogether.InitializePartyState then
+		QuestTogether:InitializePartyState()
+	end
+
+	local sender = "Friend-Realm"
+	local newer = QuestTogether:EncodeQuestRecord(303, {
+		title = "New",
+		objectives = { "step" },
+		isComplete = false,
+	}, 5)
+	local older = QuestTogether:EncodeQuestRecord(303, {
+		title = "Old",
+		objectives = { "oldstep" },
+		isComplete = true,
+	}, 4)
+
+	QuestTogether:ApplyRemoteQuestDelta(sender, "Q_ADD", newer)
+	QuestTogether:ApplyRemoteQuestDelta(sender, "Q_ADD", older)
+
+	local state = QuestTogether:GetRemoteQuestState(sender, 303)
+	AssertEquals(state.title, "New")
+	AssertFalse(state.isComplete)
+	AssertEquals(QuestTogether:GetRemoteQuestRevision(sender, 303), 5)
+end)
+
+QuestTogether:RegisterTest("snapshot chunks reassemble into remote state", function()
+	if QuestTogether.InitializePartyState then
+		QuestTogether:InitializePartyState()
+	end
+
+	local sender = "Ally-Realm"
+	local rec1 = QuestTogether:EncodeQuestRecord(801, {
+		title = "One",
+		objectives = { "A" },
+		isComplete = false,
+	}, 2)
+	local rec2 = QuestTogether:EncodeQuestRecord(802, {
+		title = "Two",
+		objectives = { "B" },
+		isComplete = true,
+	}, 7)
+
+	QuestTogether:SYNC_SNAP("1/2:" .. rec1, sender)
+	QuestTogether:SYNC_SNAP("2/2:" .. rec2, sender)
+
+	local one = QuestTogether:GetRemoteQuestState(sender, 801)
+	local two = QuestTogether:GetRemoteQuestState(sender, 802)
+	AssertEquals(one.title, "One")
+	AssertFalse(one.isComplete)
+	AssertEquals(two.title, "Two")
+	AssertTrue(two.isComplete)
+	AssertEquals(QuestTogether:GetRemoteQuestRevision(sender, 802), 7)
+end)
+
+QuestTogether:RegisterTest("debug mode fills mock roster to full party only when solo", function()
+	if QuestTogether.InitializePartyState then
+		QuestTogether:InitializePartyState()
+	end
+
+	QuestTogether.db.profile.debugMode = true
+
+	WithMockUnitFunctions({
+		player = { name = "Player", realm = "Realm", classFile = "PALADIN" },
+	}, function()
+		QuestTogether:RefreshPartyRoster()
+	end)
+
+	local ordered = QuestTogether:GetOrderedPartyMembers()
+	AssertEquals(#ordered, 5)
+
+	local debugCount = 0
+	for _, memberName in ipairs(ordered) do
+		local meta = QuestTogether:GetMemberMeta(memberName)
+		if meta.isDebugSimulated then
+			debugCount = debugCount + 1
+		end
+	end
+	AssertEquals(debugCount, 4)
+end)
+
+QuestTogether:RegisterTest("debug mode does not inject mock members while grouped", function()
+	if QuestTogether.InitializePartyState then
+		QuestTogether:InitializePartyState()
+	end
+
+	QuestTogether.db.profile.debugMode = true
+
+	WithMockUnitFunctions({
+		player = { name = "Player", realm = "Realm", classFile = "PALADIN" },
+		party1 = { name = "Friend", realm = "Realm", classFile = "MAGE" },
+	}, function()
+		QuestTogether:RefreshPartyRoster()
+	end)
+
+	local ordered = QuestTogether:GetOrderedPartyMembers()
+	AssertEquals(#ordered, 2)
+
+	for _, memberName in ipairs(ordered) do
+		local meta = QuestTogether:GetMemberMeta(memberName)
+		AssertFalse(meta.isDebugSimulated and true or false)
+	end
+end)
+
+QuestTogether:RegisterTest("debug solo simulation creates remote quest mock data", function()
+	if QuestTogether.InitializePartyState then
+		QuestTogether:InitializePartyState()
+	end
+
+	QuestTogether.db.profile.debugMode = true
+	local tracker = QuestTogether:GetPlayerTracker()
+	tracker[9001] = {
+		title = "Debug Quest",
+		objectives = { "Collect 1/3" },
+		isComplete = false,
+	}
+
+	WithMockUnitFunctions({
+		player = { name = "Player", realm = "Realm", classFile = "PALADIN" },
+	}, function()
+		QuestTogether:RefreshPartyRoster()
+	end)
+
+	local foundRemoteQuest = false
+	for memberName, memberQuests in pairs(QuestTogether.remoteQuestState or {}) do
+		local meta = QuestTogether:GetMemberMeta(memberName)
+		if meta.isDebugSimulated and memberQuests[9001] then
+			foundRemoteQuest = true
+			break
+		end
+	end
+
+	AssertTrue(foundRemoteQuest, "Expected at least one simulated member quest state.")
 end)

@@ -259,6 +259,14 @@ function QuestTogether:SetOption(key, value)
 	if key == "primaryChannel" or key == "fallbackChannel" then
 		self:NormalizeChannels()
 	end
+	if key == "debugMode" then
+		if self.RefreshPartyRoster then
+			self:RefreshPartyRoster()
+		end
+		if self.UpdateDebugPartySimulationData then
+			self:UpdateDebugPartySimulationData()
+		end
+	end
 	return true
 end
 
@@ -373,9 +381,6 @@ function QuestTogether:GetBestAddonChannel()
 	if self.API.IsInInstanceGroup() then
 		return "INSTANCE_CHAT"
 	end
-	if self.API.IsInRaid() then
-		return "RAID"
-	end
 	if self.API.IsInParty() then
 		return "PARTY"
 	end
@@ -410,6 +415,13 @@ function QuestTogether:Enable()
 	self.isEnabled = true
 
 	self:Debug("Addon enabled.")
+
+	if self.RefreshPartyRoster then
+		self:RefreshPartyRoster()
+	end
+	if self.ScheduleSyncRequest then
+		self:ScheduleSyncRequest()
+	end
 
 	-- Delay initial scan briefly so quest log APIs are stable right after login/reload.
 	self.API.Delay(0.25, function()
@@ -630,6 +642,13 @@ function QuestTogether:ScanQuestLog()
 	end
 
 	self:Print(questsTracked .. " quests are being monitored.")
+
+	if self.RebuildLocalQuestRevisionIndex then
+		self:RebuildLocalQuestRevisionIndex()
+	end
+	if self.UpdateDebugPartySimulationData then
+		self:UpdateDebugPartySimulationData()
+	end
 end
 
 -- Store the current objective text state for one quest.
@@ -650,6 +669,7 @@ function QuestTogether:WatchQuest(questId, questInfo)
 	tracker[questId] = {
 		title = questInfo.title,
 		objectives = {},
+		isComplete = C_QuestLog.IsComplete(questId) and true or false,
 	}
 
 	for objectiveIndex = 1, numObjectives do
@@ -664,6 +684,9 @@ end
 
 function QuestTogether:OnInitialize()
 	self:InitializeDatabase()
+	if self.InitializePartyState then
+		self:InitializePartyState()
+	end
 	self:InitializeSlashCommands()
 	if self.InitializeOptionsWindow then
 		self:InitializeOptionsWindow()

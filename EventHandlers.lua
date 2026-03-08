@@ -1,15 +1,15 @@
 --[[
 QuestTogether Event Handlers
 
-This file contains runtime event logic and intentionally explains *why* each step exists.
-The important pattern used throughout this addon:
-- Some WoW quest events fire before quest APIs are fully updated.
-- We therefore queue work and run it on QUEST_LOG_UPDATE.
+Responsibilities in this file:
+- Detect local quest changes.
+- Announce and emote locally according to options.
+- Emit compact quest deltas instead of full tracker snapshots.
+- Trigger sync bootstrap requests when roster state changes.
 ]]
 
 local QuestTogether = _G.QuestTogether
 
--- Utility: pick a random celebratory emote token.
 function QuestTogether:PickRandomCompletionEmote()
 	if #self.completionEmotes == 0 then
 		return "cheer"
@@ -18,7 +18,6 @@ function QuestTogether:PickRandomCompletionEmote()
 	return self.completionEmotes[randomIndex]
 end
 
--- Utility: play an emote *locally* only when local settings allow it.
 function QuestTogether:PlayLocalCompletionEmote(emoteToken)
 	if not self:GetOption("doEmotes") then
 		self:Debug("Skipping local emote because doEmotes is disabled.")
@@ -28,20 +27,14 @@ function QuestTogether:PlayLocalCompletionEmote(emoteToken)
 	return true
 end
 
--- Helper used by QUEST_REMOVED when we have confirmed a completed quest.
 function QuestTogether:HandleQuestCompleted(questTitle)
-	-- Completion announcement is controlled by the announceCompleted option.
 	if self:GetOption("announceCompleted") then
 		self:Announce("Quest Completed: " .. tostring(questTitle))
 	end
 
-	-- IMPORTANT BEHAVIOR:
-	-- We *always* broadcast the emote token so party members can respond based on *their* local setting.
-	-- This fixes the bug/behavior mismatch discussed in the rewrite requirements.
+	-- Always send the token. Receivers decide locally via their own doEmotes option.
 	local emoteToken = self:PickRandomCompletionEmote()
 	self:Broadcast("EMOTE", emoteToken)
-
-	-- Local playback remains controlled by doEmotes.
 	self:PlayLocalCompletionEmote(emoteToken)
 end
 
@@ -51,7 +44,37 @@ function QuestTogether:HandleQuestRemoved(questTitle)
 	end
 end
 
--- QUEST_ACCEPTED fires quickly; we defer quest-log reads until QUEST_LOG_UPDATE.
+function QuestTogether:ScheduleSyncRequest()
+	if not self.isEnabled then
+		return
+	end
+	if self.syncRequestScheduled then
+		return
+	end
+
+	self.syncRequestScheduled = true
+	local jitterSeconds = (self.API.Random(200, 600) or 300) / 1000
+	self.API.Delay(jitterSeconds, function()
+		self.syncRequestScheduled = false
+		if self.isEnabled and self.RequestPartySync then
+			self:RequestPartySync()
+		end
+	end)
+end
+
+function QuestTogether:HandleGroupRosterChanged(reason)
+	local previousFingerprint = self:GetPartyRosterFingerprint()
+	if self.RefreshPartyRoster then
+		self:RefreshPartyRoster()
+	end
+	local newFingerprint = self:GetPartyRosterFingerprint()
+
+	if reason == "GROUP_JOINED" or previousFingerprint ~= newFingerprint then
+		self:ScheduleSyncRequest()
+	end
+end
+
+-- QUEST_ACCEPTED fires early; defer reads until QUEST_LOG_UPDATE.
 function QuestTogether:QUEST_ACCEPTED(_, questId)
 	self:Debug("QUEST_ACCEPTED(" .. tostring(questId) .. ")")
 
@@ -77,17 +100,20 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 		end
 
 		self:WatchQuest(questId, questInfo)
+		if self.UpdateDebugPartySimulationData then
+			self:UpdateDebugPartySimulationData()
+		end
+		if self.SendQuestDelta then
+			self:SendQuestDelta("Q_ADD", questId, tracker[questId])
+		end
 	end)
 end
 
--- Track turn-ins so QUEST_REMOVED can distinguish completed vs abandoned.
 function QuestTogether:QUEST_TURNED_IN(_, questId)
 	self:Debug("QUEST_TURNED_IN(" .. tostring(questId) .. ")")
 	self.questsCompleted[questId] = true
 end
 
--- QUEST_REMOVED usually means either completion or abandon.
--- We defer and delay slightly to let API state settle.
 function QuestTogether:QUEST_REMOVED(_, questId)
 	self:Debug("QUEST_REMOVED(" .. tostring(questId) .. ")")
 
@@ -109,6 +135,12 @@ function QuestTogether:QUEST_REMOVED(_, questId)
 			end
 
 			tracker[questId] = nil
+			if self.UpdateDebugPartySimulationData then
+				self:UpdateDebugPartySimulationData()
+			end
+			if self.SendQuestDelta then
+				self:SendQuestDelta("Q_REM", questId)
+			end
 		end)
 	end)
 end
@@ -117,8 +149,8 @@ function QuestTogether:SUPER_TRACKING_CHANGED()
 	self:Debug("SUPER_TRACKING_CHANGED is not implemented.")
 end
 
--- UNIT_QUEST_LOG_CHANGED indicates objectives may have changed.
--- We queue to QUEST_LOG_UPDATE so all objective API calls read fresh state.
+-- UNIT_QUEST_LOG_CHANGED indicates objective and completion changes.
+-- Emit compact objective deltas only for changed indices.
 function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 	self:Debug("UNIT_QUEST_LOG_CHANGED(" .. tostring(unit) .. ")")
 
@@ -132,10 +164,11 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 		for questId, questData in pairs(tracker) do
 			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 			if not questLogIndex then
-				-- Quest can disappear between events (abandon/turn-in); skip it safely.
 				self:Debug("Quest " .. tostring(questId) .. " not found in quest log.")
 			else
+				local changedObjectives = {}
 				local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
+
 				for objectiveIndex = 1, numObjectives do
 					local objectiveText, objectiveType, _, currentValue =
 						GetQuestObjectiveInfo(questId, objectiveIndex, false)
@@ -152,14 +185,47 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 							self:Announce(objectiveText)
 						end
 						questData.objectives[objectiveIndex] = objectiveText
+						changedObjectives[objectiveIndex] = objectiveText
 					end
 				end
+
+				-- Objective list can shrink; emit explicit empty values for removed indices.
+				local previousObjectiveCount = #questData.objectives
+				if previousObjectiveCount > numObjectives then
+					for objectiveIndex = numObjectives + 1, previousObjectiveCount do
+						questData.objectives[objectiveIndex] = nil
+						changedObjectives[objectiveIndex] = ""
+					end
+				end
+
+				local currentIsComplete = C_QuestLog.IsComplete(questId) and true or false
+				local completionChanged = questData.isComplete ~= currentIsComplete
+				if completionChanged then
+					questData.isComplete = currentIsComplete
+				end
+
+				local hasObjectiveChanges = false
+				for _ in pairs(changedObjectives) do
+					hasObjectiveChanges = true
+					break
+				end
+
+				if hasObjectiveChanges or completionChanged then
+					self:QueueQuestObjectiveDelta(
+						questId,
+						changedObjectives,
+						completionChanged and currentIsComplete or nil
+					)
+				end
 			end
+		end
+
+		if self.UpdateDebugPartySimulationData then
+			self:UpdateDebugPartySimulationData()
 		end
 	end)
 end
 
--- When QUEST_LOG_UPDATE fires, queued tasks should now see fresh quest data.
 function QuestTogether:QUEST_LOG_UPDATE()
 	self:Debug("QUEST_LOG_UPDATE()")
 
@@ -179,9 +245,9 @@ function QuestTogether:QUEST_LOG_UPDATE()
 end
 
 function QuestTogether:GROUP_JOINED()
-	self:Broadcast("UPDATE_QUEST_TRACKER", self:GetPlayerTracker())
+	self:HandleGroupRosterChanged("GROUP_JOINED")
 end
 
 function QuestTogether:GROUP_ROSTER_UPDATE()
-	self:Broadcast("UPDATE_QUEST_TRACKER", self:GetPlayerTracker())
+	self:HandleGroupRosterChanged("GROUP_ROSTER_UPDATE")
 end
