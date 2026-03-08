@@ -24,9 +24,9 @@ QuestTogether.debugPartyTemplates = QuestTogether.debugPartyTemplates or {
 	{ name = "Dane", classFile = "DRUID", role = "stale" },
 }
 
-local function NormalizeRealmName(realmName)
+local function NormalizeRealmName(addon, realmName)
 	if not realmName or realmName == "" then
-		realmName = GetRealmName() or ""
+		realmName = addon.API.GetRealmName() or ""
 	end
 	return (realmName:gsub("%s+", ""))
 end
@@ -45,20 +45,20 @@ function QuestTogether:NormalizeMemberName(name)
 	local baseName, realmName = string.match(name, "^([^%-]+)%-(.+)$")
 	if not baseName then
 		baseName = name
-		realmName = NormalizeRealmName(nil)
+		realmName = NormalizeRealmName(self, nil)
 	else
-		realmName = NormalizeRealmName(realmName)
+		realmName = NormalizeRealmName(self, realmName)
 	end
 
 	return tostring(baseName) .. "-" .. tostring(realmName)
 end
 
 function QuestTogether:GetPlayerFullName()
-	local name, realm = UnitFullName("player")
+	local name, realm = self.API.UnitFullName("player")
 	if not name then
 		return nil
 	end
-	return tostring(name) .. "-" .. tostring(NormalizeRealmName(realm))
+	return tostring(name) .. "-" .. tostring(NormalizeRealmName(self, realm))
 end
 
 function QuestTogether:InitializePartyState()
@@ -91,18 +91,18 @@ function QuestTogether:IsDebugPartySimulationEnabled()
 	end
 
 	for partyIndex = 1, 4 do
-		if UnitExists("party" .. tostring(partyIndex)) then
+		if self.API.UnitExists("party" .. tostring(partyIndex)) then
 			return false
 		end
 	end
 
-	return UnitExists("player") and true or false
+	return self.API.UnitExists("player") and true or false
 end
 
 function QuestTogether:SetMemberHasData(memberName, hasData)
 	local meta = self:GetMemberMeta(memberName)
 	meta.hasData = hasData and true or false
-	meta.lastSeen = GetTime()
+	meta.lastSeen = self.API.GetTime()
 end
 
 function QuestTogether:UpdateMemberClass(memberName, classFile)
@@ -114,23 +114,23 @@ function QuestTogether:UpdateMemberClass(memberName, classFile)
 end
 
 local function AddUnitToRoster(addon, unitToken, membersByName, orderedNames)
-	if not UnitExists(unitToken) then
+	if not addon.API.UnitExists(unitToken) then
 		return
 	end
 
 	local fullName
-	local unitName, unitRealm = UnitFullName(unitToken)
+	local unitName, unitRealm = addon.API.UnitFullName(unitToken)
 	if unitName then
-		fullName = tostring(unitName) .. "-" .. tostring(NormalizeRealmName(unitRealm))
+		fullName = tostring(unitName) .. "-" .. tostring(NormalizeRealmName(addon, unitRealm))
 	else
-		fullName = addon:NormalizeMemberName(UnitName(unitToken))
+		fullName = addon:NormalizeMemberName(addon.API.UnitName(unitToken))
 	end
 
 	if not fullName or membersByName[fullName] then
 		return
 	end
 
-	local _, classFile = UnitClass(unitToken)
+	local _, classFile = addon.API.UnitClass(unitToken)
 	membersByName[fullName] = {
 		fullName = fullName,
 		displayName = Ambiguate(fullName, "short"),
@@ -257,7 +257,7 @@ function QuestTogether:SetRemoteQuestState(memberName, questId, questData, revis
 		objectives = {},
 		isComplete = questData.isComplete and true or false,
 		revision = revision or 0,
-		lastSeen = GetTime(),
+		lastSeen = self.API.GetTime(),
 	}
 
 	for objectiveIndex, objectiveText in pairs(questData.objectives or {}) do
@@ -351,7 +351,7 @@ function QuestTogether:UpdateDebugPartySimulationData()
 	end
 
 	local tracker = self:GetPlayerTracker()
-	local now = GetTime()
+	local now = self.API.GetTime()
 
 	for memberName, meta in pairs(self.partyMembers or {}) do
 		if meta.isDebugSimulated then
