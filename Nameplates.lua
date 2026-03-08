@@ -42,6 +42,14 @@ local function ClampColorComponent(value, fallback)
 	return numberValue
 end
 
+local function IsSecretValue(value)
+	if type(issecretvalue) ~= "function" then
+		return false
+	end
+	local ok, result = pcall(issecretvalue, value)
+	return ok and result and true or false
+end
+
 QuestTogether.nameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache or {}
 QuestTogether.nameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache or {}
 QuestTogether.nameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken or {}
@@ -64,7 +72,16 @@ function QuestTogether:DoesNameplateUnitExist(unitToken)
 end
 
 function QuestTogether:GetNameplateUnitGuid(unitToken)
-	return UnitGUID(unitToken)
+	local unitGuid = UnitGUID(unitToken)
+	if not unitGuid or IsSecretValue(unitGuid) then
+		return nil
+	end
+	return unitGuid
+end
+
+function QuestTogether:IsNameplateAugmentationBlockedInCurrentContext()
+	local isInInstance = self.API and self.API.IsInInstance and self.API.IsInInstance()
+	return isInInstance and true or false
 end
 
 function QuestTogether:IsNameplateUnitRelatedToActiveQuest(unitToken)
@@ -376,6 +393,9 @@ function QuestTogether:IsQuestObjectiveNameplate(unitToken, unitFrame)
 	if not self.isEnabled then
 		return false
 	end
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
+		return false
+	end
 
 	if not self:IsNameplateUnitToken(unitToken) then
 		return false
@@ -396,6 +416,9 @@ end
 -- Keep tinting conservative so we do not override important Blizzard states.
 function QuestTogether:ShouldApplyQuestHealthTint(frame)
 	if not self.isEnabled then
+		return false
+	end
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
 		return false
 	end
 
@@ -670,6 +693,14 @@ function QuestTogether:ForEachVisibleNamePlate(callback)
 end
 
 function QuestTogether:RefreshNameplateAugmentation()
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
+		wipe(self.nameplateQuestStateByUnitToken)
+		self:ForEachVisibleNamePlate(function(frame)
+			self:HideNameplateIcon(frame)
+		end)
+		return
+	end
+
 	self:ForEachVisibleNamePlate(function(frame)
 		self:RefreshNameplateIcon(frame)
 	end)
@@ -681,6 +712,15 @@ function QuestTogether:OnNameplateAdded(unitToken)
 	end
 
 	if not self:IsNameplateUnitToken(unitToken) then
+		return
+	end
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
+		local blockedFrame = C_NamePlate
+			and C_NamePlate.GetNamePlateForUnit
+			and C_NamePlate.GetNamePlateForUnit(unitToken, false)
+		if blockedFrame then
+			self:HideNameplateIcon(blockedFrame)
+		end
 		return
 	end
 
@@ -752,6 +792,7 @@ function QuestTogether:TryInstallNameplateHooks()
 			end
 
 			local shouldTint = QuestTogether.isEnabled
+				and not QuestTogether:IsNameplateAugmentationBlockedInCurrentContext()
 				and QuestTogether:GetOption("nameplateQuestHealthColorEnabled")
 				and isQuestObjective
 			if shouldTint then

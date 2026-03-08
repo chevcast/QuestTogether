@@ -1148,6 +1148,67 @@ QuestTogether:RegisterTest("quest health tint gate respects option and unit stat
 	end)
 end)
 
+QuestTogether:RegisterTest("nameplate augmentation is blocked in instance contexts", function()
+	QuestTogether.isEnabled = true
+
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstance = function()
+			return true
+		end,
+	})
+
+	local frame = {
+		unit = "nameplate1",
+		healthBar = {},
+		namePlateIsQuestObjective = true,
+	}
+
+	AssertTrue(QuestTogether:IsNameplateAugmentationBlockedInCurrentContext())
+	AssertFalse(QuestTogether:IsQuestObjectiveNameplate("nameplate1", frame))
+	AssertFalse(QuestTogether:ShouldApplyQuestHealthTint(frame))
+end)
+
+QuestTogether:RegisterTest("nameplate add ignores secret guid cache indexing", function()
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstance = function()
+			return false
+		end,
+	})
+
+	local secretGuid = {}
+	local oldUnitGUID = UnitGUID
+	local oldIsSecretValue = issecretvalue
+	local oldCNamePlate = C_NamePlate
+
+	UnitGUID = function(unitToken)
+		if unitToken == "nameplate1" then
+			return secretGuid
+		end
+		return nil
+	end
+	issecretvalue = function(value)
+		return value == secretGuid
+	end
+	C_NamePlate = {
+		GetNamePlateForUnit = function()
+			return nil
+		end,
+	}
+
+	local ok, err = pcall(function()
+		QuestTogether:OnNameplateAdded("nameplate1")
+	end)
+
+	UnitGUID = oldUnitGUID
+	issecretvalue = oldIsSecretValue
+	C_NamePlate = oldCNamePlate
+
+	if not ok then
+		error(err, 0)
+	end
+end)
+
 QuestTogether:RegisterTest("changing tint color updates quest health bar and restore keeps base", function()
 	QuestTogether.isEnabled = true
 	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true

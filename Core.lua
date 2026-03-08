@@ -199,6 +199,10 @@ QuestTogether.API = QuestTogether.API or {
 	IsInRaid = function()
 		return IsInRaid()
 	end,
+	IsInInstance = function()
+		local inInstance = IsInInstance()
+		return inInstance and true or false
+	end,
 	DoEmote = function(emoteToken, target)
 		DoEmote(emoteToken, target)
 	end,
