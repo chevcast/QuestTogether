@@ -10,6 +10,7 @@
 ## X-License: MIT License
 
 Core.lua
+Nameplates.lua
 PartyState.lua
 Comms.lua
 EventHandlers.lua

@@ -50,6 +50,119 @@ local function CreateCheckbox(parent, optionKey, labelText, tooltipText, x, y)
 	return checkbox
 end
 
+local function ClampColorComponent(value, fallback)
+	local numberValue = tonumber(value)
+	if not numberValue then
+		return fallback
+	end
+	if numberValue < 0 then
+		return 0
+	end
+	if numberValue > 1 then
+		return 1
+	end
+	return numberValue
+end
+
+local function ColorsNearlyEqual(left, right)
+	return math.abs((left or 0) - (right or 0)) < 0.001
+end
+
+local function GetColorOption(optionKey, fallbackColor)
+	local configuredColor = QuestTogether:GetOption(optionKey)
+	if type(configuredColor) ~= "table" then
+		return {
+			r = fallbackColor.r,
+			g = fallbackColor.g,
+			b = fallbackColor.b,
+		}
+	end
+
+	return {
+		r = ClampColorComponent(configuredColor.r, fallbackColor.r),
+		g = ClampColorComponent(configuredColor.g, fallbackColor.g),
+		b = ClampColorComponent(configuredColor.b, fallbackColor.b),
+	}
+end
+
+local function IsColorOptionAtDefault(optionKey, fallbackColor)
+	local current = GetColorOption(optionKey, fallbackColor)
+	return ColorsNearlyEqual(current.r, fallbackColor.r)
+		and ColorsNearlyEqual(current.g, fallbackColor.g)
+		and ColorsNearlyEqual(current.b, fallbackColor.b)
+end
+
+local function CreateColorSwatch(parent, optionKey, labelText, tooltipText, fallbackColor, x, y)
+	local swatchButton = CreateFrame("Button", nil, parent)
+	swatchButton:SetSize(22, 22)
+	swatchButton:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+
+	local border = swatchButton:CreateTexture(nil, "BORDER")
+	border:SetAllPoints()
+	border:SetColorTexture(0, 0, 0, 1)
+	swatchButton.Border = border
+
+	local colorTexture = swatchButton:CreateTexture(nil, "ARTWORK")
+	colorTexture:SetPoint("TOPLEFT", swatchButton, "TOPLEFT", 1, -1)
+	colorTexture:SetPoint("BOTTOMRIGHT", swatchButton, "BOTTOMRIGHT", -1, 1)
+	swatchButton.ColorTexture = colorTexture
+
+	local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	label:SetPoint("LEFT", swatchButton, "RIGHT", 8, 0)
+	label:SetText(labelText)
+
+	if tooltipText and tooltipText ~= "" then
+		swatchButton.tooltipText = tooltipText
+	end
+
+	local function SetColorOption(r, g, b)
+		QuestTogether:SetOption(optionKey, {
+			r = ClampColorComponent(r, fallbackColor.r),
+			g = ClampColorComponent(g, fallbackColor.g),
+			b = ClampColorComponent(b, fallbackColor.b),
+		})
+		if QuestTogether.RefreshOptionsWindow then
+			QuestTogether:RefreshOptionsWindow()
+		else
+			local nextColor = GetColorOption(optionKey, fallbackColor)
+			swatchButton.ColorTexture:SetColorTexture(nextColor.r, nextColor.g, nextColor.b, 1)
+		end
+	end
+
+	swatchButton:SetScript("OnClick", function()
+		if not (ColorPickerFrame and ColorPickerFrame.SetupColorPickerAndShow) then
+			QuestTogether:Print("Color picker is unavailable right now.")
+			return
+		end
+
+		local currentColor = GetColorOption(optionKey, fallbackColor)
+		local previousColor = {
+			r = currentColor.r,
+			g = currentColor.g,
+			b = currentColor.b,
+		}
+
+		local info = {}
+		info.r = currentColor.r
+		info.g = currentColor.g
+		info.b = currentColor.b
+		info.hasOpacity = false
+		info.swatchFunc = function()
+			local r, g, b = ColorPickerFrame:GetColorRGB()
+			SetColorOption(r, g, b)
+		end
+		info.cancelFunc = function()
+			SetColorOption(previousColor.r, previousColor.g, previousColor.b)
+		end
+		ColorPickerFrame:SetupColorPickerAndShow(info)
+	end)
+
+	local startingColor = GetColorOption(optionKey, fallbackColor)
+	swatchButton.ColorTexture:SetColorTexture(startingColor.r, startingColor.g, startingColor.b, 1)
+
+	return swatchButton
+end
+
 local function GetChannelOptions(optionKey)
 	if optionKey == "primaryChannel" then
 		return QuestTogether.channelOrder
@@ -104,6 +217,23 @@ function QuestTogether:RefreshOptionsWindow()
 		controls.announceProgress:SetChecked(self:GetOption("announceProgress"))
 		controls.doEmotes:SetChecked(self:GetOption("doEmotes"))
 		controls.debugMode:SetChecked(self:GetOption("debugMode"))
+		if controls.nameplateQuestIconEnabled then
+			controls.nameplateQuestIconEnabled:SetChecked(self:GetOption("nameplateQuestIconEnabled"))
+		end
+		if controls.nameplateQuestHealthColorEnabled then
+			controls.nameplateQuestHealthColorEnabled:SetChecked(self:GetOption("nameplateQuestHealthColorEnabled"))
+		end
+		if controls.nameplateQuestHealthColor then
+			local color = GetColorOption("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR)
+			controls.nameplateQuestHealthColor.ColorTexture:SetColorTexture(color.r, color.g, color.b, 1)
+		end
+		if controls.resetNameplateQuestHealthColor then
+			if IsColorOptionAtDefault("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR) then
+				controls.resetNameplateQuestHealthColor:Hide()
+			else
+				controls.resetNameplateQuestHealthColor:Show()
+			end
+		end
 	end
 
 	if controls.primaryChannelDropdown then
@@ -146,15 +276,7 @@ function QuestTogether:InitializeOptionsWindow()
 	-- Title + description.
 	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16)
-	title:SetText("QuestTogether")
-
-	CreateDescriptionText(
-		frame,
-		"QuestTogether options.",
-		16,
-		-42,
-		680
-	)
+	title:SetText("QuestTogether Options")
 
 	CreateSectionLabel(frame, "Where To Announce", 16, -82)
 	local primaryDropdown = CreateChannelDropdown(
@@ -208,14 +330,55 @@ function QuestTogether:InitializeOptionsWindow()
 		-294
 	)
 
-	CreateSectionLabel(frame, "Miscellaneous", 16, -338)
+	CreateSectionLabel(frame, "Nameplates", 16, -338)
+	local nameplateQuestIconEnabled = CreateCheckbox(
+		frame,
+		"nameplateQuestIconEnabled",
+		"Quest Objective Icon",
+		"Show a quest icon on default Blizzard nameplates when a unit is a quest objective.",
+		16,
+		-362
+	)
+	local nameplateQuestHealthColorEnabled = CreateCheckbox(
+		frame,
+		"nameplateQuestHealthColorEnabled",
+		"Quest Objective Health Color",
+		"Tint quest-objective nameplate health bars with your selected quest color.",
+		16,
+		-390
+	)
+	local nameplateQuestHealthColor = CreateColorSwatch(
+		frame,
+		"nameplateQuestHealthColor",
+		"Quest Health Color",
+		"Choose the color used to tint quest-objective nameplate health bars.",
+		QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR,
+		36,
+		-417
+	)
+	local resetNameplateQuestHealthColor = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	resetNameplateQuestHealthColor:SetSize(70, 20)
+	resetNameplateQuestHealthColor:SetPoint("LEFT", nameplateQuestHealthColor, "RIGHT", 140, 0)
+	resetNameplateQuestHealthColor:SetText("Reset")
+	resetNameplateQuestHealthColor:SetScript("OnClick", function()
+		local defaults = QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor
+			or QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR
+		QuestTogether:SetOption("nameplateQuestHealthColor", {
+			r = defaults.r,
+			g = defaults.g,
+			b = defaults.b,
+		})
+		QuestTogether:RefreshOptionsWindow()
+	end)
+
+	CreateSectionLabel(frame, "Miscellaneous", 16, -468)
 	local doEmotes = CreateCheckbox(
 		frame,
 		"doEmotes",
 		"Quest Completion Emotes",
 		"If disabled, this character never performs emotes (local completions or incoming emote events).",
 		16,
-		-362
+		-492
 	)
 	local debugMode = CreateCheckbox(
 		frame,
@@ -223,12 +386,12 @@ function QuestTogether:InitializeOptionsWindow()
 		"Debug Mode",
 		"Print debug output in chat.",
 		16,
-		-390
+		-520
 	)
 
 	local testButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	testButton:SetSize(180, 24)
-	testButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -434)
+	testButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -562)
 	testButton:SetText("Run In-Game Tests")
 	testButton:SetScript("OnClick", function()
 		QuestTogether:RunTests()
@@ -251,6 +414,10 @@ function QuestTogether:InitializeOptionsWindow()
 		announceProgress = announceProgress,
 		doEmotes = doEmotes,
 		debugMode = debugMode,
+		nameplateQuestIconEnabled = nameplateQuestIconEnabled,
+		nameplateQuestHealthColorEnabled = nameplateQuestHealthColorEnabled,
+		nameplateQuestHealthColor = nameplateQuestHealthColor,
+		resetNameplateQuestHealthColor = resetNameplateQuestHealthColor,
 	}
 
 	frame:SetScript("OnShow", function()

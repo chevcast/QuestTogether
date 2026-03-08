@@ -43,6 +43,13 @@ QuestTogether.DEFAULTS = {
 		doEmotes = true,
 		fallbackChannel = "console",
 		primaryChannel = "party",
+		nameplateQuestIconEnabled = true,
+		nameplateQuestHealthColorEnabled = true,
+		nameplateQuestHealthColor = {
+			r = 0.95,
+			g = 0.45,
+			b = 0.05,
+		},
 	},
 	global = {
 		questTrackers = {},
@@ -158,6 +165,24 @@ QuestTogether.API = QuestTogether.API or {
 	Random = function(low, high)
 		return math.random(low, high)
 	end,
+	GetTime = function()
+		return GetTime()
+	end,
+	UnitExists = function(unitToken)
+		return UnitExists(unitToken)
+	end,
+	UnitFullName = function(unitToken)
+		return UnitFullName(unitToken)
+	end,
+	UnitClass = function(unitToken)
+		return UnitClass(unitToken)
+	end,
+	UnitName = function(unitToken)
+		return UnitName(unitToken)
+	end,
+	GetRealmName = function()
+		return GetRealmName()
+	end,
 }
 
 -- Deep copy helper used for defaults merging and tests.
@@ -265,6 +290,15 @@ function QuestTogether:SetOption(key, value)
 		end
 		if self.UpdateDebugPartySimulationData then
 			self:UpdateDebugPartySimulationData()
+		end
+	end
+	if
+		key == "nameplateQuestIconEnabled"
+		or key == "nameplateQuestHealthColorEnabled"
+		or key == "nameplateQuestHealthColor"
+	then
+		if self.RefreshNameplateAugmentation then
+			self:RefreshNameplateAugmentation()
 		end
 	end
 	return true
@@ -414,6 +448,10 @@ function QuestTogether:Enable()
 	self.API.RegisterAddonPrefix(self.commPrefix)
 	self.isEnabled = true
 
+	if self.EnableNameplateAugmentation then
+		self:EnableNameplateAugmentation()
+	end
+
 	self:Debug("Addon enabled.")
 
 	if self.RefreshPartyRoster then
@@ -442,6 +480,11 @@ function QuestTogether:Disable()
 
 	self:UnregisterRuntimeEvents()
 	self.isEnabled = false
+
+	if self.DisableNameplateAugmentation then
+		self:DisableNameplateAugmentation()
+	end
+
 	self:Debug("Addon disabled.")
 	return true
 end
@@ -687,6 +730,9 @@ function QuestTogether:OnInitialize()
 	if self.InitializePartyState then
 		self:InitializePartyState()
 	end
+	if self.TryInstallNameplateHooks then
+		self:TryInstallNameplateHooks()
+	end
 	self:InitializeSlashCommands()
 	if self.InitializeOptionsWindow then
 		self:InitializeOptionsWindow()
@@ -704,6 +750,10 @@ end
 
 -- Bootstrap event handlers always registered.
 function QuestTogether:ADDON_LOADED(_, loadedAddonName)
+	if self.TryInstallNameplateHooks and self.isInitialized then
+		self:TryInstallNameplateHooks()
+	end
+
 	if loadedAddonName ~= self.addonName then
 		return
 	end

@@ -99,9 +99,21 @@ local function WithIsolatedState(testFn)
 	local originalLocalQuestRevision = QuestTogether.localQuestRevision
 	local originalDebugPartyTemplates = QuestTogether.debugPartyTemplates
 	local originalIsEnabled = QuestTogether.isEnabled
+	local originalNameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken
+	local originalNameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache
+	local originalNameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache
+	local originalNameplateBaseHealthColorByUnitFrame = QuestTogether.nameplateBaseHealthColorByUnitFrame
 
 	-- Keep tests deterministic regardless of the player's current debugMode setting.
 	QuestTogether.db.profile.debugMode = false
+	QuestTogether.isEnabled = false
+	if QuestTogether.DisableNameplateAugmentation then
+		QuestTogether:DisableNameplateAugmentation()
+	end
+	QuestTogether.nameplateQuestStateByUnitToken = {}
+	QuestTogether.nameplateQuestObjectiveCache = {}
+	QuestTogether.nameplateQuestTitleCache = {}
+	QuestTogether.nameplateBaseHealthColorByUnitFrame = setmetatable({}, { __mode = "k" })
 
 	local ok, err = pcall(testFn)
 
@@ -123,51 +135,64 @@ local function WithIsolatedState(testFn)
 	QuestTogether.localQuestRevision = originalLocalQuestRevision
 	QuestTogether.debugPartyTemplates = originalDebugPartyTemplates
 	QuestTogether.isEnabled = originalIsEnabled
+	QuestTogether.nameplateQuestStateByUnitToken = originalNameplateQuestStateByUnitToken
+	QuestTogether.nameplateQuestObjectiveCache = originalNameplateQuestObjectiveCache
+	QuestTogether.nameplateQuestTitleCache = originalNameplateQuestTitleCache
+	QuestTogether.nameplateBaseHealthColorByUnitFrame = originalNameplateBaseHealthColorByUnitFrame
+	if originalIsEnabled and QuestTogether.EnableNameplateAugmentation then
+		QuestTogether:EnableNameplateAugmentation()
+	end
 
 	if not ok then
 		error(err, 0)
 	end
 end
 
-local function WithMockUnitFunctions(unitsByToken, fn)
-	local oldUnitExists = UnitExists
-	local oldUnitFullName = UnitFullName
-	local oldUnitClass = UnitClass
-	local oldUnitName = UnitName
-	local oldGetRealmName = GetRealmName
-
-	UnitExists = function(unitToken)
-		return unitsByToken[unitToken] ~= nil
-	end
-	UnitFullName = function(unitToken)
-		local unit = unitsByToken[unitToken]
-		if not unit then
-			return nil, nil
-		end
-		return unit.name, unit.realm
-	end
-	UnitClass = function(unitToken)
-		local unit = unitsByToken[unitToken]
-		if not unit then
-			return nil, nil
-		end
-		return unit.classFile, unit.classFile
-	end
-	UnitName = function(unitToken)
-		local unit = unitsByToken[unitToken]
-		return unit and unit.name or nil
-	end
-	GetRealmName = function()
-		return "Realm"
-	end
+local function WithMockUnitApi(unitsByToken, fn)
+	local oldAPI = QuestTogether.API
+	QuestTogether.API = CreateApiWithOverrides({
+		UnitExists = function(unitToken)
+			return unitsByToken[unitToken] ~= nil
+		end,
+		UnitFullName = function(unitToken)
+			local unit = unitsByToken[unitToken]
+			if not unit then
+				return nil, nil
+			end
+			return unit.name, unit.realm
+		end,
+		UnitClass = function(unitToken)
+			local unit = unitsByToken[unitToken]
+			if not unit then
+				return nil, nil
+			end
+			return unit.classFile, unit.classFile
+		end,
+		UnitName = function(unitToken)
+			local unit = unitsByToken[unitToken]
+			return unit and unit.name or nil
+		end,
+		GetRealmName = function()
+			return "Realm"
+		end,
+	})
 
 	local ok, err = pcall(fn)
 
-	UnitExists = oldUnitExists
-	UnitFullName = oldUnitFullName
-	UnitClass = oldUnitClass
-	UnitName = oldUnitName
-	GetRealmName = oldGetRealmName
+	QuestTogether.API = oldAPI
+
+	if not ok then
+		error(err, 0)
+	end
+end
+
+local function WithPatchedMethod(targetTable, methodName, replacement, fn)
+	local original = targetTable[methodName]
+	targetTable[methodName] = replacement
+
+	local ok, err = pcall(fn)
+
+	targetTable[methodName] = original
 
 	if not ok then
 		error(err, 0)
@@ -215,6 +240,12 @@ QuestTogether:RegisterTest("default profile contains expected options", function
 	AssertTrue(QuestTogether.DEFAULTS.profile.announceProgress ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.primaryChannel ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestIconEnabled ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColorEnabled ~= nil)
+	AssertTrue(type(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor) == "table")
+	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor.r ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor.g ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor.b ~= nil)
 end)
 
 QuestTogether:RegisterTest("set/get option updates profile", function()
@@ -222,6 +253,14 @@ QuestTogether:RegisterTest("set/get option updates profile", function()
 	AssertFalse(QuestTogether:GetOption("doEmotes"))
 	AssertTrue(QuestTogether:SetOption("doEmotes", true))
 	AssertTrue(QuestTogether:GetOption("doEmotes"))
+end)
+
+QuestTogether:RegisterTest("nameplate health color option is clamped and readable", function()
+	AssertTrue(QuestTogether:SetOption("nameplateQuestHealthColor", { r = 2, g = -1, b = 0.4 }))
+	local color = QuestTogether:GetNameplateQuestHealthColor()
+	AssertEquals(color.r, 1)
+	AssertEquals(color.g, 0)
+	AssertEquals(color.b, 0.4)
 end)
 
 QuestTogether:RegisterTest("announce uses primary channel when available", function()
@@ -601,7 +640,7 @@ QuestTogether:RegisterTest("debug mode fills mock roster to full party only when
 
 	QuestTogether.db.profile.debugMode = true
 
-	WithMockUnitFunctions({
+	WithMockUnitApi({
 		player = { name = "Player", realm = "Realm", classFile = "PALADIN" },
 	}, function()
 		QuestTogether:RefreshPartyRoster()
@@ -627,7 +666,7 @@ QuestTogether:RegisterTest("debug mode does not inject mock members while groupe
 
 	QuestTogether.db.profile.debugMode = true
 
-	WithMockUnitFunctions({
+	WithMockUnitApi({
 		player = { name = "Player", realm = "Realm", classFile = "PALADIN" },
 		party1 = { name = "Friend", realm = "Realm", classFile = "MAGE" },
 	}, function()
@@ -649,16 +688,15 @@ QuestTogether:RegisterTest("debug solo simulation creates remote quest mock data
 	end
 
 	QuestTogether.db.profile.debugMode = true
-	local tracker = QuestTogether:GetPlayerTracker()
-	tracker[9001] = {
-		title = "Debug Quest",
-		objectives = { "Collect 1/3" },
-		isComplete = false,
-	}
-
-	WithMockUnitFunctions({
+	WithMockUnitApi({
 		player = { name = "Player", realm = "Realm", classFile = "PALADIN" },
 	}, function()
+		local tracker = QuestTogether:GetPlayerTracker()
+		tracker[9001] = {
+			title = "Debug Quest",
+			objectives = { "Collect 1/3" },
+			isComplete = false,
+		}
 		QuestTogether:RefreshPartyRoster()
 	end)
 
@@ -672,4 +710,228 @@ QuestTogether:RegisterTest("debug solo simulation creates remote quest mock data
 	end
 
 	AssertTrue(foundRemoteQuest, "Expected at least one simulated member quest state.")
+end)
+
+QuestTogether:RegisterTest("quest objective resolver prefers nameplate frame flag", function()
+	local unitFrame = { namePlateIsQuestObjective = true }
+
+	WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function()
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+			return true
+		end, function()
+			local isQuestObjective = QuestTogether:IsQuestObjectiveUnit("nameplate1", unitFrame)
+			AssertTrue(isQuestObjective)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest objective resolver falls back to UnitIsQuestBoss", function()
+	local unitFrame = {}
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsNameplateUnitOnQuest", function()
+				return false
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function()
+					return false
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function(_, unitToken)
+						return unitToken == "nameplate3"
+					end, function()
+						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate3", unitFrame))
+						AssertFalse(QuestTogether:IsQuestObjectiveUnit("nameplate4", unitFrame))
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest objective resolver uses UnitIsRelatedToActiveQuest", function()
+	local unitFrame = {}
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function(_, unitToken)
+			return unitToken == "nameplate2"
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsNameplateUnitOnQuest", function()
+				return false
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function()
+					return false
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function()
+						return false
+					end, function()
+						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate2", unitFrame))
+						AssertFalse(QuestTogether:IsQuestObjectiveUnit("nameplate9", unitFrame))
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest objective resolver uses tooltip scan fallback", function()
+	local unitFrame = {}
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsNameplateUnitOnQuest", function()
+				return false
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function(_, unitToken)
+					return unitToken == "nameplate2"
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function()
+						return false
+					end, function()
+						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate2", unitFrame))
+						AssertFalse(QuestTogether:IsQuestObjectiveUnit("nameplate3", unitFrame))
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest health tint gate respects option and unit state", function()
+	QuestTogether.isEnabled = true
+	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
+
+	local frame = {
+		unit = "nameplate1",
+		healthBar = {},
+		namePlateIsQuestObjective = true,
+	}
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsNameplateUnitConnected", function()
+				return true
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsNameplateUnitDead", function()
+					return false
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitTapDenied", function()
+						return false
+					end, function()
+						WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
+							return true
+						end, function()
+							WithPatchedMethod(QuestTogether, "IsQuestObjectiveUnit", function()
+								return true
+							end, function()
+								AssertTrue(QuestTogether:ShouldApplyQuestHealthTint(frame))
+
+								QuestTogether.db.profile.nameplateQuestHealthColorEnabled = false
+								AssertFalse(QuestTogether:ShouldApplyQuestHealthTint(frame))
+
+								QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
+								frame.unit = "target"
+								AssertFalse(QuestTogether:ShouldApplyQuestHealthTint(frame))
+							end)
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("changing tint color updates quest health bar and restore keeps base", function()
+	QuestTogether.isEnabled = true
+	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
+	QuestTogether.db.profile.nameplateQuestHealthColor = {
+		r = 0.95,
+		g = 0.45,
+		b = 0.05,
+	}
+
+	local currentR, currentG, currentB = 0.2, 0.3, 0.4
+	local frame = {
+		healthBar = {
+			GetStatusBarColor = function()
+				return currentR, currentG, currentB
+			end,
+			SetStatusBarColor = function(_, r, g, b)
+				currentR, currentG, currentB = r, g, b
+			end,
+		},
+	}
+
+	QuestTogether:ApplyQuestTintToNameplate(frame)
+	AssertTrue(math.abs(currentR - 0.95) < 0.001)
+	AssertTrue(math.abs(currentG - 0.45) < 0.001)
+	AssertTrue(math.abs(currentB - 0.05) < 0.001)
+
+	QuestTogether.db.profile.nameplateQuestHealthColor = {
+		r = 0.1,
+		g = 0.8,
+		b = 0.2,
+	}
+	QuestTogether:ApplyQuestTintToNameplate(frame)
+	AssertTrue(math.abs(currentR - 0.1) < 0.001)
+	AssertTrue(math.abs(currentG - 0.8) < 0.001)
+	AssertTrue(math.abs(currentB - 0.2) < 0.001)
+
+	QuestTogether:RestoreNameplateHealthColor(frame)
+	AssertTrue(math.abs(currentR - 0.2) < 0.001)
+	AssertTrue(math.abs(currentG - 0.3) < 0.001)
+	AssertTrue(math.abs(currentB - 0.4) < 0.001)
+end)
+
+QuestTogether:RegisterTest("restore ignores stale cached base color after nameplate frame reuse", function()
+	QuestTogether.isEnabled = true
+	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
+
+	local currentR, currentG, currentB = 0.9, 0.05, 0.05
+	local frame = {
+		unit = "nameplate1",
+		healthBar = {
+			GetStatusBarColor = function()
+				return currentR, currentG, currentB
+			end,
+			SetStatusBarColor = function(_, r, g, b)
+				currentR, currentG, currentB = r, g, b
+			end,
+		},
+	}
+
+	local guidByToken = {
+		nameplate1 = "Creature-0-OLD",
+	}
+
+	WithPatchedMethod(QuestTogether, "GetNameplateUnitGuid", function(_, unitToken)
+		return guidByToken[unitToken]
+	end, function()
+		QuestTogether:ApplyQuestTintToNameplate(frame)
+
+		-- Simulate frame reuse: Blizzard has already set this new neutral unit to yellow.
+		currentR, currentG, currentB = 1.0, 1.0, 0.0
+		guidByToken.nameplate1 = "Creature-0-NEW"
+
+		QuestTogether:RestoreNameplateHealthColor(frame)
+		AssertTrue(math.abs(currentR - 1.0) < 0.001)
+		AssertTrue(math.abs(currentG - 1.0) < 0.001)
+		AssertTrue(math.abs(currentB - 0.0) < 0.001)
+		AssertTrue(QuestTogether.nameplateBaseHealthColorByUnitFrame[frame] == nil)
+	end)
 end)
