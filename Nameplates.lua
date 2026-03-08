@@ -470,20 +470,30 @@ function QuestTogether:RememberNameplateBaseHealthColor(unitFrame)
 		return
 	end
 
-	-- Never overwrite an already captured baseline.
-	-- This prevents color-picker changes from replacing the true Blizzard base color.
-	if self.nameplateBaseHealthColorByUnitFrame[unitFrame] then
+	local unitGuid = nil
+	if unitFrame.unit then
+		local resolvedGuid = self:GetNameplateUnitGuid(unitFrame.unit)
+		if type(resolvedGuid) == "string" and resolvedGuid ~= "" then
+			unitGuid = resolvedGuid
+		end
+	end
+
+	local cachedBase = self.nameplateBaseHealthColorByUnitFrame[unitFrame]
+	if unitGuid and cachedBase and cachedBase.unitGuid == unitGuid then
 		return
 	end
 
-	local r, g, b = unitFrame.healthBar:GetStatusBarColor()
-	local tint = self:GetNameplateQuestHealthColor()
-	local isAlreadyTinted = math.abs(r - tint.r) < 0.001 and math.abs(g - tint.g) < 0.001 and math.abs(b - tint.b) < 0.001
-	if isAlreadyTinted then
+	local red, green, blue = unitFrame.healthBar:GetStatusBarColor()
+	if type(red) ~= "number" or type(green) ~= "number" or type(blue) ~= "number" then
 		return
 	end
 
-	self.nameplateBaseHealthColorByUnitFrame[unitFrame] = { r = r, g = g, b = b }
+	self.nameplateBaseHealthColorByUnitFrame[unitFrame] = {
+		r = red,
+		g = green,
+		b = blue,
+		unitGuid = unitGuid,
+	}
 end
 
 function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
@@ -492,6 +502,7 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 	end
 
 	self:RememberNameplateBaseHealthColor(unitFrame)
+
 	local color = self:GetNameplateQuestHealthColor()
 	unitFrame.healthBar:SetStatusBarColor(color.r, color.g, color.b)
 end
@@ -501,12 +512,33 @@ function QuestTogether:RestoreNameplateHealthColor(unitFrame)
 		return
 	end
 
-	local baseColor = self.nameplateBaseHealthColorByUnitFrame[unitFrame]
-	if not baseColor then
+	local cachedBase = self.nameplateBaseHealthColorByUnitFrame[unitFrame]
+	if not cachedBase then
 		return
 	end
 
-	unitFrame.healthBar:SetStatusBarColor(baseColor.r, baseColor.g, baseColor.b)
+	if cachedBase.unitGuid then
+		local currentGuid = nil
+		if unitFrame.unit then
+			local resolvedGuid = self:GetNameplateUnitGuid(unitFrame.unit)
+			if type(resolvedGuid) == "string" and resolvedGuid ~= "" then
+				currentGuid = resolvedGuid
+			end
+		end
+		if cachedBase.unitGuid ~= currentGuid then
+			-- Frame got reused for a different unit; never restore stale color onto it.
+			self.nameplateBaseHealthColorByUnitFrame[unitFrame] = nil
+			return
+		end
+	end
+
+	if type(cachedBase.r) ~= "number" or type(cachedBase.g) ~= "number" or type(cachedBase.b) ~= "number" then
+		-- Defensive guard for malformed cache entries.
+		self.nameplateBaseHealthColorByUnitFrame[unitFrame] = nil
+		return
+	end
+
+	unitFrame.healthBar:SetStatusBarColor(cachedBase.r, cachedBase.g, cachedBase.b)
 	self.nameplateBaseHealthColorByUnitFrame[unitFrame] = nil
 end
 
@@ -640,31 +672,32 @@ function QuestTogether:TryInstallNameplateHooks()
 		self.nameplateDriverHookInstalled = true
 	end
 
-		if not self.nameplateHealthColorHookInstalled and type(CompactUnitFrame_UpdateHealthColor) == "function" then
-			hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
-				if not frame or not frame.healthBar or type(frame.unit) ~= "string" then
-					return
-				end
-				if not QuestTogether:IsNameplateUnitToken(frame.unit) then
-					return
-				end
+	if not self.nameplateHealthColorHookInstalled and type(CompactUnitFrame_UpdateHealthColor) == "function" then
+		hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
+			if not frame or type(frame.unit) ~= "string" then
+				return
+			end
+			if not QuestTogether:IsNameplateUnitToken(frame.unit) then
+				return
+			end
 
-				local isQuestObjective = QuestTogether.nameplateQuestStateByUnitToken[frame.unit]
-				if isQuestObjective == nil then
-					isQuestObjective = QuestTogether:IsQuestObjectiveNameplate(frame.unit, frame)
-					QuestTogether.nameplateQuestStateByUnitToken[frame.unit] = isQuestObjective and true or false
-				end
-				local shouldTint = QuestTogether.isEnabled
-					and QuestTogether:GetOption("nameplateQuestHealthColorEnabled")
-					and isQuestObjective
-				if shouldTint then
-					QuestTogether:ApplyQuestTintToNameplate(frame)
-				else
-					QuestTogether:RestoreNameplateHealthColor(frame)
-				end
-			end)
-			self.nameplateHealthColorHookInstalled = true
-		end
+			local isQuestObjective = QuestTogether.nameplateQuestStateByUnitToken[frame.unit]
+			if isQuestObjective == nil then
+				isQuestObjective = QuestTogether:IsQuestObjectiveNameplate(frame.unit, frame)
+				QuestTogether.nameplateQuestStateByUnitToken[frame.unit] = isQuestObjective and true or false
+			end
+
+			local shouldTint = QuestTogether.isEnabled
+				and QuestTogether:GetOption("nameplateQuestHealthColorEnabled")
+				and isQuestObjective
+			if shouldTint then
+				QuestTogether:ApplyQuestTintToNameplate(frame)
+			else
+				QuestTogether:RestoreNameplateHealthColor(frame)
+			end
+		end)
+		self.nameplateHealthColorHookInstalled = true
+	end
 
 	self.nameplateHooksInstalled = self.nameplateDriverHookInstalled and self.nameplateHealthColorHookInstalled
 end
@@ -744,7 +777,7 @@ function QuestTogether:DisableNameplateAugmentation()
 		wipe(self.nameplateRegisteredEvents)
 	end
 
-	-- Hide only our icon overlays; health tint naturally clears next Blizzard color update.
+	-- Hide our icon overlays and clear cached quest objective state.
 	wipe(self.nameplateQuestStateByUnitToken)
 	self:ForEachVisibleNamePlate(function(frame)
 		self:HideNameplateIcon(frame)

@@ -856,7 +856,7 @@ QuestTogether:RegisterTest("quest health tint gate respects option and unit stat
 	end)
 end)
 
-QuestTogether:RegisterTest("changing tint color keeps original base health color", function()
+QuestTogether:RegisterTest("changing tint color updates quest health bar and restore keeps base", function()
 	QuestTogether.isEnabled = true
 	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
 	QuestTogether.db.profile.nameplateQuestHealthColor = {
@@ -878,12 +878,9 @@ QuestTogether:RegisterTest("changing tint color keeps original base health color
 	}
 
 	QuestTogether:ApplyQuestTintToNameplate(frame)
-
-	local remembered = QuestTogether.nameplateBaseHealthColorByUnitFrame[frame]
-	AssertTrue(remembered ~= nil, "Expected a remembered base color.")
-	AssertTrue(math.abs(remembered.r - 0.2) < 0.001)
-	AssertTrue(math.abs(remembered.g - 0.3) < 0.001)
-	AssertTrue(math.abs(remembered.b - 0.4) < 0.001)
+	AssertTrue(math.abs(currentR - 0.95) < 0.001)
+	AssertTrue(math.abs(currentG - 0.45) < 0.001)
+	AssertTrue(math.abs(currentB - 0.05) < 0.001)
 
 	QuestTogether.db.profile.nameplateQuestHealthColor = {
 		r = 0.1,
@@ -891,14 +888,50 @@ QuestTogether:RegisterTest("changing tint color keeps original base health color
 		b = 0.2,
 	}
 	QuestTogether:ApplyQuestTintToNameplate(frame)
-
-	local rememberedAfterColorChange = QuestTogether.nameplateBaseHealthColorByUnitFrame[frame]
-	AssertTrue(math.abs(rememberedAfterColorChange.r - 0.2) < 0.001)
-	AssertTrue(math.abs(rememberedAfterColorChange.g - 0.3) < 0.001)
-	AssertTrue(math.abs(rememberedAfterColorChange.b - 0.4) < 0.001)
+	AssertTrue(math.abs(currentR - 0.1) < 0.001)
+	AssertTrue(math.abs(currentG - 0.8) < 0.001)
+	AssertTrue(math.abs(currentB - 0.2) < 0.001)
 
 	QuestTogether:RestoreNameplateHealthColor(frame)
 	AssertTrue(math.abs(currentR - 0.2) < 0.001)
 	AssertTrue(math.abs(currentG - 0.3) < 0.001)
 	AssertTrue(math.abs(currentB - 0.4) < 0.001)
+end)
+
+QuestTogether:RegisterTest("restore ignores stale cached base color after nameplate frame reuse", function()
+	QuestTogether.isEnabled = true
+	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
+
+	local currentR, currentG, currentB = 0.9, 0.05, 0.05
+	local frame = {
+		unit = "nameplate1",
+		healthBar = {
+			GetStatusBarColor = function()
+				return currentR, currentG, currentB
+			end,
+			SetStatusBarColor = function(_, r, g, b)
+				currentR, currentG, currentB = r, g, b
+			end,
+		},
+	}
+
+	local guidByToken = {
+		nameplate1 = "Creature-0-OLD",
+	}
+
+	WithPatchedMethod(QuestTogether, "GetNameplateUnitGuid", function(_, unitToken)
+		return guidByToken[unitToken]
+	end, function()
+		QuestTogether:ApplyQuestTintToNameplate(frame)
+
+		-- Simulate frame reuse: Blizzard has already set this new neutral unit to yellow.
+		currentR, currentG, currentB = 1.0, 1.0, 0.0
+		guidByToken.nameplate1 = "Creature-0-NEW"
+
+		QuestTogether:RestoreNameplateHealthColor(frame)
+		AssertTrue(math.abs(currentR - 1.0) < 0.001)
+		AssertTrue(math.abs(currentG - 1.0) < 0.001)
+		AssertTrue(math.abs(currentB - 0.0) < 0.001)
+		AssertTrue(QuestTogether.nameplateBaseHealthColorByUnitFrame[frame] == nil)
+	end)
 end)
