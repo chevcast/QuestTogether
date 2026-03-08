@@ -212,7 +212,7 @@ function QuestTogether:InitializeOptionsWindow()
 	local doEmotes = CreateCheckbox(
 		frame,
 		"doEmotes",
-		"Do Emotes Locally",
+		"Quest Completion Emotes",
 		"If disabled, this character never performs emotes (local completions or incoming emote events).",
 		16,
 		-362
