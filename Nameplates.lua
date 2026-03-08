@@ -14,8 +14,12 @@ Design constraints:
 local QuestTogether = _G.QuestTogether
 local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
 
--- Icon copied from the user's prior Plater mod usage for visual familiarity.
+-- Original icon used by this addon's first nameplate implementation.
 QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE = "Interface\\OPTIONSFRAME\\UI-OptionsFrame-NewFeatureIcon"
+QuestTogether.NAMEPLATE_QUEST_ICON_ATLAS = nil
+QuestTogether.NAMEPLATE_QUEST_ICON_TEX_COORDS = nil
+QuestTogether.NAMEPLATE_QUEST_ICON_WIDTH = 21
+QuestTogether.NAMEPLATE_QUEST_ICON_HEIGHT = 21
 
 -- Default burnt-orange tint for quest-objective units.
 QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR = {
@@ -437,6 +441,56 @@ function QuestTogether:ShouldApplyQuestHealthTint(frame)
 	return self:IsQuestObjectiveUnit(frame.unit, frame)
 end
 
+local function GetIconBarAnchor(unitFrame)
+	if unitFrame.healthBar then
+		return unitFrame.healthBar
+	end
+	if unitFrame.HealthBarsContainer then
+		return unitFrame.HealthBarsContainer
+	end
+	return unitFrame
+end
+
+function QuestTogether:ApplyNameplateQuestIconStyle(icon, unitFrame)
+	if not icon or not unitFrame then
+		return
+	end
+
+	local style = self:GetNameplateQuestIconStyle()
+	local width = self.NAMEPLATE_QUEST_ICON_WIDTH
+	local height = self.NAMEPLATE_QUEST_ICON_HEIGHT
+
+	icon:ClearAllPoints()
+
+	if style == "left" then
+		local barAnchor = GetIconBarAnchor(unitFrame)
+		icon:SetPoint("RIGHT", barAnchor, "LEFT", -1, 0)
+	elseif style == "right" then
+		local barAnchor = GetIconBarAnchor(unitFrame)
+		icon:SetPoint("LEFT", barAnchor, "RIGHT", 1, 0)
+	elseif style == "prefix" then
+		local nameText = unitFrame.name
+		if nameText then
+			-- Prefix places the icon directly against the unit name text.
+			width = math.max(7, math.floor(width * 0.75 + 0.5))
+			height = math.max(10, math.floor(height * 0.75 + 0.5))
+			icon:SetPoint("RIGHT", nameText, "LEFT", 0, 0)
+		elseif unitFrame.HealthBarsContainer then
+			icon:SetPoint("BOTTOM", unitFrame.HealthBarsContainer, "TOP", 0, 11)
+		else
+			icon:SetPoint("TOP", unitFrame, "TOP", 0, 7)
+		end
+	else
+		if unitFrame.HealthBarsContainer then
+			icon:SetPoint("BOTTOM", unitFrame.HealthBarsContainer, "TOP", 0, 11)
+		else
+			icon:SetPoint("TOP", unitFrame, "TOP", 0, 7)
+		end
+	end
+
+	icon:SetSize(width, height)
+end
+
 local function EnsureQuestIcon(unitFrame)
 	if not unitFrame then
 		return nil
@@ -444,22 +498,26 @@ local function EnsureQuestIcon(unitFrame)
 
 	local existingIcon = QuestTogether.nameplateIconByUnitFrame[unitFrame]
 	if existingIcon then
+		QuestTogether:ApplyNameplateQuestIconStyle(existingIcon, unitFrame)
 		return existingIcon
 	end
 
 	local icon = unitFrame:CreateTexture(nil, "OVERLAY", nil, 2)
 	QuestTogether.nameplateIconByUnitFrame[unitFrame] = icon
 
-	icon:SetTexture(QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE)
-	icon:SetSize(21, 21)
-
-	-- Anchor centered above the health bar for a clean, consistent position.
-	-- This is intentionally attached to existing Blizzard regions instead of replacing layout.
-	if unitFrame.HealthBarsContainer then
-		icon:SetPoint("BOTTOM", unitFrame.HealthBarsContainer, "TOP", 0, 11)
+	if icon.SetAtlas and QuestTogether.NAMEPLATE_QUEST_ICON_ATLAS then
+		icon:SetAtlas(QuestTogether.NAMEPLATE_QUEST_ICON_ATLAS, true)
+		icon:SetTexCoord(0, 1, 0, 1)
 	else
-		icon:SetPoint("TOP", unitFrame, "TOP", 0, 7)
+		icon:SetTexture(QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE)
+		local coords = QuestTogether.NAMEPLATE_QUEST_ICON_TEX_COORDS
+		if coords then
+			icon:SetTexCoord(coords.left, coords.right, coords.top, coords.bottom)
+		else
+			icon:SetTexCoord(0, 1, 0, 1)
+		end
 	end
+	QuestTogether:ApplyNameplateQuestIconStyle(icon, unitFrame)
 
 	icon:Hide()
 	return icon

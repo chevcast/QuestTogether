@@ -204,6 +204,39 @@ local function CreateChannelDropdown(parent, optionKey, titleText, tooltipText, 
 	return dropdown
 end
 
+local function CreateNameplateIconStyleDropdown(parent, optionKey, titleText, tooltipText, x, y)
+	local title = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	title:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+	title:SetText(titleText)
+
+	local dropdown = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
+	dropdown:SetPoint("TOPLEFT", title, "BOTTOMLEFT", -16, -2)
+
+	if tooltipText and tooltipText ~= "" then
+		dropdown.tooltipText = tooltipText
+	end
+
+	UIDropDownMenu_SetWidth(dropdown, 140)
+
+	local function InitializeDropdown(_, level)
+		for _, styleKey in ipairs(QuestTogether.nameplateQuestIconStyleOrder) do
+			local info = UIDropDownMenu_CreateInfo()
+			info.text = QuestTogether:GetNameplateQuestIconStyleLabel(styleKey)
+			info.func = function()
+				QuestTogether:SetOption(optionKey, styleKey)
+				QuestTogether:RefreshOptionsWindow()
+				CloseDropDownMenus()
+			end
+			info.checked = QuestTogether:GetNameplateQuestIconStyle() == styleKey
+			UIDropDownMenu_AddButton(info, level)
+		end
+	end
+
+	dropdown.initializeMenu = InitializeDropdown
+	UIDropDownMenu_Initialize(dropdown, InitializeDropdown)
+	return dropdown
+end
+
 function QuestTogether:RefreshOptionsWindow()
 	if not self.optionsFrame then
 		return
@@ -231,6 +264,16 @@ function QuestTogether:RefreshOptionsWindow()
 		controls.debugMode:SetChecked(self:GetOption("debugMode"))
 		if controls.nameplateQuestIconEnabled then
 			controls.nameplateQuestIconEnabled:SetChecked(self:GetOption("nameplateQuestIconEnabled"))
+		end
+		if controls.nameplateQuestIconStyleDropdown then
+			UIDropDownMenu_Initialize(
+				controls.nameplateQuestIconStyleDropdown,
+				controls.nameplateQuestIconStyleDropdown.initializeMenu
+			)
+			UIDropDownMenu_SetText(
+				controls.nameplateQuestIconStyleDropdown,
+				self:GetNameplateQuestIconStyleLabel(self:GetNameplateQuestIconStyle())
+			)
 		end
 		if controls.nameplateQuestHealthColorEnabled then
 			controls.nameplateQuestHealthColorEnabled:SetChecked(self:GetOption("nameplateQuestHealthColorEnabled"))
@@ -383,13 +426,21 @@ function QuestTogether:InitializeOptionsWindow()
 		16,
 		-362
 	)
+	local nameplateQuestIconStyleDropdown = CreateNameplateIconStyleDropdown(
+		frame,
+		"nameplateQuestIconStyle",
+		"Quest Icon Style",
+		"Choose where to place the quest icon on the nameplate.",
+		36,
+		-388
+	)
 	local nameplateQuestHealthColorEnabled = CreateCheckbox(
 		frame,
 		"nameplateQuestHealthColorEnabled",
 		"Quest Objective Health Color",
 		"Tint quest-objective nameplate health bars with your selected quest color.",
 		16,
-		-390
+		-430
 	)
 	local nameplateQuestHealthColor = CreateColorSwatch(
 		frame,
@@ -398,7 +449,7 @@ function QuestTogether:InitializeOptionsWindow()
 		"Choose the color used to tint quest-objective nameplate health bars.",
 		QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR,
 		36,
-		-417
+		-457
 	)
 	local resetNameplateQuestHealthColor = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	resetNameplateQuestHealthColor:SetSize(70, 20)
@@ -415,14 +466,14 @@ function QuestTogether:InitializeOptionsWindow()
 		QuestTogether:RefreshOptionsWindow()
 	end)
 
-	CreateSectionLabel(frame, "Miscellaneous", 16, -468)
+	CreateSectionLabel(frame, "Miscellaneous", 16, -508)
 	local doEmotes = CreateCheckbox(
 		frame,
 		"doEmotes",
 		"Quest Completion Emotes",
 		"If disabled, this character never performs emotes (local completions or incoming emote events).",
 		16,
-		-492
+		-532
 	)
 	local debugMode = CreateCheckbox(
 		frame,
@@ -430,12 +481,12 @@ function QuestTogether:InitializeOptionsWindow()
 		"Debug Mode",
 		"Print debug output in chat.",
 		16,
-		-520
+		-560
 	)
 
 	local testButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	testButton:SetSize(180, 24)
-	testButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -562)
+	testButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -602)
 	testButton:SetText("Run In-Game Tests")
 	testButton:SetScript("OnClick", function()
 		QuestTogether:RunTests()
@@ -463,6 +514,7 @@ function QuestTogether:InitializeOptionsWindow()
 		doEmotes = doEmotes,
 		debugMode = debugMode,
 		nameplateQuestIconEnabled = nameplateQuestIconEnabled,
+		nameplateQuestIconStyleDropdown = nameplateQuestIconStyleDropdown,
 		nameplateQuestHealthColorEnabled = nameplateQuestHealthColorEnabled,
 		nameplateQuestHealthColor = nameplateQuestHealthColor,
 		resetNameplateQuestHealthColor = resetNameplateQuestHealthColor,

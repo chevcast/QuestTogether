@@ -248,6 +248,7 @@ QuestTogether:RegisterTest("default profile contains expected options", function
 	AssertTrue(QuestTogether.DEFAULTS.profile.primaryChannel ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestIconEnabled ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestIconStyle ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColorEnabled ~= nil)
 	AssertTrue(type(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor) == "table")
 	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor.r ~= nil)
@@ -268,6 +269,14 @@ QuestTogether:RegisterTest("nameplate health color option is clamped and readabl
 	AssertEquals(color.r, 1)
 	AssertEquals(color.g, 0)
 	AssertEquals(color.b, 0.4)
+end)
+
+QuestTogether:RegisterTest("nameplate icon style accepts known values only", function()
+	AssertTrue(QuestTogether:SetOption("nameplateQuestIconStyle", "left"))
+	AssertEquals(QuestTogether:GetNameplateQuestIconStyle(), "left")
+
+	AssertFalse(QuestTogether:SetOption("nameplateQuestIconStyle", "diagonal"))
+	AssertEquals(QuestTogether:GetNameplateQuestIconStyle(), "left")
 end)
 
 QuestTogether:RegisterTest("announce uses primary channel when available", function()

@@ -49,6 +49,7 @@ QuestTogether.DEFAULTS = {
 		fallbackChannel = "console",
 		primaryChannel = "party",
 		nameplateQuestIconEnabled = true,
+		nameplateQuestIconStyle = "prefix",
 		nameplateQuestHealthColorEnabled = true,
 		nameplateQuestHealthColor = {
 			r = 0.95,
@@ -79,6 +80,20 @@ QuestTogether.channelOrder = {
 	"raid",
 }
 
+QuestTogether.nameplateQuestIconStyleLabels = {
+	left = "Left",
+	right = "Right",
+	top = "Top",
+	prefix = "Prefix",
+}
+
+QuestTogether.nameplateQuestIconStyleOrder = {
+	"left",
+	"right",
+	"top",
+	"prefix",
+}
+
 function QuestTogether:IsPrimaryChannel(channelKey)
 	for _, candidate in ipairs(self.channelOrder) do
 		if candidate == channelKey then
@@ -86,6 +101,27 @@ function QuestTogether:IsPrimaryChannel(channelKey)
 		end
 	end
 	return false
+end
+
+function QuestTogether:IsNameplateQuestIconStyle(styleKey)
+	for _, candidate in ipairs(self.nameplateQuestIconStyleOrder) do
+		if candidate == styleKey then
+			return true
+		end
+	end
+	return false
+end
+
+function QuestTogether:GetNameplateQuestIconStyleLabel(styleKey)
+	return self.nameplateQuestIconStyleLabels[styleKey] or tostring(styleKey)
+end
+
+function QuestTogether:GetNameplateQuestIconStyle()
+	local configured = self:GetOption("nameplateQuestIconStyle")
+	if self:IsNameplateQuestIconStyle(configured) then
+		return configured
+	end
+	return self.DEFAULTS.profile.nameplateQuestIconStyle
 end
 
 -- Emotes used when celebrating completed quests.
@@ -308,6 +344,13 @@ function QuestTogether:NormalizeChannels()
 	end
 end
 
+function QuestTogether:NormalizeNameplateOptions()
+	local profile = self.db.profile
+	if not self:IsNameplateQuestIconStyle(profile.nameplateQuestIconStyle) then
+		profile.nameplateQuestIconStyle = self.DEFAULTS.profile.nameplateQuestIconStyle
+	end
+end
+
 function QuestTogether:GetOption(key)
 	if not self.db or not self.db.profile then
 		return nil
@@ -322,9 +365,15 @@ function QuestTogether:SetOption(key, value)
 	if key == "primaryChannel" and not self:IsPrimaryChannel(value) then
 		return false
 	end
+	if key == "nameplateQuestIconStyle" and not self:IsNameplateQuestIconStyle(value) then
+		return false
+	end
 	self.db.profile[key] = value
 	if key == "primaryChannel" or key == "fallbackChannel" then
 		self:NormalizeChannels()
+	end
+	if key == "nameplateQuestIconStyle" then
+		self:NormalizeNameplateOptions()
 	end
 	if key == "debugMode" then
 		if self.RefreshPartyRoster then
@@ -336,6 +385,7 @@ function QuestTogether:SetOption(key, value)
 	end
 	if
 		key == "nameplateQuestIconEnabled"
+		or key == "nameplateQuestIconStyle"
 		or key == "nameplateQuestHealthColorEnabled"
 		or key == "nameplateQuestHealthColor"
 	then
@@ -385,6 +435,7 @@ function QuestTogether:InitializeDatabase()
 	self.db = _G.QuestTogetherDB
 	self:ApplyDefaults(self.db, self.DEFAULTS)
 	self:NormalizeChannels()
+	self:NormalizeNameplateOptions()
 end
 
 function QuestTogether:CanUseChatChannel(channelKey)
