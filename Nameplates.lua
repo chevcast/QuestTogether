@@ -479,8 +479,14 @@ function QuestTogether:RememberNameplateBaseHealthColor(unitFrame)
 	end
 
 	local cachedBase = self.nameplateBaseHealthColorByUnitFrame[unitFrame]
-	if unitGuid and cachedBase and cachedBase.unitGuid == unitGuid then
-		return
+	if cachedBase then
+		-- If we cannot currently resolve identity, preserve the first captured baseline.
+		if not unitGuid then
+			return
+		end
+		if cachedBase.unitGuid == unitGuid then
+			return
+		end
 	end
 
 	local red, green, blue = unitFrame.healthBar:GetStatusBarColor()

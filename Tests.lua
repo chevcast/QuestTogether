@@ -99,6 +99,7 @@ local function WithIsolatedState(testFn)
 	local originalLocalQuestRevision = QuestTogether.localQuestRevision
 	local originalDebugPartyTemplates = QuestTogether.debugPartyTemplates
 	local originalIsEnabled = QuestTogether.isEnabled
+	local originalWorldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID
 	local originalNameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken
 	local originalNameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache
 	local originalNameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache
@@ -111,6 +112,7 @@ local function WithIsolatedState(testFn)
 		QuestTogether:DisableNameplateAugmentation()
 	end
 	QuestTogether.nameplateQuestStateByUnitToken = {}
+	QuestTogether.worldQuestAreaStateByQuestID = {}
 	QuestTogether.nameplateQuestObjectiveCache = {}
 	QuestTogether.nameplateQuestTitleCache = {}
 	QuestTogether.nameplateBaseHealthColorByUnitFrame = setmetatable({}, { __mode = "k" })
@@ -135,6 +137,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.localQuestRevision = originalLocalQuestRevision
 	QuestTogether.debugPartyTemplates = originalDebugPartyTemplates
 	QuestTogether.isEnabled = originalIsEnabled
+	QuestTogether.worldQuestAreaStateByQuestID = originalWorldQuestAreaStateByQuestID
 	QuestTogether.nameplateQuestStateByUnitToken = originalNameplateQuestStateByUnitToken
 	QuestTogether.nameplateQuestObjectiveCache = originalNameplateQuestObjectiveCache
 	QuestTogether.nameplateQuestTitleCache = originalNameplateQuestTitleCache
@@ -238,6 +241,10 @@ QuestTogether:RegisterTest("default profile contains expected options", function
 	AssertTrue(QuestTogether.DEFAULTS.profile.announceCompleted ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.announceRemoved ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.announceProgress ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.announceWorldQuestAreaEnter ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.announceWorldQuestAreaLeave ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.announceWorldQuestProgress ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.announceWorldQuestCompleted ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.primaryChannel ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestIconEnabled ~= nil)
@@ -433,6 +440,282 @@ QuestTogether:RegisterTest("completion always broadcasts emote token", function(
 	QuestTogether:HandleQuestCompleted("Any Quest")
 	AssertEquals(broadcastCount, 1)
 	AssertEquals(localEmoteCount, 0)
+end)
+
+QuestTogether:RegisterTest("world quest completion uses dedicated announce option", function()
+	local announcedMessages = {}
+	QuestTogether.db.profile.announceCompleted = false
+	QuestTogether.db.profile.announceWorldQuestCompleted = true
+
+	QuestTogether.Broadcast = function()
+		return true
+	end
+
+	QuestTogether.API = CreateApiWithOverrides({
+		Random = function()
+			return 1
+		end,
+		DoEmote = function() end,
+	})
+
+	WithPatchedMethod(QuestTogether, "Announce", function(_, message)
+		announcedMessages[#announcedMessages + 1] = message
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsWorldQuest", function(_, questId)
+			return questId == 9001
+		end, function()
+			QuestTogether:HandleQuestCompleted("World Quest Name", 9001)
+			AssertEquals(#announcedMessages, 1)
+			AssertEquals(announcedMessages[1], "World Quest Completed: World Quest Name")
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("world quest progress uses dedicated option", function()
+	QuestTogether.db.profile.announceProgress = false
+	QuestTogether.db.profile.announceWorldQuestProgress = true
+
+	WithPatchedMethod(QuestTogether, "IsWorldQuest", function(_, questId)
+		return questId == 42
+	end, function()
+		AssertTrue(QuestTogether:ShouldAnnounceObjectiveProgress(42, 5))
+		AssertFalse(QuestTogether:ShouldAnnounceObjectiveProgress(7, 5))
+		AssertFalse(QuestTogether:ShouldAnnounceObjectiveProgress(42, 0))
+	end)
+end)
+
+QuestTogether:RegisterTest("objective announce ignores text-only rewrites with same progress", function()
+	QuestTogether.db.profile.announceProgress = true
+
+	local tracker = QuestTogether:GetPlayerTracker()
+	wipe(tracker)
+	tracker[7001] = {
+		title = "Gather Things",
+		objectives = { "8/8 Lightblooming Bulb" },
+		objectiveValues = { 8 },
+		isComplete = false,
+	}
+
+	local announcedMessages = {}
+	local oldGetNumQuestLeaderBoards = GetNumQuestLeaderBoards
+	local oldGetQuestObjectiveInfo = GetQuestObjectiveInfo
+	local oldCQuestLog = C_QuestLog
+
+	GetNumQuestLeaderBoards = function()
+		return 1
+	end
+	GetQuestObjectiveInfo = function()
+		return "8/8 Lightblooming Bulb (Optional)", "monster", false, 8
+	end
+	C_QuestLog = C_QuestLog or {}
+	C_QuestLog.GetLogIndexForQuestID = function()
+		return 1
+	end
+	C_QuestLog.IsComplete = function()
+		return false
+	end
+
+	local ok, err = pcall(function()
+		WithPatchedMethod(QuestTogether, "Announce", function(_, message)
+			announcedMessages[#announcedMessages + 1] = message
+			return true
+		end, function()
+			QuestTogether:UNIT_QUEST_LOG_CHANGED(nil, "player")
+			QuestTogether:QUEST_LOG_UPDATE()
+			AssertEquals(#announcedMessages, 0)
+		end)
+	end)
+
+	GetNumQuestLeaderBoards = oldGetNumQuestLeaderBoards
+	GetQuestObjectiveInfo = oldGetQuestObjectiveInfo
+	C_QuestLog = oldCQuestLog
+
+	if not ok then
+		error(err, 0)
+	end
+end)
+
+QuestTogether:RegisterTest("objective announce fires on forward numeric progress", function()
+	QuestTogether.db.profile.announceProgress = true
+
+	local tracker = QuestTogether:GetPlayerTracker()
+	wipe(tracker)
+	tracker[7002] = {
+		title = "Gather Things",
+		objectives = { "7/8 Lightblooming Bulb" },
+		objectiveValues = { 7 },
+		isComplete = false,
+	}
+
+	local announcedMessages = {}
+	local oldGetNumQuestLeaderBoards = GetNumQuestLeaderBoards
+	local oldGetQuestObjectiveInfo = GetQuestObjectiveInfo
+	local oldCQuestLog = C_QuestLog
+
+	GetNumQuestLeaderBoards = function()
+		return 1
+	end
+	GetQuestObjectiveInfo = function()
+		return "8/8 Lightblooming Bulb", "monster", false, 8
+	end
+	C_QuestLog = C_QuestLog or {}
+	C_QuestLog.GetLogIndexForQuestID = function()
+		return 1
+	end
+	C_QuestLog.IsComplete = function()
+		return false
+	end
+
+	local ok, err = pcall(function()
+		WithPatchedMethod(QuestTogether, "Announce", function(_, message)
+			announcedMessages[#announcedMessages + 1] = message
+			return true
+		end, function()
+			QuestTogether:UNIT_QUEST_LOG_CHANGED(nil, "player")
+			QuestTogether:QUEST_LOG_UPDATE()
+			AssertEquals(#announcedMessages, 1)
+			AssertEquals(announcedMessages[1], "8/8 Lightblooming Bulb")
+		end)
+	end)
+
+	GetNumQuestLeaderBoards = oldGetNumQuestLeaderBoards
+	GetQuestObjectiveInfo = oldGetQuestObjectiveInfo
+	C_QuestLog = oldCQuestLog
+
+	if not ok then
+		error(err, 0)
+	end
+end)
+
+QuestTogether:RegisterTest("world quest area enter/leave announcements use task snapshot", function()
+	local announcedMessages = {}
+	QuestTogether.db.profile.announceWorldQuestAreaEnter = true
+	QuestTogether.db.profile.announceWorldQuestAreaLeave = true
+
+	local snapshot = {
+		[101] = "The Big Dig",
+	}
+
+	WithPatchedMethod(QuestTogether, "Announce", function(_, message)
+		announcedMessages[#announcedMessages + 1] = message
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetActiveWorldQuestAreaSnapshot", function()
+			return snapshot
+		end, function()
+			QuestTogether:RefreshWorldQuestAreaState(true)
+			AssertEquals(#announcedMessages, 1)
+			AssertEquals(announcedMessages[1], "World Quest Entered: The Big Dig")
+
+			snapshot = {}
+			QuestTogether:RefreshWorldQuestAreaState(true)
+			AssertEquals(#announcedMessages, 2)
+			AssertEquals(announcedMessages[2], "Left World Quest: The Big Dig")
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("world quest leave announcement is suppressed for completed quest", function()
+	local announcedMessages = {}
+	QuestTogether.db.profile.announceWorldQuestAreaEnter = true
+	QuestTogether.db.profile.announceWorldQuestAreaLeave = true
+
+	local snapshot = {
+		[202] = "A Completed World Quest",
+	}
+
+	WithPatchedMethod(QuestTogether, "Announce", function(_, message)
+		announcedMessages[#announcedMessages + 1] = message
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetActiveWorldQuestAreaSnapshot", function()
+			return snapshot
+		end, function()
+			QuestTogether:RefreshWorldQuestAreaState(true)
+			AssertEquals(#announcedMessages, 1)
+
+			QuestTogether.questsCompleted[202] = true
+			snapshot = {}
+			QuestTogether:RefreshWorldQuestAreaState(true)
+			AssertEquals(#announcedMessages, 1)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("world quest area snapshot uses local task table only", function()
+	local oldGetTasksTable = GetTasksTable
+	local oldGetTaskInfo = GetTaskInfo
+	local oldCQuestLog = C_QuestLog
+
+	GetTasksTable = function()
+		return {}
+	end
+	GetTaskInfo = function()
+		return true, true, 1, "Watched Quest"
+	end
+	C_QuestLog = {
+		GetNumWorldQuestWatches = function()
+			return 1
+		end,
+		GetQuestIDForWorldQuestWatchIndex = function()
+			return 303
+		end,
+	}
+
+	local ok, err = pcall(function()
+		WithPatchedMethod(QuestTogether, "IsWorldQuest", function(_, questId)
+			return questId == 303
+		end, function()
+			local snapshot = QuestTogether:GetActiveWorldQuestAreaSnapshot()
+			AssertTrue(next(snapshot) == nil)
+		end)
+	end)
+
+	GetTasksTable = oldGetTasksTable
+	GetTaskInfo = oldGetTaskInfo
+	C_QuestLog = oldCQuestLog
+
+	if not ok then
+		error(err, 0)
+	end
+end)
+
+QuestTogether:RegisterTest("world quest area state follows task snapshot transitions", function()
+	local announcedMessages = {}
+	QuestTogether.db.profile.announceWorldQuestAreaEnter = true
+	QuestTogether.db.profile.announceWorldQuestAreaLeave = true
+
+	local snapshot = {
+		[303] = "Flappy World Quest",
+	}
+
+	WithPatchedMethod(QuestTogether, "Announce", function(_, message)
+		announcedMessages[#announcedMessages + 1] = message
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetActiveWorldQuestAreaSnapshot", function()
+			return snapshot
+		end, function()
+			QuestTogether:RefreshWorldQuestAreaState(true)
+			AssertEquals(announcedMessages[1], "World Quest Entered: Flappy World Quest")
+
+			snapshot = {}
+			QuestTogether:RefreshWorldQuestAreaState(true)
+			AssertEquals(announcedMessages[2], "Left World Quest: Flappy World Quest")
+
+			-- Remaining out of area should not produce synthetic re-enter.
+			QuestTogether:RefreshWorldQuestAreaState(true)
+			AssertEquals(#announcedMessages, 2)
+
+			-- Re-enter only when the task snapshot has the quest again.
+			snapshot = {
+				[303] = "Flappy World Quest",
+			}
+			QuestTogether:RefreshWorldQuestAreaState(true)
+			AssertEquals(announcedMessages[3], "World Quest Entered: Flappy World Quest")
+		end)
+	end)
 end)
 
 QuestTogether:RegisterTest("slash set command updates doEmotes", function()
@@ -893,6 +1176,33 @@ QuestTogether:RegisterTest("changing tint color updates quest health bar and res
 	AssertTrue(math.abs(currentB - 0.2) < 0.001)
 
 	QuestTogether:RestoreNameplateHealthColor(frame)
+	AssertTrue(math.abs(currentR - 0.2) < 0.001)
+	AssertTrue(math.abs(currentG - 0.3) < 0.001)
+	AssertTrue(math.abs(currentB - 0.4) < 0.001)
+end)
+
+QuestTogether:RegisterTest("tint baseline is preserved when frame identity is unavailable", function()
+	QuestTogether.isEnabled = true
+	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
+	QuestTogether.db.profile.nameplateQuestHealthColor = { r = 0.95, g = 0.45, b = 0.05 }
+
+	local currentR, currentG, currentB = 0.2, 0.3, 0.4
+	local frame = {
+		healthBar = {
+			GetStatusBarColor = function()
+				return currentR, currentG, currentB
+			end,
+			SetStatusBarColor = function(_, r, g, b)
+				currentR, currentG, currentB = r, g, b
+			end,
+		},
+	}
+
+	QuestTogether:ApplyQuestTintToNameplate(frame)
+	QuestTogether.db.profile.nameplateQuestHealthColor = { r = 0.1, g = 0.8, b = 0.2 }
+	QuestTogether:ApplyQuestTintToNameplate(frame)
+	QuestTogether:RestoreNameplateHealthColor(frame)
+
 	AssertTrue(math.abs(currentR - 0.2) < 0.001)
 	AssertTrue(math.abs(currentG - 0.3) < 0.001)
 	AssertTrue(math.abs(currentB - 0.4) < 0.001)

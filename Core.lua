@@ -29,6 +29,7 @@ QuestTogether.isEnabled = QuestTogether.isEnabled or false
 -- Work queues / state tables used by event handlers.
 QuestTogether.onQuestLogUpdate = QuestTogether.onQuestLogUpdate or {}
 QuestTogether.questsCompleted = QuestTogether.questsCompleted or {}
+QuestTogether.worldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID or {}
 
 -- Default settings for SavedVariables.
 -- We keep the old profile/global shape so existing logic and future migration are simple.
@@ -39,6 +40,10 @@ QuestTogether.DEFAULTS = {
 		announceCompleted = true,
 		announceRemoved = true,
 		announceProgress = true,
+		announceWorldQuestAreaEnter = true,
+		announceWorldQuestAreaLeave = true,
+		announceWorldQuestProgress = true,
+		announceWorldQuestCompleted = true,
 		debugMode = false,
 		doEmotes = true,
 		fallbackChannel = "console",
@@ -115,6 +120,12 @@ QuestTogether.runtimeEvents = {
 	"QUEST_REMOVED",
 	"UNIT_QUEST_LOG_CHANGED",
 	"QUEST_LOG_UPDATE",
+	"QUEST_POI_UPDATE",
+	"AREA_POIS_UPDATED",
+	"ZONE_CHANGED",
+	"ZONE_CHANGED_INDOORS",
+	"ZONE_CHANGED_NEW_AREA",
+	"PLAYER_ENTERING_WORLD",
 	"SUPER_TRACKING_CHANGED",
 	"GROUP_JOINED",
 	"GROUP_ROSTER_UPDATE",
@@ -237,6 +248,37 @@ end
 
 function QuestTogether:GetChannelDisplayName(channelKey)
 	return self.channelLabels[channelKey] or tostring(channelKey)
+end
+
+function QuestTogether:IsWorldQuest(questId)
+	if not questId or not C_QuestLog or not C_QuestLog.IsWorldQuest then
+		return false
+	end
+
+	local ok, isWorldQuest = pcall(C_QuestLog.IsWorldQuest, questId)
+	return ok and isWorldQuest and true or false
+end
+
+function QuestTogether:GetQuestTitle(questId, questInfo)
+	if questInfo and type(questInfo.title) == "string" and questInfo.title ~= "" then
+		return questInfo.title
+	end
+
+	if C_TaskQuest and C_TaskQuest.GetQuestInfoByQuestID then
+		local taskTitle = C_TaskQuest.GetQuestInfoByQuestID(questId)
+		if type(taskTitle) == "string" and taskTitle ~= "" then
+			return taskTitle
+		end
+	end
+
+	if C_QuestLog and C_QuestLog.GetTitleForQuestID then
+		local logTitle = C_QuestLog.GetTitleForQuestID(questId)
+		if type(logTitle) == "string" and logTitle ~= "" then
+			return logTitle
+		end
+	end
+
+	return "Quest " .. tostring(questId)
 end
 
 function QuestTogether:GetAllowedFallbackChannels(primaryChannel)
@@ -422,14 +464,26 @@ function QuestTogether:GetBestAddonChannel()
 end
 
 function QuestTogether:RegisterRuntimeEvents()
+	self.registeredRuntimeEvents = self.registeredRuntimeEvents or {}
+	wipe(self.registeredRuntimeEvents)
+
 	for _, eventName in ipairs(self.runtimeEvents) do
-		self.eventFrame:RegisterEvent(eventName)
+		local ok = pcall(self.eventFrame.RegisterEvent, self.eventFrame, eventName)
+		if ok then
+			self.registeredRuntimeEvents[eventName] = true
+		else
+			self:Debug("Skipping unavailable runtime event: " .. tostring(eventName))
+		end
 	end
 end
 
 function QuestTogether:UnregisterRuntimeEvents()
-	for _, eventName in ipairs(self.runtimeEvents) do
-		self.eventFrame:UnregisterEvent(eventName)
+	for eventName in pairs(self.registeredRuntimeEvents or {}) do
+		pcall(self.eventFrame.UnregisterEvent, self.eventFrame, eventName)
+	end
+
+	if self.registeredRuntimeEvents then
+		wipe(self.registeredRuntimeEvents)
 	end
 end
 
@@ -447,6 +501,10 @@ function QuestTogether:Enable()
 	self:RegisterRuntimeEvents()
 	self.API.RegisterAddonPrefix(self.commPrefix)
 	self.isEnabled = true
+	self.worldQuestAreaStateByQuestID = {}
+	if self.RefreshWorldQuestAreaState then
+		self:RefreshWorldQuestAreaState(false)
+	end
 
 	if self.EnableNameplateAugmentation then
 		self:EnableNameplateAugmentation()
@@ -480,6 +538,7 @@ function QuestTogether:Disable()
 
 	self:UnregisterRuntimeEvents()
 	self.isEnabled = false
+	self.worldQuestAreaStateByQuestID = {}
 
 	if self.DisableNameplateAugmentation then
 		self:DisableNameplateAugmentation()
@@ -684,6 +743,23 @@ function QuestTogether:ScanQuestLog()
 		end
 	end
 
+	-- World quests in the current area can exist outside normal quest-log rows.
+	-- Add them explicitly so progress/sync logic can still operate on them.
+	if self.GetActiveWorldQuestAreaSnapshot then
+		for questId, questTitle in pairs(self:GetActiveWorldQuestAreaSnapshot()) do
+			if not tracker[questId] then
+				self:WatchQuest(questId, { title = questTitle })
+				if tracker[questId] then
+					questsTracked = questsTracked + 1
+				end
+			end
+		end
+	end
+
+	if self.RefreshWorldQuestAreaState then
+		self:RefreshWorldQuestAreaState(false)
+	end
+
 	self:Print(questsTracked .. " quests are being monitored.")
 
 	if self.RebuildLocalQuestRevisionIndex then
@@ -704,24 +780,31 @@ function QuestTogether:WatchQuest(questId, questInfo)
 
 	local tracker = self:GetPlayerTracker()
 	local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
+	local questTitle = self:GetQuestTitle(questId, questInfo)
+
+	tracker[questId] = {
+		title = questTitle,
+		objectives = {},
+		-- Cached numeric objective values used to gate progress announcements.
+		-- This avoids noisy chat lines caused by text-only objective rewrites.
+		objectiveValues = {},
+		isComplete = C_QuestLog.IsComplete(questId) and true or false,
+	}
+
 	if not questLogIndex then
 		return
 	end
 
 	local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
-	tracker[questId] = {
-		title = questInfo.title,
-		objectives = {},
-		isComplete = C_QuestLog.IsComplete(questId) and true or false,
-	}
-
 	for objectiveIndex = 1, numObjectives do
-		local objectiveText, objectiveType = GetQuestObjectiveInfo(questId, objectiveIndex, false)
+		local objectiveText, objectiveType, _, currentValue = GetQuestObjectiveInfo(questId, objectiveIndex, false)
 		if objectiveType == "progressbar" then
 			local progress = GetQuestProgressBarPercent(questId)
 			objectiveText = tostring(progress) .. "% " .. tostring(objectiveText)
+			currentValue = progress
 		end
 		tracker[questId].objectives[objectiveIndex] = objectiveText
+		tracker[questId].objectiveValues[objectiveIndex] = tonumber(currentValue)
 	end
 end
 

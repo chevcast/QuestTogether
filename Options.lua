@@ -215,6 +215,18 @@ function QuestTogether:RefreshOptionsWindow()
 		controls.announceCompleted:SetChecked(self:GetOption("announceCompleted"))
 		controls.announceRemoved:SetChecked(self:GetOption("announceRemoved"))
 		controls.announceProgress:SetChecked(self:GetOption("announceProgress"))
+		if controls.announceWorldQuestAreaEnter then
+			controls.announceWorldQuestAreaEnter:SetChecked(self:GetOption("announceWorldQuestAreaEnter"))
+		end
+		if controls.announceWorldQuestAreaLeave then
+			controls.announceWorldQuestAreaLeave:SetChecked(self:GetOption("announceWorldQuestAreaLeave"))
+		end
+		if controls.announceWorldQuestProgress then
+			controls.announceWorldQuestProgress:SetChecked(self:GetOption("announceWorldQuestProgress"))
+		end
+		if controls.announceWorldQuestCompleted then
+			controls.announceWorldQuestCompleted:SetChecked(self:GetOption("announceWorldQuestCompleted"))
+		end
 		controls.doEmotes:SetChecked(self:GetOption("doEmotes"))
 		controls.debugMode:SetChecked(self:GetOption("debugMode"))
 		if controls.nameplateQuestIconEnabled then
@@ -329,6 +341,38 @@ function QuestTogether:InitializeOptionsWindow()
 		16,
 		-294
 	)
+	local announceWorldQuestAreaEnter = CreateCheckbox(
+		frame,
+		"announceWorldQuestAreaEnter",
+		"Announce World Quest Area Enter",
+		"Announce when a world quest becomes active in your current area.",
+		330,
+		-210
+	)
+	local announceWorldQuestAreaLeave = CreateCheckbox(
+		frame,
+		"announceWorldQuestAreaLeave",
+		"Announce World Quest Area Leave",
+		"Announce when a world quest is no longer active in your current area.",
+		330,
+		-238
+	)
+	local announceWorldQuestProgress = CreateCheckbox(
+		frame,
+		"announceWorldQuestProgress",
+		"Announce World Quest Progress",
+		"Announce objective progress updates for world quests.",
+		330,
+		-266
+	)
+	local announceWorldQuestCompleted = CreateCheckbox(
+		frame,
+		"announceWorldQuestCompleted",
+		"Announce World Quest Completed",
+		"Announce world quest completion separately from normal quests.",
+		330,
+		-294
+	)
 
 	CreateSectionLabel(frame, "Nameplates", 16, -338)
 	local nameplateQuestIconEnabled = CreateCheckbox(
@@ -412,6 +456,10 @@ function QuestTogether:InitializeOptionsWindow()
 		announceCompleted = announceCompleted,
 		announceRemoved = announceRemoved,
 		announceProgress = announceProgress,
+		announceWorldQuestAreaEnter = announceWorldQuestAreaEnter,
+		announceWorldQuestAreaLeave = announceWorldQuestAreaLeave,
+		announceWorldQuestProgress = announceWorldQuestProgress,
+		announceWorldQuestCompleted = announceWorldQuestCompleted,
 		doEmotes = doEmotes,
 		debugMode = debugMode,
 		nameplateQuestIconEnabled = nameplateQuestIconEnabled,
