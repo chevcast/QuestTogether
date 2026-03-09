@@ -14,15 +14,10 @@ function QuestTogether:RegisterTest(name, fn)
 end
 
 local function BuildTestLogMessage(message)
-	local iconTag = QuestTogether:GetQuestIconChatTag(14)
 	local body = tostring(message or "")
-	body = body:gsub("^%[PASS%]", "|cff33ff99[PASS]|r|cffffd200")
-	body = body:gsub("^%[FAIL%]", "|cffff3333[FAIL]|r|cffffd200")
-	body = "|cffffd200" .. body .. "|r"
-	if iconTag ~= "" then
-		return iconTag .. " " .. body
-	end
-	return body
+	body = body:gsub("^%[PASS%]", "|cff33ff99[PASS]|r")
+	body = body:gsub("^%[FAIL%]", "|cffff3333[FAIL]|r")
+	return "Debug: " .. body
 end
 
 local function AssertTrue(value, message)
@@ -81,16 +76,26 @@ local function WithIsolatedState(testFn)
 	local originalPartyMemberOrder = QuestTogether.partyMemberOrder
 	local originalPartyRosterFingerprint = QuestTogether.partyRosterFingerprint
 	local originalIsEnabled = QuestTogether.isEnabled
+	local originalProfileEnabled = QuestTogether.db.profile.enabled
 	local originalWorldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID
 	local originalNameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken
 	local originalNameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache
 	local originalNameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache
 	local originalNameplateBaseHealthColorByUnitFrame = QuestTogether.nameplateBaseHealthColorByUnitFrame
 	local originalNameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
+	local originalNameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken
 	local originalPrototypeBubbleScreenHostFrame = QuestTogether.prototypeBubbleScreenHostFrame
 	local originalAnnouncementChannelLocalID = QuestTogether.announcementChannelLocalID
 
+	if QuestTogether.UnregisterRuntimeEvents then
+		QuestTogether:UnregisterRuntimeEvents()
+	end
+	if QuestTogether.DisableNameplateAugmentation then
+		QuestTogether:DisableNameplateAugmentation()
+	end
+
 	QuestTogether.db.profile.debugMode = false
+	QuestTogether.db.profile.enabled = false
 	QuestTogether.isEnabled = false
 	QuestTogether.partyMembers = {}
 	QuestTogether.partyMemberOrder = {}
@@ -101,6 +106,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.nameplateQuestTitleCache = {}
 	QuestTogether.nameplateBaseHealthColorByUnitFrame = setmetatable({}, { __mode = "k" })
 	QuestTogether.nameplateBubbleByUnitFrame = setmetatable({}, { __mode = "k" })
+	QuestTogether.nameplateRefreshPendingByUnitToken = {}
 	QuestTogether.prototypeBubbleScreenHostFrame = nil
 	QuestTogether.announcementChannelLocalID = nil
 
@@ -114,6 +120,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.partyMembers = originalPartyMembers
 	QuestTogether.partyMemberOrder = originalPartyMemberOrder
 	QuestTogether.partyRosterFingerprint = originalPartyRosterFingerprint
+	QuestTogether.db.profile.enabled = originalProfileEnabled
 	QuestTogether.isEnabled = originalIsEnabled
 	QuestTogether.worldQuestAreaStateByQuestID = originalWorldQuestAreaStateByQuestID
 	QuestTogether.nameplateQuestStateByUnitToken = originalNameplateQuestStateByUnitToken
@@ -121,8 +128,18 @@ local function WithIsolatedState(testFn)
 	QuestTogether.nameplateQuestTitleCache = originalNameplateQuestTitleCache
 	QuestTogether.nameplateBaseHealthColorByUnitFrame = originalNameplateBaseHealthColorByUnitFrame
 	QuestTogether.nameplateBubbleByUnitFrame = originalNameplateBubbleByUnitFrame
+	QuestTogether.nameplateRefreshPendingByUnitToken = originalNameplateRefreshPendingByUnitToken
 	QuestTogether.prototypeBubbleScreenHostFrame = originalPrototypeBubbleScreenHostFrame
 	QuestTogether.announcementChannelLocalID = originalAnnouncementChannelLocalID
+
+	if originalIsEnabled then
+		if QuestTogether.RegisterRuntimeEvents then
+			QuestTogether:RegisterRuntimeEvents()
+		end
+		if QuestTogether.EnableNameplateAugmentation then
+			QuestTogether:EnableNameplateAugmentation()
+		end
+	end
 
 	if not ok then
 		error(err, 0)
@@ -138,7 +155,7 @@ function QuestTogether:RunTests()
 	local passed = 0
 	local failed = 0
 
-	self:PrintRaw(BuildTestLogMessage("Running " .. tostring(total) .. " in-game tests..."))
+	self:Print(BuildTestLogMessage("Running " .. tostring(total) .. " in-game tests..."))
 
 	for _, testCase in ipairs(self.tests) do
 		local ok, err = pcall(function()
@@ -147,14 +164,14 @@ function QuestTogether:RunTests()
 
 		if ok then
 			passed = passed + 1
-			self:PrintRaw(BuildTestLogMessage("[PASS] " .. testCase.name))
+			self:Print(BuildTestLogMessage("[PASS] " .. testCase.name))
 		else
 			failed = failed + 1
-			self:PrintRaw(BuildTestLogMessage("[FAIL] " .. testCase.name .. " -> " .. tostring(err)))
+			self:Print(BuildTestLogMessage("[FAIL] " .. testCase.name .. " -> " .. tostring(err)))
 		end
 	end
 
-	self:PrintRaw(BuildTestLogMessage("Test summary: " .. tostring(passed) .. " passed, " .. tostring(failed) .. " failed."))
+	self:Print(BuildTestLogMessage("Test summary: " .. tostring(passed) .. " passed, " .. tostring(failed) .. " failed."))
 	return failed == 0
 end
 
@@ -391,8 +408,9 @@ QuestTogether:RegisterTest("bubble test announcement uses explicit visible playe
 			return "nameplate7"
 		end,
 	}
+	QuestTogether.isEnabled = true
 
-	WithTemporaryAPI({
+	QuestTogether.API = CreateApiWithOverrides({
 		UnitExists = function(unitToken)
 			AssertEquals(unitToken, "target")
 			return false

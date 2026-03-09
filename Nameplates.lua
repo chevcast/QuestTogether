@@ -65,7 +65,9 @@ QuestTogether.nameplateBaseHealthColorByUnitFrame = QuestTogether.nameplateBaseH
 	or setmetatable({}, { __mode = "k" })
 QuestTogether.nameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
 	or setmetatable({}, { __mode = "k" })
-QuestTogether.nameplateHealthTintRefreshPendingByUnitToken = QuestTogether.nameplateHealthTintRefreshPendingByUnitToken or {}
+QuestTogether.nameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken or {}
+QuestTogether.nameplateFullRefreshPending = QuestTogether.nameplateFullRefreshPending or false
+QuestTogether.nameplateFullRefreshGeneration = QuestTogether.nameplateFullRefreshGeneration or 0
 
 local function GetPrototypeBubbleLifetimeSeconds()
 	local configuredDuration = QuestTogether:NormalizeChatBubbleDurationValue(QuestTogether:GetOption("chatBubbleDuration"))
@@ -345,6 +347,7 @@ local function ConfigureEditModeSlider(settingFrame, settingData, onValueChanged
 end
 
 function QuestTogether:ApplyPersonalBubbleEditSnapshot(snapshot)
+	self:DebugState("editmode", "ApplyPersonalBubbleEditSnapshot", snapshot)
 	if type(snapshot) ~= "table" then
 		return
 	end
@@ -373,6 +376,7 @@ function QuestTogether:ApplyPersonalBubbleEditSnapshot(snapshot)
 end
 
 function QuestTogether:CommitPersonalBubbleEditSession()
+	self:Debug("Committing personal bubble edit session", "editmode")
 	self.personalBubbleEditSession = nil
 	self.personalBubbleEditSessionRestoring = false
 	SyncPersonalBubbleEditModeDirtyState()
@@ -387,6 +391,7 @@ function QuestTogether:RevertPersonalBubbleEditSession()
 		return
 	end
 
+	self:Debug("Reverting personal bubble edit session", "editmode")
 	self:ApplyPersonalBubbleEditSnapshot(session.saved)
 	session.pending = false
 	SyncPersonalBubbleEditModeDirtyState()
@@ -396,6 +401,7 @@ function QuestTogether:RevertPersonalBubbleEditSession()
 end
 
 function QuestTogether:ResetPersonalBubbleEditSessionToDefaults()
+	self:Debug("Resetting personal bubble edit session to defaults", "editmode")
 	self.personalBubbleEditSessionRestoring = true
 	self:SetOption("chatBubbleSize", self.DEFAULTS.profile.chatBubbleSize)
 	self:SetOption("chatBubbleDuration", self.DEFAULTS.profile.chatBubbleDuration)
@@ -598,6 +604,7 @@ function QuestTogether:ApplySavedPersonalBubbleAnchor()
 
 	local parentFrame = hostFrame:GetParent() or UIParent
 	local anchor = self:GetPersonalBubbleAnchor()
+	self:DebugState("editmode", "ApplySavedPersonalBubbleAnchor", anchor)
 	hostFrame:ClearAllPoints()
 	hostFrame:SetPoint(anchor.point, parentFrame, anchor.relativePoint, anchor.x, anchor.y)
 	if self.personalBubbleEditModeDialog and self.personalBubbleEditModeDialog:IsShown() then
@@ -624,6 +631,15 @@ function QuestTogether:SavePersonalBubbleAnchorFromFrame(hostFrame)
 	end
 
 	local changed = self:SetPersonalBubbleAnchor(point, relativePoint, RoundOffset(offsetX), RoundOffset(offsetY))
+	self:Debugf(
+		"editmode",
+		"Saved personal bubble anchor point=%s relativePoint=%s x=%s y=%s changed=%s",
+		tostring(point),
+		tostring(relativePoint),
+		tostring(RoundOffset(offsetX)),
+		tostring(RoundOffset(offsetY)),
+		tostring(changed)
+	)
 	if changed and self:IsPersonalBubbleAnchorInEditMode() and not self.personalBubbleEditSessionRestoring then
 		UpdatePersonalBubbleEditSessionDirtyState()
 		self:RefreshPersonalBubbleEditModeDialog()
@@ -639,6 +655,7 @@ function QuestTogether:AttachPersonalBubbleEditModeDialog()
 	end
 
 	if dialog.qtUserPlaced then
+		self:Debug("Attaching personal bubble dialog using user-placed position", "editmode")
 		dialog:ClearAllPoints()
 		dialog:SetPoint(
 			dialog.qtUserPlaced.point,
@@ -651,6 +668,14 @@ function QuestTogether:AttachPersonalBubbleEditModeDialog()
 	end
 
 	local point, relativeTo, relativePoint, offsetX, offsetY = GetPersonalBubbleAnchorDialogAttachPoint(hostFrame)
+	self:Debugf(
+		"editmode",
+		"Attaching personal bubble dialog point=%s relativePoint=%s x=%s y=%s",
+		tostring(point),
+		tostring(relativePoint),
+		tostring(offsetX),
+		tostring(offsetY)
+	)
 	dialog:ClearAllPoints()
 	dialog:SetPoint(point, relativeTo, relativePoint, offsetX, offsetY)
 end
@@ -723,6 +748,7 @@ function QuestTogether:SelectPersonalBubbleAnchor()
 	if not self:IsPersonalBubbleAnchorInEditMode() then
 		return
 	end
+	self:Debug("Selecting personal bubble anchor", "editmode")
 
 	EnsurePersonalBubbleEditSession()
 
@@ -747,6 +773,7 @@ function QuestTogether:SelectPersonalBubbleAnchor()
 end
 
 function QuestTogether:DeselectPersonalBubbleAnchor()
+	self:Debug("Deselecting personal bubble anchor", "editmode")
 	self.personalBubbleAnchorSelected = false
 	if self.personalBubbleEditModeDialog then
 		self.personalBubbleEditModeDialog:Hide()
@@ -831,10 +858,12 @@ end
 
 function QuestTogether:TryInstallPersonalBubbleEditModeHooks()
 	if self.personalBubbleEditModeHooksInstalled then
+		self:Debug("Personal bubble Edit Mode hooks already installed", "editmode")
 		return
 	end
 
 	if not EditModeManagerFrame or not EditModeManagerFrame.HookScript then
+		self:Debug("EditModeManagerFrame unavailable; cannot install personal bubble hooks", "editmode")
 		return
 	end
 
@@ -842,11 +871,13 @@ function QuestTogether:TryInstallPersonalBubbleEditModeHooks()
 	EnsurePersonalBubbleEditModeDialog()
 
 	EditModeManagerFrame:HookScript("OnShow", function()
+		QuestTogether:Debug("Edit Mode shown", "editmode")
 		EnsurePersonalBubbleEditSession()
 		QuestTogether:RefreshPersonalBubbleAnchorVisualState()
 		QuestTogether:RefreshPersonalBubbleEditModeDialog()
 	end)
 	EditModeManagerFrame:HookScript("OnHide", function()
+		QuestTogether:Debug("Edit Mode hidden", "editmode")
 		QuestTogether:DeselectPersonalBubbleAnchor()
 	end)
 
@@ -872,6 +903,7 @@ function QuestTogether:TryInstallPersonalBubbleEditModeHooks()
 	end
 
 	self.personalBubbleEditModeHooksInstalled = true
+	self:Debug("Installed personal bubble Edit Mode hooks", "editmode")
 end
 
 -- Returns true only for the dynamic nameplate unit tokens (nameplate1, nameplate2, ...).
@@ -1290,44 +1322,46 @@ local function GetIconBarAnchor(unitFrame)
 	return unitFrame
 end
 
-function QuestTogether:ApplyNameplateQuestIconStyle(icon, unitFrame)
-	if not icon or not unitFrame then
+function QuestTogether:ApplyNameplateQuestIconStyle(iconFrame, unitFrame)
+	if not iconFrame or not unitFrame then
 		return
 	end
 
+	local icon = iconFrame.Icon or iconFrame
 	local style = self:GetNameplateQuestIconStyle()
 	local width = self.NAMEPLATE_QUEST_ICON_WIDTH
 	local height = self.NAMEPLATE_QUEST_ICON_HEIGHT
 
-	icon:ClearAllPoints()
+	iconFrame:ClearAllPoints()
 
 	if style == "left" then
 		local barAnchor = GetIconBarAnchor(unitFrame)
-		icon:SetPoint("RIGHT", barAnchor, "LEFT", -1, 0)
+		iconFrame:SetPoint("RIGHT", barAnchor, "LEFT", -1, 0)
 	elseif style == "right" then
 		local barAnchor = GetIconBarAnchor(unitFrame)
-		icon:SetPoint("LEFT", barAnchor, "RIGHT", 1, 0)
+		iconFrame:SetPoint("LEFT", barAnchor, "RIGHT", 1, 0)
 	elseif style == "prefix" then
 		local nameText = unitFrame.name
 		if nameText then
 			-- Prefix places the icon directly against the unit name text.
 			width = math.max(7, math.floor(width * 0.75 + 0.5))
 			height = math.max(10, math.floor(height * 0.75 + 0.5))
-			icon:SetPoint("RIGHT", nameText, "LEFT", 0, 0)
+			iconFrame:SetPoint("RIGHT", nameText, "LEFT", 0, 0)
 		elseif unitFrame.HealthBarsContainer then
-			icon:SetPoint("BOTTOM", unitFrame.HealthBarsContainer, "TOP", 0, 11)
+			iconFrame:SetPoint("BOTTOM", unitFrame.HealthBarsContainer, "TOP", 0, 11)
 		else
-			icon:SetPoint("TOP", unitFrame, "TOP", 0, 7)
+			iconFrame:SetPoint("TOP", unitFrame, "TOP", 0, 7)
 		end
 	else
 		if unitFrame.HealthBarsContainer then
-			icon:SetPoint("BOTTOM", unitFrame.HealthBarsContainer, "TOP", 0, 11)
+			iconFrame:SetPoint("BOTTOM", unitFrame.HealthBarsContainer, "TOP", 0, 11)
 		else
-			icon:SetPoint("TOP", unitFrame, "TOP", 0, 7)
+			iconFrame:SetPoint("TOP", unitFrame, "TOP", 0, 7)
 		end
 	end
 
-	icon:SetSize(width, height)
+	iconFrame:SetSize(width, height)
+	icon:SetAllPoints(iconFrame)
 end
 
 local function EnsureQuestIcon(unitFrame)
@@ -1341,8 +1375,13 @@ local function EnsureQuestIcon(unitFrame)
 		return existingIcon
 	end
 
-	local icon = unitFrame:CreateTexture(nil, "OVERLAY", nil, 2)
-	QuestTogether.nameplateIconByUnitFrame[unitFrame] = icon
+	local iconFrame = CreateFrame("Frame", nil, UIParent)
+	iconFrame:SetFrameStrata("HIGH")
+	iconFrame:SetFrameLevel(((unitFrame.GetFrameLevel and unitFrame:GetFrameLevel()) or 0) + 10)
+
+	local icon = iconFrame:CreateTexture(nil, "ARTWORK")
+	iconFrame.Icon = icon
+	QuestTogether.nameplateIconByUnitFrame[unitFrame] = iconFrame
 
 	if icon.SetAtlas and QuestTogether.NAMEPLATE_QUEST_ICON_ATLAS then
 		icon:SetAtlas(QuestTogether.NAMEPLATE_QUEST_ICON_ATLAS, true)
@@ -1356,10 +1395,10 @@ local function EnsureQuestIcon(unitFrame)
 			icon:SetTexCoord(0, 1, 0, 1)
 		end
 	end
-	QuestTogether:ApplyNameplateQuestIconStyle(icon, unitFrame)
+	QuestTogether:ApplyNameplateQuestIconStyle(iconFrame, unitFrame)
 
-	icon:Hide()
-	return icon
+	iconFrame:Hide()
+	return iconFrame
 end
 
 ApplyQuestIconVisual = function(texture)
@@ -1504,6 +1543,7 @@ function QuestTogether:HidePrototypeBubble(hostFrame)
 	if not bubble then
 		return
 	end
+	self:Debugf("bubble", "Hiding bubble host=%s", tostring(unitFrame.unit or unitFrame:GetName() or "<screen>"))
 
 	if bubble.animationGroup and bubble.animationGroup:IsPlaying() then
 		bubble.animationGroup:Stop()
@@ -1514,6 +1554,11 @@ function QuestTogether:HidePrototypeBubble(hostFrame)
 end
 
 function QuestTogether:RefreshActivePrototypeBubbles()
+	local activeCount = 0
+	for _ in pairs(self.nameplateBubbleByUnitFrame) do
+		activeCount = activeCount + 1
+	end
+	self:Debugf("bubble", "Refreshing active bubbles count=%d", activeCount)
 	for unitFrame, bubble in pairs(self.nameplateBubbleByUnitFrame) do
 		if bubble and bubble.qtCurrentText and bubble.qtCurrentText ~= "" then
 			local hostFrame = bubble.qtHostFrame
@@ -1534,13 +1579,16 @@ end
 
 function QuestTogether:GetPrototypeBubbleHostFrameForUnit(unitToken)
 	if unitToken == "player" then
+		self:Debug("Resolved player bubble host to personal screen anchor", "bubble")
 		return GetPrototypeBubbleScreenHostFrame()
 	end
 
 	local namePlateFrameBase = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit(unitToken, false)
 	if namePlateFrameBase and namePlateFrameBase.UnitFrame and namePlateFrameBase:IsShown() then
+		self:Debugf("bubble", "Resolved bubble host for unit=%s", tostring(unitToken))
 		return namePlateFrameBase
 	end
+	self:Debugf("bubble", "No bubble host found for unit=%s", tostring(unitToken))
 	return nil
 end
 
@@ -1548,9 +1596,11 @@ function QuestTogether:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text)
 	local hostFrame = self:GetPrototypeBubbleHostFrameForUnit(unitToken)
 	if hostFrame then
 		if not self:ShowPrototypeBubbleOnNameplate(hostFrame, text) then
+			self:Debugf("bubble", "Failed to show bubble on host for unit=%s", tostring(unitToken))
 			return false, "Unable to show a bubble on that nameplate."
 		end
 		local unitName = self.API.UnitName and self.API.UnitName(unitToken) or nil
+		self:Debugf("bubble", "Showing bubble on unit=%s text=%s", tostring(unitToken), tostring(text))
 		return true, unitName or unitToken
 	end
 
@@ -1570,11 +1620,13 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text)
 	message = string.gsub(message, "^%s+", "")
 	message = string.gsub(message, "%s+$", "")
 	if message == "" then
+		self:Debug("Skipping empty bubble message", "bubble")
 		return false
 	end
 
 	local bubble = EnsurePrototypeBubble(namePlateFrameBase)
 	if not bubble or not bubble.String then
+		self:Debug("Failed to create or resolve bubble frame", "bubble")
 		return false
 	end
 	bubble.qtCurrentText = message
@@ -1619,6 +1671,16 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text)
 	local contentWidth = visualConfig.iconSize + visualConfig.iconGap + targetTextWidth
 	local bubbleWidth = contentWidth + (inset * 2)
 	local bubbleHeight = contentHeight + (inset * 2)
+	self:Debugf(
+		"bubble",
+		"Render bubble host=%s width=%d height=%d font=%d duration=%.1f text=%s",
+		tostring(unitFrame.unit or unitFrame:GetName() or "<screen>"),
+		bubbleWidth,
+		bubbleHeight,
+		visualConfig.fontSize,
+		GetPrototypeBubbleLifetimeSeconds(),
+		tostring(message)
+	)
 
 	bubble:ClearAllPoints()
 	bubble:SetPoint("BOTTOM", anchorFrame, "TOP", 0, PROTOTYPE_BUBBLE_Y_OFFSET)
@@ -1716,7 +1778,6 @@ function QuestTogether:RememberNameplateBaseHealthColor(unitFrame)
 
 	local cachedBase = self.nameplateBaseHealthColorByUnitFrame[unitFrame]
 	if cachedBase then
-		-- If we cannot currently resolve identity, preserve the first captured baseline.
 		if not unitGuid then
 			return
 		end
@@ -1744,7 +1805,6 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 	end
 
 	self:RememberNameplateBaseHealthColor(unitFrame)
-
 	local color = self:GetNameplateQuestHealthColor()
 	unitFrame.healthBar:SetStatusBarColor(color.r, color.g, color.b)
 end
@@ -1768,14 +1828,12 @@ function QuestTogether:RestoreNameplateHealthColor(unitFrame)
 			end
 		end
 		if cachedBase.unitGuid ~= currentGuid then
-			-- Frame got reused for a different unit; never restore stale color onto it.
 			self.nameplateBaseHealthColorByUnitFrame[unitFrame] = nil
 			return
 		end
 	end
 
 	if type(cachedBase.r) ~= "number" or type(cachedBase.g) ~= "number" or type(cachedBase.b) ~= "number" then
-		-- Defensive guard for malformed cache entries.
 		self.nameplateBaseHealthColorByUnitFrame[unitFrame] = nil
 		return
 	end
@@ -1798,17 +1856,17 @@ function QuestTogether:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObj
 	end
 end
 
-function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken)
+function QuestTogether:ScheduleNameplateRefresh(unitToken)
 	if not self:IsNameplateUnitToken(unitToken) then
 		return
 	end
-	if self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] then
+	if self.nameplateRefreshPendingByUnitToken[unitToken] then
 		return
 	end
 
-	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = true
+	self.nameplateRefreshPendingByUnitToken[unitToken] = true
 	self.API.Delay(0, function()
-		self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
+		self.nameplateRefreshPendingByUnitToken[unitToken] = nil
 		if not self.isEnabled or not C_NamePlate or not C_NamePlate.GetNamePlateForUnit then
 			return
 		end
@@ -1818,22 +1876,7 @@ function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken)
 			return
 		end
 
-		local unitFrame = namePlateFrameBase.UnitFrame
-		local isQuestObjective = self.nameplateQuestStateByUnitToken[unitToken]
-		if isQuestObjective == nil then
-			isQuestObjective = self:IsQuestObjectiveNameplate(unitToken, unitFrame)
-			self.nameplateQuestStateByUnitToken[unitToken] = isQuestObjective and true or false
-		end
-
-		local shouldTint = self.isEnabled
-			and not self:IsNameplateAugmentationBlockedInCurrentContext()
-			and self:GetOption("nameplateQuestHealthColorEnabled")
-			and isQuestObjective
-		if shouldTint then
-			self:ApplyQuestTintToNameplate(unitFrame)
-		else
-			self:RestoreNameplateHealthColor(unitFrame)
-		end
+		self:RefreshNameplateIcon(namePlateFrameBase)
 	end)
 end
 
@@ -1844,22 +1887,21 @@ function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 
 	local unitToken = (namePlateFrameBase.GetUnit and namePlateFrameBase:GetUnit()) or nil
 	local unitFrame = namePlateFrameBase.UnitFrame
-	local icon = EnsureQuestIcon(unitFrame)
-
-	if not icon then
-		return
-	end
-
 	local isQuestObjective = self:IsQuestObjectiveNameplate(unitToken, unitFrame)
 	local shouldShow = self:GetOption("nameplateQuestIconEnabled") and isQuestObjective
+	local icon = self.nameplateIconByUnitFrame[unitFrame]
 	if unitToken then
 		self.nameplateQuestStateByUnitToken[unitToken] = isQuestObjective and true or false
 	end
 	self:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObjective)
 
 	if shouldShow then
+		icon = icon or EnsureQuestIcon(unitFrame)
+		if not icon then
+			return
+		end
 		icon:Show()
-	else
+	elseif icon then
 		icon:Hide()
 	end
 end
@@ -1924,6 +1966,13 @@ function QuestTogether:FindVisiblePlayerNameplateForSender(senderGUID, senderNam
 		end
 	end)
 
+	self:Debugf(
+		"nameplate",
+		"FindVisiblePlayerNameplateForSender guid=%s sender=%s matched=%s",
+		tostring(senderGUID),
+		tostring(normalizedSenderName),
+		tostring(matchedFrame ~= nil)
+	)
 	return matchedFrame
 end
 
@@ -1968,10 +2017,12 @@ function QuestTogether:FindNearbyPlayerUnitTokenForSender(senderGUID, senderName
 
 	for _, unitToken in ipairs(candidateUnits) do
 		if self:DoesUnitTokenMatchSender(unitToken, senderGUID, senderName) then
+			self:Debugf("nameplate", "Nearby player unit token match sender=%s unit=%s", tostring(senderName), tostring(unitToken))
 			return unitToken
 		end
 	end
 
+	self:Debugf("nameplate", "No nearby unit token match sender=%s", tostring(senderName))
 	return nil
 end
 
@@ -1989,6 +2040,39 @@ function QuestTogether:RefreshNameplateAugmentation()
 	end)
 end
 
+function QuestTogether:ScheduleFullNameplateRefresh(delaySeconds)
+	self.nameplateFullRefreshGeneration = (self.nameplateFullRefreshGeneration or 0) + 1
+	local generation = self.nameplateFullRefreshGeneration
+	local delayList = {
+		delaySeconds or 0,
+		0.10,
+		0.25,
+		0.50,
+	}
+
+	self.nameplateFullRefreshPending = true
+	for index = 1, #delayList do
+		local scheduledDelay = delayList[index]
+		self.API.Delay(scheduledDelay, function()
+			if generation ~= self.nameplateFullRefreshGeneration then
+				return
+			end
+			if not self.isEnabled then
+				self.nameplateFullRefreshPending = false
+				return
+			end
+
+			self:RebuildNameplateQuestTitleCache()
+			self:ClearNameplateQuestObjectiveCache()
+			self:RefreshNameplateAugmentation()
+
+			if index == #delayList then
+				self.nameplateFullRefreshPending = false
+			end
+		end)
+	end
+end
+
 function QuestTogether:OnNameplateAdded(unitToken)
 	if not self.isEnabled then
 		return
@@ -1998,25 +2082,13 @@ function QuestTogether:OnNameplateAdded(unitToken)
 		return
 	end
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
-		local blockedFrame = C_NamePlate
-			and C_NamePlate.GetNamePlateForUnit
-			and C_NamePlate.GetNamePlateForUnit(unitToken, false)
-		if blockedFrame then
-			self:HideNameplateIcon(blockedFrame)
-		end
+		self.nameplateQuestStateByUnitToken[unitToken] = nil
 		return
 	end
 
-	local unitGuid = self:GetNameplateUnitGuid(unitToken)
-	if unitGuid and self.nameplateQuestObjectiveCache[unitGuid] then
-		self.nameplateQuestObjectiveCache[unitGuid] = nil
-	end
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
 
-	local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
-	if namePlateFrameBase then
-		self:RefreshNameplateIcon(namePlateFrameBase)
-	end
+	self:ScheduleNameplateRefresh(unitToken)
 end
 
 function QuestTogether:OnNameplateRemoved(unitToken)
@@ -2024,12 +2096,8 @@ function QuestTogether:OnNameplateRemoved(unitToken)
 		return
 	end
 
-	local unitGuid = self:GetNameplateUnitGuid(unitToken)
-	if unitGuid and self.nameplateQuestObjectiveCache[unitGuid] then
-		self.nameplateQuestObjectiveCache[unitGuid] = nil
-	end
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
-	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
+	self.nameplateRefreshPendingByUnitToken[unitToken] = nil
 
 	local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
 	if namePlateFrameBase then
@@ -2039,41 +2107,47 @@ end
 
 function QuestTogether:TryInstallNameplateHooks()
 	if self.nameplateHooksInstalled then
+		self:Debug("Nameplate hooks already installed", "nameplate")
 		return
 	end
 
-	if type(hooksecurefunc) ~= "function" then
-		return
+	-- Avoid secure add/remove hooks into Blizzard's nameplate setup path. The one safe hook we
+	-- do want is the global options-update pass, so we can reapply our quest visuals after
+	-- Blizzard restyles all visible nameplates.
+	if
+		not self.nameplateOptionsHookInstalled
+		and type(hooksecurefunc) == "function"
+		and type(NamePlateDriverMixin) == "table"
+		and type(NamePlateDriverMixin.UpdateNamePlateOptions) == "function"
+	then
+		hooksecurefunc(NamePlateDriverMixin, "UpdateNamePlateOptions", function()
+			QuestTogether:Debug("Detected Blizzard nameplate options update; scheduling reapply", "nameplate")
+			QuestTogether:ScheduleFullNameplateRefresh(0.05)
+		end)
+		self.nameplateOptionsHookInstalled = true
 	end
 
 	if
-		not self.nameplateDriverHookInstalled
-		and type(NamePlateDriverMixin) == "table"
-		and type(NamePlateDriverMixin.OnNamePlateAdded) == "function"
+		not self.nameplateApplyFrameOptionsHookInstalled
+		and type(hooksecurefunc) == "function"
+		and type(NamePlateBaseMixin) == "table"
+		and type(NamePlateBaseMixin.ApplyFrameOptions) == "function"
 	then
-		hooksecurefunc(NamePlateDriverMixin, "OnNamePlateAdded", function(_, unitToken)
-			QuestTogether:OnNameplateAdded(unitToken)
-		end)
-		hooksecurefunc(NamePlateDriverMixin, "OnNamePlateRemoved", function(_, unitToken)
-			QuestTogether:OnNameplateRemoved(unitToken)
-		end)
-		self.nameplateDriverHookInstalled = true
-	end
-
-	if not self.nameplateHealthColorHookInstalled and type(CompactUnitFrame_UpdateHealthColor) == "function" then
-		hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
-			if not frame or type(frame.unit) ~= "string" then
+		hooksecurefunc(NamePlateBaseMixin, "ApplyFrameOptions", function(namePlateFrameBase)
+			if not QuestTogether.isEnabled or not namePlateFrameBase then
 				return
 			end
-			if not QuestTogether:IsNameplateUnitToken(frame.unit) then
-				return
+
+			local unitToken = namePlateFrameBase.GetUnit and namePlateFrameBase:GetUnit() or namePlateFrameBase.unitToken
+			if QuestTogether:IsNameplateUnitToken(unitToken) then
+				QuestTogether:ScheduleNameplateRefresh(unitToken)
 			end
-			QuestTogether:ScheduleNameplateHealthTintRefresh(frame.unit)
 		end)
-		self.nameplateHealthColorHookInstalled = true
+		self.nameplateApplyFrameOptionsHookInstalled = true
 	end
 
-	self.nameplateHooksInstalled = self.nameplateDriverHookInstalled and self.nameplateHealthColorHookInstalled
+	self.nameplateHooksInstalled = true
+	self:Debug("Using event-driven nameplate augmentation with options-update hook", "nameplate")
 end
 
 function QuestTogether:EnableNameplateAugmentation()
@@ -2085,7 +2159,7 @@ function QuestTogether:EnableNameplateAugmentation()
 				self:OnNameplateAdded(...)
 			elseif eventName == "NAME_PLATE_UNIT_REMOVED" then
 				self:OnNameplateRemoved(...)
-				elseif
+			elseif
 					eventName == "QUEST_LOG_UPDATE"
 					or eventName == "PLAYER_ENTERING_WORLD"
 					or eventName == "QUEST_REMOVED"
@@ -2100,6 +2174,14 @@ function QuestTogether:EnableNameplateAugmentation()
 				self:RebuildNameplateQuestTitleCache()
 				self:ClearNameplateQuestObjectiveCache()
 				self:RefreshNameplateAugmentation()
+			elseif eventName == "DISPLAY_SIZE_CHANGED" then
+				self:ScheduleFullNameplateRefresh(0.05)
+			elseif eventName == "CVAR_UPDATE" then
+				local cvarName = ...
+				if type(cvarName) == "string" and string.find(string.lower(cvarName), "nameplate", 1, true) then
+					self:Debugf("nameplate", "Refreshing nameplate augmentation after CVar change=%s", tostring(cvarName))
+					self:ScheduleFullNameplateRefresh(0.05)
+				end
 			elseif eventName == "UNIT_QUEST_LOG_CHANGED" then
 				local unitToken = ...
 				if unitToken == "player" then
@@ -2115,14 +2197,17 @@ function QuestTogether:EnableNameplateAugmentation()
 		local ok = pcall(addon.nameplateEventFrame.RegisterEvent, addon.nameplateEventFrame, eventName)
 		if ok then
 			addon.nameplateRegisteredEvents[eventName] = true
+			addon:Debugf("nameplate", "Registered augmentation event=%s", tostring(eventName))
 		else
 			addon.nameplateRegisteredEvents[eventName] = nil
+			addon:Debugf("nameplate", "Failed to register augmentation event=%s", tostring(eventName))
 		end
 	end
 
 	self:TryInstallNameplateHooks()
 	self:RebuildNameplateQuestTitleCache()
 	self:ClearNameplateQuestObjectiveCache()
+	self:Debug("Enabling nameplate augmentation events", "nameplate")
 	RegisterNameplateEvent(self, "NAME_PLATE_UNIT_ADDED")
 	RegisterNameplateEvent(self, "NAME_PLATE_UNIT_REMOVED")
 	RegisterNameplateEvent(self, "QUEST_LOG_UPDATE")
@@ -2136,6 +2221,8 @@ function QuestTogether:EnableNameplateAugmentation()
 	RegisterNameplateEvent(self, "QUEST_GREETING")
 	RegisterNameplateEvent(self, "UNIT_QUEST_LOG_CHANGED")
 	RegisterNameplateEvent(self, "PLAYER_ENTERING_WORLD")
+	RegisterNameplateEvent(self, "DISPLAY_SIZE_CHANGED")
+	RegisterNameplateEvent(self, "CVAR_UPDATE")
 	self:RefreshNameplateAugmentation()
 end
 
@@ -2143,9 +2230,11 @@ function QuestTogether:DisableNameplateAugmentation()
 	if not self.nameplateEventFrame then
 		return
 	end
+	self:Debug("Disabling nameplate augmentation", "nameplate")
 
 	for eventName in pairs(self.nameplateRegisteredEvents or {}) do
 		pcall(self.nameplateEventFrame.UnregisterEvent, self.nameplateEventFrame, eventName)
+		self:Debugf("nameplate", "Unregistered augmentation event=%s", tostring(eventName))
 	end
 	if self.nameplateRegisteredEvents then
 		wipe(self.nameplateRegisteredEvents)
@@ -2153,8 +2242,10 @@ function QuestTogether:DisableNameplateAugmentation()
 
 	-- Hide our icon overlays and clear cached quest objective state.
 	wipe(self.nameplateQuestStateByUnitToken)
+	wipe(self.nameplateRefreshPendingByUnitToken)
 	self:ForEachVisibleNamePlate(function(frame)
 		self:HideNameplateIcon(frame)
 	end)
 	wipe(self.nameplateBaseHealthColorByUnitFrame)
+	self.nameplateFullRefreshPending = false
 end

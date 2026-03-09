@@ -27,6 +27,7 @@ local function CreateCheckbox(parent, optionKey, labelText, tooltipText, x, y)
 	end
 
 	checkbox:SetScript("OnClick", function(self)
+		QuestTogether:Debugf("options", "Checkbox clicked key=%s checked=%s", tostring(optionKey), tostring(self:GetChecked() == true))
 		QuestTogether:SetOption(optionKey, self:GetChecked() == true)
 		QuestTogether:RefreshOptionsWindow()
 	end)
@@ -100,6 +101,14 @@ local function CreateColorSwatch(parent, optionKey, labelText, tooltipText, fall
 	end
 
 	local function SetColorOption(r, g, b)
+		QuestTogether:Debugf(
+			"options",
+			"Color option changed key=%s r=%.3f g=%.3f b=%.3f",
+			tostring(optionKey),
+			tonumber(r) or 0,
+			tonumber(g) or 0,
+			tonumber(b) or 0
+		)
 		QuestTogether:SetOption(optionKey, {
 			r = ClampColorComponent(r, fallbackColor.r),
 			g = ClampColorComponent(g, fallbackColor.g),
@@ -174,6 +183,7 @@ local function CreateShowProgressForDropdown(parent, x, y)
 				local info = UIDropDownMenu_CreateInfo()
 				info.text = QuestTogether:GetShowProgressForLabel(value)
 				info.func = function()
+					QuestTogether:Debugf("options", "Dropdown selected key=showProgressFor value=%s", tostring(value))
 					QuestTogether:SetOption("showProgressFor", value)
 					QuestTogether:RefreshOptionsWindow()
 					CloseDropDownMenus()
@@ -198,6 +208,7 @@ local function CreateNameplateIconStyleDropdown(parent, x, y)
 				local info = UIDropDownMenu_CreateInfo()
 				info.text = QuestTogether:GetNameplateQuestIconStyleLabel(styleKey)
 				info.func = function()
+					QuestTogether:Debugf("options", "Dropdown selected key=nameplateQuestIconStyle value=%s", tostring(styleKey))
 					QuestTogether:SetOption("nameplateQuestIconStyle", styleKey)
 					QuestTogether:RefreshOptionsWindow()
 					CloseDropDownMenus()
@@ -213,6 +224,7 @@ function QuestTogether:RefreshOptionsWindow()
 	if not self.optionsFrame then
 		return
 	end
+	self:Debug("Refreshing options window", "options")
 
 	local controls = self.optionControls
 	controls.announceAccepted:SetChecked(self:GetOption("announceAccepted"))
@@ -272,6 +284,7 @@ function QuestTogether:OpenOptionsWindow()
 		return
 	end
 
+	self:Debug("Opening addon options category", "options")
 	Settings.OpenToCategory(self.optionsCategory:GetID())
 end
 
@@ -279,6 +292,7 @@ function QuestTogether:InitializeOptionsWindow()
 	if self.optionsFrame then
 		return
 	end
+	self:Debug("Initializing options window", "options")
 
 	local frame = CreateFrame("Frame", "QuestTogetherOptionsPanel")
 	frame.name = "QuestTogether"
@@ -340,6 +354,7 @@ function QuestTogether:InitializeOptionsWindow()
 	openHudEditMode:SetPoint("TOPLEFT", content, "TOPLEFT", 36, -324)
 	openHudEditMode:SetText("Open HUD Edit Mode")
 	openHudEditMode:SetScript("OnClick", function()
+		QuestTogether:Debug("Open HUD Edit Mode button clicked", "options")
 		if not QuestTogether:OpenHudEditMode() then
 			QuestTogether:Print("HUD Edit Mode is unavailable right now.")
 		end
@@ -387,6 +402,7 @@ function QuestTogether:InitializeOptionsWindow()
 	resetNameplateQuestHealthColor:SetScript("OnClick", function()
 		local defaults = QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor
 			or QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR
+		QuestTogether:Debug("Resetting nameplate quest health color to default", "options")
 		QuestTogether:SetOption("nameplateQuestHealthColor", {
 			r = defaults.r,
 			g = defaults.g,
@@ -411,6 +427,7 @@ function QuestTogether:InitializeOptionsWindow()
 	testButton:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -688)
 	testButton:SetText("Run In-Game Tests")
 	testButton:SetScript("OnClick", function()
+		QuestTogether:Debug("Run In-Game Tests button clicked", "options")
 		QuestTogether:RunTests()
 	end)
 
@@ -419,6 +436,7 @@ function QuestTogether:InitializeOptionsWindow()
 	scanButton:SetPoint("LEFT", testButton, "RIGHT", 10, 0)
 	scanButton:SetText("Rescan Quest Log")
 	scanButton:SetScript("OnClick", function()
+		QuestTogether:Debug("Rescan Quest Log button clicked", "options")
 		QuestTogether:ScanQuestLog()
 	end)
 

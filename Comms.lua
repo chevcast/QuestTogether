@@ -141,6 +141,7 @@ end
 
 function QuestTogether:EnsureAnnouncementChannelJoined()
 	if not self.isEnabled then
+		self:Debug("Skipping channel join because addon is disabled", "comms")
 		return false
 	end
 
@@ -151,24 +152,33 @@ function QuestTogether:EnsureAnnouncementChannelJoined()
 	end
 
 	if not self.API or not self.API.JoinPermanentChannel then
+		self:Debug("JoinPermanentChannel API unavailable", "comms")
 		return false
 	end
 
 	local chatFrameId = (DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.GetID and DEFAULT_CHAT_FRAME:GetID()) or 1
+	self:Debugf(
+		"comms",
+		"Joining announcement channel name=%s chatFrameId=%s",
+		tostring(self.announcementChannelName),
+		tostring(chatFrameId)
+	)
 	self.API.JoinPermanentChannel(self.announcementChannelName, nil, chatFrameId, 1)
 
 	currentLocalID = self:GetAnnouncementChannelLocalID()
 	if currentLocalID then
 		self.announcementChannelLocalID = currentLocalID
+		self:Debugf("comms", "Joined announcement channel localID=%s", tostring(currentLocalID))
 		return true
 	end
 
-	self:Debug("Unable to join announcement channel " .. tostring(self.announcementChannelName))
+	self:Debug("Unable to join announcement channel " .. tostring(self.announcementChannelName), "comms")
 	return false
 end
 
 function QuestTogether:LeaveAnnouncementChannel()
 	if self.API and self.API.LeaveChannelByName then
+		self:Debugf("comms", "Leaving announcement channel name=%s", tostring(self.announcementChannelName))
 		pcall(self.API.LeaveChannelByName, self.announcementChannelName)
 	end
 	self.announcementChannelLocalID = nil
@@ -236,27 +246,40 @@ end
 
 function QuestTogether:SendAnnouncementEvent(eventType, text)
 	if not self.isEnabled then
+		self:Debugf("comms", "Skipping announcement send while disabled eventType=%s", tostring(eventType))
 		return false
 	end
 
 	local eventData = self:BuildLocalAnnouncementEvent(eventType, text)
 	if not eventData then
+		self:Debugf("comms", "Failed to build local announcement event eventType=%s", tostring(eventType))
 		return false
 	end
 
+	self:DebugState("comms", "localAnnouncement", eventData)
 	return self:SendAnnouncementWireEvent(eventData)
 end
 
 function QuestTogether:SendAnnouncementWireEvent(eventData)
 	if not self.isEnabled or type(eventData) ~= "table" then
+		self:DebugState("comms", "Rejected wire event", eventData)
 		return false
 	end
 
 	if not self:EnsureAnnouncementChannelJoined() then
+		self:Debugf("comms", "Unable to send eventType=%s because channel join failed", tostring(eventData.eventType))
 		return false
 	end
 
 	local wireMessage = self:SerializeWireMessage(ANNOUNCEMENT_COMMAND, self:EncodeAnnouncementPayload(eventData))
+	self:Debugf(
+		"comms",
+		"Sending wire eventType=%s sender=%s target=%s bytes=%d",
+		tostring(eventData.eventType),
+		tostring(eventData.senderName),
+		tostring(self:GetAnnouncementChannelTarget()),
+		#wireMessage
+	)
 	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
 	return true
 end
@@ -271,25 +294,29 @@ function QuestTogether:SendBubbleAnnouncementTest(text, senderName)
 		if not UnitIsPlayer or not UnitIsPlayer("target") then
 			return false, "Your target must be a player."
 		end
+		self:Debug("bubbletest using current target", "comms")
 
 		eventData = self:BuildAnnouncementEventForUnit("target", "QUEST_PROGRESS", text)
 		if not eventData then
 			return false, "Unable to build a test announcement from your target."
 		end
 	else
-		local normalizedSenderName = self:NormalizeMemberName(senderName)
-		if not normalizedSenderName or normalizedSenderName == "" then
+		local trimmedSenderName = tostring(senderName or "")
+		trimmedSenderName = string.gsub(trimmedSenderName, "^%s+", "")
+		trimmedSenderName = string.gsub(trimmedSenderName, "%s+$", "")
+		if trimmedSenderName == "" then
 			return false, "Target a nearby player or provide a visible player name."
 		end
 		if not self.FindVisiblePlayerNameplateForSender then
 			return false, "Visible player lookup is unavailable."
 		end
 
-		local nameplate = self:FindVisiblePlayerNameplateForSender("", normalizedSenderName)
+		local nameplate = self:FindVisiblePlayerNameplateForSender("", trimmedSenderName)
 		local unitToken = nameplate and nameplate.GetUnit and nameplate:GetUnit() or nil
 		if not unitToken or unitToken == "" then
 			return false, "No visible nearby player matched that name."
 		end
+		self:Debugf("comms", "bubbletest resolved explicit sender=%s unitToken=%s", tostring(trimmedSenderName), tostring(unitToken))
 
 		eventData = self:BuildAnnouncementEventForUnit(unitToken, "QUEST_PROGRESS", text)
 		if not eventData then
@@ -318,14 +345,17 @@ end
 
 function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 	if type(eventData) ~= "table" then
+		self:Debug("Rejected announcement event because payload was not a table", "comms")
 		return false
 	end
 	if not self:ShouldDisplayAnnouncementType(eventData.eventType) then
+		self:Debugf("comms", "Filtered eventType=%s by local display settings", tostring(eventData.eventType))
 		return false
 	end
 
 	local senderName = self:NormalizeMemberName(eventData.senderName) or eventData.senderName
 	local classFile = eventData.classFile
+	local isGrouped = false
 	if (not classFile or classFile == "") and not isLocal then
 		classFile = self:GetGroupedSenderClassFile(senderName)
 	end
@@ -342,26 +372,51 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 		nearbyUnitToken = self:FindNearbyPlayerUnitTokenForSender(eventData.senderGUID, senderName)
 	end
 	hasNearbySignal = hasNearbyNameplate or nearbyUnitToken ~= nil
+	isGrouped = self:IsGroupedSender(senderName)
+	self:Debugf(
+		"comms",
+		"HandleAnnouncement eventType=%s sender=%s isLocal=%s grouped=%s nearbyNameplate=%s nearbyUnit=%s",
+		tostring(eventData.eventType),
+		tostring(senderName),
+		tostring(isLocal),
+		tostring(isGrouped),
+		tostring(hasNearbyNameplate),
+		tostring(nearbyUnitToken)
+	)
 
 	if not isLocal and not self:ShouldShowAnnouncementsForRemoteSender(senderName, hasNearbySignal) then
+		self:Debugf("comms", "Filtered remote sender=%s by showProgressFor scope", tostring(senderName))
 		return false
 	end
 
 	if self:GetOption("showChatLogs") then
-		local shouldPrint = isLocal or self:IsGroupedSender(senderName) or hasNearbySignal
+		local shouldPrint = isLocal or isGrouped or hasNearbySignal
 		if shouldPrint then
+			self:Debugf("comms", "Printing chat log sender=%s class=%s", tostring(senderName), tostring(classFile))
 			self:PrintConsoleAnnouncement(eventData.text, senderName, classFile)
+		else
+			self:Debugf("comms", "Skipped chat log sender=%s reason=no nearby/group signal", tostring(senderName))
 		end
+	else
+		self:Debug("Chat log display disabled", "comms")
 	end
 
 	if self:GetOption("showChatBubbles") then
 		if isLocal then
 			if not self:GetOption("hideMyOwnChatBubbles") and self.ShowPrototypeBubbleOnUnitNameplate then
+				self:Debug("Showing local personal bubble", "bubble")
 				self:ShowPrototypeBubbleOnUnitNameplate("player", eventData.text)
+			else
+				self:Debug("Skipped local personal bubble due to hideMyOwnChatBubbles or unavailable renderer", "bubble")
 			end
 		elseif hasNearbyNameplate and self.ShowPrototypeBubbleOnNameplate then
+			self:Debugf("bubble", "Showing remote nearby bubble sender=%s", tostring(senderName))
 			self:ShowPrototypeBubbleOnNameplate(nearbyNameplate, eventData.text)
+		else
+			self:Debugf("bubble", "Skipped remote bubble sender=%s reason=no nearby nameplate", tostring(senderName))
 		end
+	else
+		self:Debug("Chat bubble display disabled", "bubble")
 	end
 
 	return true
@@ -370,9 +425,11 @@ end
 function QuestTogether:PublishAnnouncementEvent(eventType, text)
 	local eventData = self:BuildLocalAnnouncementEvent(eventType, text)
 	if not eventData then
+		self:Debugf("comms", "PublishAnnouncementEvent dropped eventType=%s due to empty payload", tostring(eventType))
 		return false
 	end
 
+	self:DebugState("comms", "publishAnnouncement", eventData)
 	self:SendAnnouncementEvent(eventType, text)
 	self:HandleAnnouncementEvent(eventData, true)
 	return true
@@ -386,20 +443,33 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 	if prefix ~= self.commPrefix then
 		return
 	end
+	self:Debugf(
+		"comms",
+		"Received addon message channel=%s sender=%s localID=%s name=%s bytes=%d",
+		tostring(channel),
+		tostring(sender),
+		tostring(localID),
+		tostring(name),
+		type(message) == "string" and #message or 0
+	)
 	if self:IsSelfSender(sender) then
+		self:Debugf("comms", "Ignoring self-sent addon message sender=%s", tostring(sender))
 		return
 	end
 	if not self:IsAnnouncementChannelEvent(channel, localID, name) then
+		self:Debugf("comms", "Ignoring addon message outside announcement channel sender=%s", tostring(sender))
 		return
 	end
 
 	local command, payload = self:DeserializeWireMessage(message)
 	if command ~= ANNOUNCEMENT_COMMAND then
+		self:Debugf("comms", "Ignoring addon command=%s", tostring(command))
 		return
 	end
 
 	local eventData = self:DecodeAnnouncementPayload(payload)
 	if not eventData then
+		self:Debug("Failed to decode announcement payload", "comms")
 		return
 	end
 
@@ -407,5 +477,6 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 		eventData.senderName = self:NormalizeMemberName(sender) or sender
 	end
 
+	self:DebugState("comms", "receivedAnnouncement", eventData)
 	self:HandleAnnouncementEvent(eventData, false)
 end

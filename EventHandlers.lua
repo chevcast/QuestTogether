@@ -67,14 +67,16 @@ end
 
 function QuestTogether:PlayLocalCompletionEmote(emoteToken)
 	if not self:GetOption("doEmotes") then
-		self:Debug("Skipping local emote because doEmotes is disabled.")
+		self:Debug("Skipping local emote because doEmotes is disabled.", "quest")
 		return false
 	end
+	self:Debugf("quest", "Playing completion emote token=%s", tostring(emoteToken))
 	self.API.DoEmote(emoteToken, self:GetPlayerName())
 	return true
 end
 
 function QuestTogether:HandleQuestCompleted(questTitle, questId)
+	self:Debugf("quest", "Quest completed questId=%s title=%s", tostring(questId), tostring(questTitle))
 	if questId and self:IsWorldQuest(questId) then
 		self:PublishAnnouncementEvent("WORLD_QUEST_COMPLETED", "World Quest Completed: " .. tostring(questTitle))
 	else
@@ -85,6 +87,7 @@ function QuestTogether:HandleQuestCompleted(questTitle, questId)
 end
 
 function QuestTogether:HandleQuestRemoved(questTitle)
+	self:Debugf("quest", "Quest removed title=%s", tostring(questTitle))
 	self:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: " .. tostring(questTitle))
 end
 
@@ -98,7 +101,14 @@ function QuestTogether:HandleGroupRosterChanged(reason)
 		self:RefreshPartyRoster()
 	end
 	local newFingerprint = self:GetPartyRosterFingerprint()
-	self:Debug("HandleGroupRosterChanged(" .. tostring(reason) .. ") " .. tostring(previousFingerprint ~= newFingerprint))
+	self:Debugf(
+		"group",
+		"HandleGroupRosterChanged reason=%s changed=%s prev=%s new=%s",
+		tostring(reason),
+		tostring(previousFingerprint ~= newFingerprint),
+		tostring(previousFingerprint),
+		tostring(newFingerprint)
+	)
 end
 
 -- Snapshot world quests from the current area task table.
@@ -131,18 +141,17 @@ end
 function QuestTogether:RefreshWorldQuestAreaState(shouldAnnounce)
 	local previousState = self.worldQuestAreaStateByQuestID or {}
 	local currentState = self:GetActiveWorldQuestAreaSnapshot()
-	self:Debug(
-		"RefreshWorldQuestAreaState(announce="
-			.. tostring(shouldAnnounce)
-			.. ", prev="
-			.. tostring(CountKeys(previousState))
-			.. ", curr="
-			.. tostring(CountKeys(currentState))
-			.. ")"
+	self:Debugf(
+		"quest",
+		"RefreshWorldQuestAreaState announce=%s prev=%d curr=%d",
+		tostring(shouldAnnounce),
+		CountKeys(previousState),
+		CountKeys(currentState)
 	)
 
 	for questId, questTitle in pairs(currentState) do
 		if not previousState[questId] and shouldAnnounce then
+			self:Debugf("quest", "World quest area entered questId=%s title=%s", tostring(questId), tostring(questTitle))
 			self:PublishAnnouncementEvent("WORLD_QUEST_ENTERED", "World Quest Entered: " .. tostring(questTitle))
 		end
 	end
@@ -152,6 +161,7 @@ function QuestTogether:RefreshWorldQuestAreaState(shouldAnnounce)
 			local wasCompleted = self.questsCompleted[questId] == true
 			if shouldAnnounce and not wasCompleted then
 				local questTitle = previousTitle or self:GetQuestTitle(questId)
+				self:Debugf("quest", "World quest area left questId=%s title=%s", tostring(questId), tostring(questTitle))
 				self:PublishAnnouncementEvent("WORLD_QUEST_LEFT", "Left World Quest: " .. tostring(questTitle))
 			end
 		end
@@ -162,7 +172,7 @@ end
 
 -- QUEST_ACCEPTED fires early; defer reads until QUEST_LOG_UPDATE.
 function QuestTogether:QUEST_ACCEPTED(_, questId)
-	self:Debug("QUEST_ACCEPTED(" .. tostring(questId) .. ")")
+	self:Debugf("events", "QUEST_ACCEPTED questId=%s", tostring(questId))
 
 	self:QueueQuestLogTask(function()
 		local tracker = self:GetPlayerTracker()
@@ -178,7 +188,7 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 				self:WatchQuest(questId, { title = worldQuestTitle })
 				self:RefreshWorldQuestAreaState(true)
 			else
-				self:Debug("Quest " .. tostring(questId) .. " not found in quest log.")
+				self:Debugf("quest", "Quest not found in log questId=%s during accept", tostring(questId))
 			end
 			return
 		end
@@ -193,6 +203,7 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 		end
 
 		if not isWorldQuest then
+			self:Debugf("quest", "Publishing accepted announcement questId=%s title=%s", tostring(questId), tostring(questInfo.title))
 			self:PublishAnnouncementEvent("QUEST_ACCEPTED", "Quest Accepted: " .. tostring(questInfo.title))
 		end
 
@@ -204,12 +215,12 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 end
 
 function QuestTogether:QUEST_TURNED_IN(_, questId)
-	self:Debug("QUEST_TURNED_IN(" .. tostring(questId) .. ")")
+	self:Debugf("events", "QUEST_TURNED_IN questId=%s", tostring(questId))
 	self.questsCompleted[questId] = true
 end
 
 function QuestTogether:QUEST_REMOVED(_, questId)
-	self:Debug("QUEST_REMOVED(" .. tostring(questId) .. ")")
+	self:Debugf("events", "QUEST_REMOVED questId=%s", tostring(questId))
 
 	self:QueueQuestLogTask(function()
 		self.API.Delay(0.5, function()
@@ -222,6 +233,14 @@ function QuestTogether:QUEST_REMOVED(_, questId)
 			local questTitle = trackedQuest.title or ("Quest " .. tostring(questId))
 			local isWorldQuest = self:IsWorldQuest(questId)
 			local questWasCompleted = self.questsCompleted[questId] == true
+			self:Debugf(
+				"quest",
+				"Processing removal questId=%s title=%s worldQuest=%s completed=%s",
+				tostring(questId),
+				tostring(questTitle),
+				tostring(isWorldQuest),
+				tostring(questWasCompleted)
+			)
 
 			if questWasCompleted then
 				self:HandleQuestCompleted(questTitle, questId)
@@ -240,13 +259,13 @@ function QuestTogether:QUEST_REMOVED(_, questId)
 end
 
 function QuestTogether:SUPER_TRACKING_CHANGED()
-	self:Debug("SUPER_TRACKING_CHANGED is not implemented.")
+	self:Debug("SUPER_TRACKING_CHANGED is not implemented.", "events")
 end
 
 -- UNIT_QUEST_LOG_CHANGED indicates objective and completion changes.
 -- Emit local progress announcements only when numeric progress increases.
 function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
-	self:Debug("UNIT_QUEST_LOG_CHANGED(" .. tostring(unit) .. ")")
+	self:Debugf("events", "UNIT_QUEST_LOG_CHANGED unit=%s", tostring(unit))
 
 	if unit ~= "player" then
 		return
@@ -258,7 +277,7 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 		for questId, questData in pairs(tracker) do
 			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 			if not questLogIndex then
-				self:Debug("Quest " .. tostring(questId) .. " not found in quest log.")
+				self:Debugf("quest", "Quest not found in log questId=%s during objective scan", tostring(questId))
 			else
 				local changedObjectives = {}
 				local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
@@ -281,10 +300,22 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 						local hasForwardProgress =
 							DidObjectiveProgressIncrease(oldObjectiveText, oldObjectiveValue, objectiveText, currentValue)
 						local resolvedProgressValue = ResolveObjectiveProgressValue(objectiveText, currentValue)
+						self:Debugf(
+							"quest",
+							"Objective delta questId=%s index=%d old=%s new=%s progress=%s initial=%s forward=%s",
+							tostring(questId),
+							objectiveIndex,
+							tostring(oldObjectiveText),
+							tostring(objectiveText),
+							tostring(resolvedProgressValue),
+							tostring(isInitialObjectiveBaseline),
+							tostring(hasForwardProgress)
+						)
 						if (not isInitialObjectiveBaseline) and hasForwardProgress and self:ShouldPublishObjectiveProgress(
 							resolvedProgressValue
 						) then
 							local eventType = self:IsWorldQuest(questId) and "WORLD_QUEST_PROGRESS" or "QUEST_PROGRESS"
+							self:Debugf("quest", "Publishing progress event questId=%s eventType=%s", tostring(questId), tostring(eventType))
 							self:PublishAnnouncementEvent(eventType, objectiveText)
 						end
 						questData.objectives[objectiveIndex] = objectiveText
@@ -312,6 +343,12 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 				local completionChanged = questData.isComplete ~= currentIsComplete
 				if completionChanged then
 					questData.isComplete = currentIsComplete
+					self:Debugf(
+						"quest",
+						"Completion state changed questId=%s isComplete=%s",
+						tostring(questId),
+						tostring(currentIsComplete)
+					)
 				end
 
 				local hasObjectiveChanges = false
@@ -319,14 +356,15 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 					hasObjectiveChanges = true
 					break
 				end
+				if hasObjectiveChanges then
+					self:DebugState("quest", "changedObjectives", changedObjectives)
+				end
 			end
 		end
 	end)
 end
 
 function QuestTogether:QUEST_LOG_UPDATE()
-	self:Debug("QUEST_LOG_UPDATE()")
-
 	local queuedTasks = self.onQuestLogUpdate
 	if #queuedTasks > 0 then
 		for index = 1, #queuedTasks do
@@ -363,6 +401,7 @@ end
 
 function QuestTogether:PLAYER_ENTERING_WORLD()
 	-- Refresh state after loading screens without emitting synthetic enter/leave lines.
+	self:Debug("PLAYER_ENTERING_WORLD()", "events")
 	self:RefreshWorldQuestAreaState(false)
 	if self.EnsureAnnouncementChannelJoined and self.isEnabled then
 		self:EnsureAnnouncementChannelJoined()

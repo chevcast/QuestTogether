@@ -451,6 +451,58 @@ function QuestTogether:DeepCopy(value)
 	return copy
 end
 
+local function SortDebugKeys(keys)
+	table.sort(keys, function(left, right)
+		return tostring(left) < tostring(right)
+	end)
+end
+
+local function FormatDebugValue(value, depth, visited)
+	local valueType = type(value)
+	if valueType == "nil" then
+		return "nil"
+	end
+	if valueType == "boolean" or valueType == "number" then
+		return tostring(value)
+	end
+	if valueType == "string" then
+		return string.format("%q", value)
+	end
+	if valueType ~= "table" then
+		return "<" .. tostring(valueType) .. ">"
+	end
+
+	depth = depth or 0
+	if depth >= 2 then
+		return "{...}"
+	end
+
+	visited = visited or {}
+	if visited[value] then
+		return "{<cycle>}"
+	end
+	visited[value] = true
+
+	local keys = {}
+	for key in pairs(value) do
+		keys[#keys + 1] = key
+	end
+	SortDebugKeys(keys)
+
+	local parts = {}
+	local maxParts = 8
+	for index = 1, math.min(#keys, maxParts) do
+		local key = keys[index]
+		parts[#parts + 1] = tostring(key) .. "=" .. FormatDebugValue(value[key], depth + 1, visited)
+	end
+	if #keys > maxParts then
+		parts[#parts + 1] = string.format("...(%d more)", #keys - maxParts)
+	end
+
+	visited[value] = nil
+	return "{" .. table.concat(parts, ", ") .. "}"
+end
+
 -- Merge defaults into destination recursively without deleting existing values.
 function QuestTogether:ApplyDefaults(destination, defaults)
 	for key, defaultValue in pairs(defaults) do
@@ -478,6 +530,10 @@ function QuestTogether:PrintRaw(message)
 	else
 		print(text)
 	end
+end
+
+function QuestTogether:IsDebugEnabled()
+	return self.db and self.db.profile and self.db.profile.debugMode == true
 end
 
 function QuestTogether:GetQuestIconChatTag(size)
@@ -551,10 +607,38 @@ function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile)
 	self:PrintRaw(self:BuildConsoleAnnouncementMessage(speakerName, message, resolvedClassFile))
 end
 
-function QuestTogether:Debug(message)
-	if self.db and self.db.profile and self.db.profile.debugMode then
-		self:Print("Debug: " .. tostring(message))
+function QuestTogether:Debug(message, category)
+	if not self:IsDebugEnabled() then
+		return false
 	end
+
+	local prefix = "Debug"
+	if category and category ~= "" then
+		prefix = prefix .. "[" .. tostring(category) .. "]"
+	end
+
+	self:Print(prefix .. ": " .. tostring(message))
+	return true
+end
+
+function QuestTogether:Debugf(category, formatString, ...)
+	if formatString == nil then
+		formatString = category
+		category = nil
+	end
+	if not self:IsDebugEnabled() then
+		return false
+	end
+
+	local ok, formatted = pcall(string.format, tostring(formatString), ...)
+	if not ok then
+		formatted = tostring(formatString)
+	end
+	return self:Debug(formatted, category)
+end
+
+function QuestTogether:DebugState(category, label, value)
+	return self:Debug(tostring(label or "state") .. "=" .. FormatDebugValue(value), category)
 end
 
 function QuestTogether:GetPlayerName()
@@ -586,9 +670,18 @@ end
 function QuestTogether:ShouldDisplayAnnouncementType(eventType)
 	local optionKey = self:GetAnnouncementOptionKey(eventType)
 	if not optionKey then
+		self:Debugf("announce", "Display gate eventType=%s option=<none> allowed=true", tostring(eventType))
 		return true
 	end
-	return self:GetOption(optionKey) and true or false
+	local allowed = self:GetOption(optionKey) and true or false
+	self:Debugf(
+		"announce",
+		"Display gate eventType=%s option=%s allowed=%s",
+		tostring(eventType),
+		tostring(optionKey),
+		tostring(allowed)
+	)
+	return allowed
 end
 
 function QuestTogether:IsWorldQuest(questId)
@@ -651,25 +744,37 @@ function QuestTogether:SetOption(key, value)
 	if not self.db or not self.db.profile then
 		return false
 	end
+	local oldValue = self.db.profile[key]
 	if key == "showProgressFor" and not self:IsShowProgressFor(value) then
+		self:Debugf("options", "Rejected option change key=%s invalidValue=%s", tostring(key), FormatDebugValue(value))
 		return false
 	end
 	if key == "chatBubbleSize" then
 		value = self:NormalizeChatBubbleSizeValue(value)
 		if not value then
+			self:Debugf("options", "Rejected option change key=%s invalid bubble size", tostring(key))
 			return false
 		end
 	end
 	if key == "chatBubbleDuration" then
 		value = self:NormalizeChatBubbleDurationValue(value)
 		if not value then
+			self:Debugf("options", "Rejected option change key=%s invalid bubble duration", tostring(key))
 			return false
 		end
 	end
 	if key == "nameplateQuestIconStyle" and not self:IsNameplateQuestIconStyle(value) then
+		self:Debugf("options", "Rejected option change key=%s invalid icon style=%s", tostring(key), tostring(value))
 		return false
 	end
 	self.db.profile[key] = value
+	self:Debugf(
+		"options",
+		"Set option key=%s old=%s new=%s",
+		tostring(key),
+		FormatDebugValue(oldValue),
+		FormatDebugValue(self.db.profile[key])
+	)
 	if key == "nameplateQuestIconStyle" then
 		self:NormalizeNameplateOptions()
 	end
@@ -737,6 +842,7 @@ end
 function QuestTogether:QueueQuestLogTask(taskFn)
 	if type(taskFn) == "function" then
 		table.insert(self.onQuestLogUpdate, taskFn)
+		self:Debugf("quest", "Queued quest log task count=%d", #self.onQuestLogUpdate)
 	end
 end
 
@@ -749,6 +855,7 @@ function QuestTogether:InitializeDatabase()
 	self:ApplyDefaults(self.db, self.DEFAULTS)
 	self:NormalizeAnnouncementDisplayOptions()
 	self:NormalizeNameplateOptions()
+	self:DebugState("core", "db.profile", self.db.profile)
 end
 
 function QuestTogether:RegisterRuntimeEvents()
@@ -759,8 +866,9 @@ function QuestTogether:RegisterRuntimeEvents()
 		local ok = pcall(self.eventFrame.RegisterEvent, self.eventFrame, eventName)
 		if ok then
 			self.registeredRuntimeEvents[eventName] = true
+			self:Debugf("events", "Registered runtime event=%s", tostring(eventName))
 		else
-			self:Debug("Skipping unavailable runtime event: " .. tostring(eventName))
+			self:Debugf("events", "Skipping unavailable runtime event=%s", tostring(eventName))
 		end
 	end
 end
@@ -768,6 +876,7 @@ end
 function QuestTogether:UnregisterRuntimeEvents()
 	for eventName in pairs(self.registeredRuntimeEvents or {}) do
 		pcall(self.eventFrame.UnregisterEvent, self.eventFrame, eventName)
+		self:Debugf("events", "Unregistered runtime event=%s", tostring(eventName))
 	end
 
 	if self.registeredRuntimeEvents then
@@ -777,17 +886,21 @@ end
 
 function QuestTogether:Enable()
 	self.db.profile.enabled = true
+	self:Debugf("core", "Enable requested hasLoggedIn=%s isEnabled=%s", tostring(self.hasLoggedIn), tostring(self.isEnabled))
 
 	if not self.hasLoggedIn then
 		-- We only fully enable after PLAYER_LOGIN when WoW APIs are guaranteed to be ready.
+		self:Debug("Deferring enable until PLAYER_LOGIN", "core")
 		return true
 	end
 	if self.isEnabled then
+		self:Debug("Enable skipped because addon is already enabled", "core")
 		return true
 	end
 
 	self:RegisterRuntimeEvents()
 	self.API.RegisterAddonPrefix(self.commPrefix)
+	self:Debugf("comms", "Registered addon prefix=%s", tostring(self.commPrefix))
 	self.isEnabled = true
 	self.worldQuestAreaStateByQuestID = {}
 	if self.EnsureAnnouncementChannelJoined then
@@ -807,7 +920,7 @@ function QuestTogether:Enable()
 		self:RefreshPersonalBubbleAnchorVisualState()
 	end
 
-	self:Debug("Addon enabled.")
+	self:Debug("Addon enabled.", "core")
 
 	if self.RefreshPartyRoster then
 		self:RefreshPartyRoster()
@@ -816,6 +929,7 @@ function QuestTogether:Enable()
 	-- Delay initial scan briefly so quest log APIs are stable right after login/reload.
 	self.API.Delay(0.25, function()
 		if self.isEnabled then
+			self:Debug("Running delayed initial quest scan after enable", "quest")
 			self:ScanQuestLog()
 		end
 	end)
@@ -825,8 +939,10 @@ end
 
 function QuestTogether:Disable()
 	self.db.profile.enabled = false
+	self:Debugf("core", "Disable requested isEnabled=%s", tostring(self.isEnabled))
 
 	if not self.isEnabled then
+		self:Debug("Disable skipped because addon is already disabled", "core")
 		return true
 	end
 
@@ -844,20 +960,23 @@ function QuestTogether:Disable()
 		self:RefreshPersonalBubbleAnchorVisualState()
 	end
 
-	self:Debug("Addon disabled.")
+	self:Debug("Addon disabled.", "core")
 	return true
 end
 
 function QuestTogether:OpenHudEditMode()
 	if not EditModeManagerFrame then
+		self:Debug("Blizzard_EditMode not loaded; attempting to load it", "editmode")
 		pcall(UIParentLoadAddOn, "Blizzard_EditMode")
 	end
 
 	if EditModeManagerFrame and ShowUIPanel then
+		self:Debug("Opening HUD Edit Mode", "editmode")
 		ShowUIPanel(EditModeManagerFrame)
 		return true
 	end
 
+	self:Debug("HUD Edit Mode unavailable", "editmode")
 	return false
 end
 
@@ -901,6 +1020,7 @@ end
 function QuestTogether:HandleSlashCommand(input)
 	local command, rest = string.match(input, "^(%S*)%s*(.-)$")
 	command = string.lower(command or "")
+	self:Debugf("slash", "Command=%s rest=%s", tostring(command), FormatDebugValue(rest))
 
 	if command == "" or command == "options" then
 		self:OpenOptionsWindow()
@@ -1029,7 +1149,7 @@ function QuestTogether:ScanQuestLog()
 		return
 	end
 
-	self:Debug("ScanQuestLog()")
+	self:Debug("ScanQuestLog()", "quest")
 
 	local tracker = self:GetPlayerTracker()
 	wipe(tracker)
@@ -1062,12 +1182,13 @@ function QuestTogether:ScanQuestLog()
 		self:RefreshWorldQuestAreaState(false)
 	end
 
+	self:Debugf("quest", "Scan complete questsTracked=%d", questsTracked)
 	self:PrintConsoleAnnouncement(questsTracked .. " quests are being monitored by QuestTogether.")
 end
 
 -- Store the current objective text state for one quest.
 function QuestTogether:WatchQuest(questId, questInfo)
-	self:Debug("WatchQuest(" .. tostring(questId) .. ")")
+	self:Debugf("quest", "WatchQuest questId=%s", tostring(questId))
 
 	if not questId or not questInfo then
 		return
@@ -1085,6 +1206,7 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		objectiveValues = {},
 		isComplete = C_QuestLog.IsComplete(questId) and true or false,
 	}
+	self:DebugState("quest", "trackedQuest", tracker[questId])
 
 	if not questLogIndex then
 		return
@@ -1119,11 +1241,12 @@ function QuestTogether:OnInitialize()
 		self:InitializeOptionsWindow()
 	end
 	self.isInitialized = true
-	self:Debug("OnInitialize complete.")
+	self:Debug("OnInitialize complete.", "core")
 end
 
 function QuestTogether:OnLogin()
 	self.hasLoggedIn = true
+	self:Debugf("core", "PLAYER_LOGIN processed enabledSetting=%s", tostring(self.db and self.db.profile and self.db.profile.enabled))
 	if self.db.profile.enabled then
 		self:Enable()
 	end
@@ -1147,6 +1270,7 @@ function QuestTogether:ADDON_LOADED(_, loadedAddonName)
 end
 
 function QuestTogether:PLAYER_LOGIN()
+	self:Debug("PLAYER_LOGIN()", "events")
 	if not self.isInitialized then
 		self:OnInitialize()
 	end
