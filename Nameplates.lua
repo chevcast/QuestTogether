@@ -2021,7 +2021,11 @@ function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 	self:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObjective)
 
 	if shouldShow then
-		icon = icon or EnsureQuestIcon(unitFrame)
+		if icon then
+			self:ApplyNameplateQuestIconStyle(icon, unitFrame)
+		else
+			icon = EnsureQuestIcon(unitFrame)
+		end
 		if not icon then
 			return
 		end
