@@ -272,19 +272,7 @@ function QuestTogether:IsAnnouncementChannelEvent(channel, localID, name)
 		return false
 	end
 
-	if type(name) == "string" and name ~= "" then
-		return name == self.announcementChannelName
-	end
-
-	local expectedLocalID = self:GetAnnouncementChannelLocalID() or self.announcementChannelLocalID
-	if IsSecretValue(expectedLocalID) or IsSecretValue(localID) then
-		return false
-	end
-	if type(expectedLocalID) == "number" and expectedLocalID > 0 and type(localID) == "number" then
-		return expectedLocalID == localID
-	end
-
-	return false
+	return type(name) == "string" and name ~= "" and name == self.announcementChannelName
 end
 
 function QuestTogether:SendAnnouncementEvent(eventType, text, questId)
@@ -507,10 +495,9 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 	end
 	self:Debugf(
 		"comms",
-		"Received addon message channel=%s sender=%s localID=%s name=%s bytes=%d",
+		"Received addon message channel=%s sender=%s name=%s bytes=%d",
 		tostring(channel),
 		tostring(sender),
-		SafeDebugString(localID),
 		tostring(name),
 		type(message) == "string" and #message or 0
 	)
