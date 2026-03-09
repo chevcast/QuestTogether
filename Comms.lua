@@ -192,6 +192,35 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text)
 	}
 end
 
+function QuestTogether:BuildAnnouncementEventForUnit(unitToken, eventType, text)
+	if type(unitToken) ~= "string" or unitToken == "" then
+		return nil
+	end
+
+	local sanitizedText = self:SanitizeAnnouncementText(text)
+	if sanitizedText == "" then
+		return nil
+	end
+
+	local unitName, unitRealm = self.API.UnitFullName(unitToken)
+	if not unitName or unitName == "" then
+		return nil
+	end
+
+	local _, classFile = self.API.UnitClass(unitToken)
+	local senderGUID = self.API.UnitGUID and self.API.UnitGUID(unitToken) or ""
+	local senderName = tostring(unitName) .. "-" .. tostring((unitRealm or self.API.GetRealmName() or ""):gsub("%s+", ""))
+
+	return {
+		version = ANNOUNCEMENT_WIRE_VERSION,
+		eventType = tostring(eventType or ""),
+		senderGUID = tostring(senderGUID or ""),
+		classFile = tostring(classFile or ""),
+		senderName = senderName,
+		text = sanitizedText,
+	}
+end
+
 function QuestTogether:IsAnnouncementChannelEvent(channel, localID, name)
 	if channel ~= "CHANNEL" then
 		return false
@@ -215,6 +244,14 @@ function QuestTogether:SendAnnouncementEvent(eventType, text)
 		return false
 	end
 
+	return self:SendAnnouncementWireEvent(eventData)
+end
+
+function QuestTogether:SendAnnouncementWireEvent(eventData)
+	if not self.isEnabled or type(eventData) ~= "table" then
+		return false
+	end
+
 	if not self:EnsureAnnouncementChannelJoined() then
 		return false
 	end
@@ -222,6 +259,50 @@ function QuestTogether:SendAnnouncementEvent(eventType, text)
 	local wireMessage = self:SerializeWireMessage(ANNOUNCEMENT_COMMAND, self:EncodeAnnouncementPayload(eventData))
 	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
 	return true
+end
+
+function QuestTogether:SendBubbleAnnouncementTest(text, senderName)
+	if not self.isEnabled then
+		return false, "QuestTogether is disabled."
+	end
+
+	local eventData = nil
+	if self.API.UnitExists and self.API.UnitExists("target") then
+		if not UnitIsPlayer or not UnitIsPlayer("target") then
+			return false, "Your target must be a player."
+		end
+
+		eventData = self:BuildAnnouncementEventForUnit("target", "QUEST_PROGRESS", text)
+		if not eventData then
+			return false, "Unable to build a test announcement from your target."
+		end
+	else
+		local normalizedSenderName = self:NormalizeMemberName(senderName)
+		if not normalizedSenderName or normalizedSenderName == "" then
+			return false, "Target a nearby player or provide a visible player name."
+		end
+		if not self.FindVisiblePlayerNameplateForSender then
+			return false, "Visible player lookup is unavailable."
+		end
+
+		local nameplate = self:FindVisiblePlayerNameplateForSender("", normalizedSenderName)
+		local unitToken = nameplate and nameplate.GetUnit and nameplate:GetUnit() or nil
+		if not unitToken or unitToken == "" then
+			return false, "No visible nearby player matched that name."
+		end
+
+		eventData = self:BuildAnnouncementEventForUnit(unitToken, "QUEST_PROGRESS", text)
+		if not eventData then
+			return false, "Unable to build a test announcement for that player."
+		end
+	end
+
+	if not self:SendAnnouncementWireEvent(eventData) then
+		return false, "Unable to send the bubble test announcement."
+	end
+
+	self:HandleAnnouncementEvent(eventData, false)
+	return true, eventData.senderName
 end
 
 function QuestTogether:ShouldShowAnnouncementsForRemoteSender(senderName, hasNearbyNameplate)

@@ -13,6 +13,18 @@ function QuestTogether:RegisterTest(name, fn)
 	}
 end
 
+local function BuildTestLogMessage(message)
+	local iconTag = QuestTogether:GetQuestIconChatTag(14)
+	local body = tostring(message or "")
+	body = body:gsub("^%[PASS%]", "|cff33ff99[PASS]|r|cffffd200")
+	body = body:gsub("^%[FAIL%]", "|cffff3333[FAIL]|r|cffffd200")
+	body = "|cffffd200" .. body .. "|r"
+	if iconTag ~= "" then
+		return iconTag .. " " .. body
+	end
+	return body
+end
+
 local function AssertTrue(value, message)
 	if not value then
 		error(message or "Expected true but got false/nil")
@@ -126,7 +138,7 @@ function QuestTogether:RunTests()
 	local passed = 0
 	local failed = 0
 
-	self:Print("Running " .. tostring(total) .. " in-game tests...")
+	self:PrintRaw(BuildTestLogMessage("Running " .. tostring(total) .. " in-game tests..."))
 
 	for _, testCase in ipairs(self.tests) do
 		local ok, err = pcall(function()
@@ -135,14 +147,14 @@ function QuestTogether:RunTests()
 
 		if ok then
 			passed = passed + 1
-			self:Print("[PASS] " .. testCase.name)
+			self:PrintRaw(BuildTestLogMessage("[PASS] " .. testCase.name))
 		else
 			failed = failed + 1
-			self:Print("[FAIL] " .. testCase.name .. " -> " .. tostring(err))
+			self:PrintRaw(BuildTestLogMessage("[FAIL] " .. testCase.name .. " -> " .. tostring(err)))
 		end
 	end
 
-	self:Print("Test summary: " .. tostring(passed) .. " passed, " .. tostring(failed) .. " failed.")
+	self:PrintRaw(BuildTestLogMessage("Test summary: " .. tostring(passed) .. " passed, " .. tostring(failed) .. " failed."))
 	return failed == 0
 end
 
@@ -159,15 +171,34 @@ QuestTogether:RegisterTest("default profile contains new announcement display op
 end)
 
 QuestTogether:RegisterTest("chat bubble option validation rejects unknown values", function()
-	AssertTrue(QuestTogether:SetOption("chatBubbleSize", "large"))
-	AssertEquals(QuestTogether:GetOption("chatBubbleSize"), "large")
-	AssertFalse(QuestTogether:SetOption("chatBubbleSize", "gigantic"))
-	AssertEquals(QuestTogether:GetOption("chatBubbleSize"), "large")
+	AssertTrue(QuestTogether:SetOption("chatBubbleSize", 140))
+	AssertEquals(QuestTogether:GetOption("chatBubbleSize"), 140)
+	AssertFalse(QuestTogether:SetOption("chatBubbleSize", 999))
+	AssertEquals(QuestTogether:GetOption("chatBubbleSize"), 140)
+
+	AssertTrue(QuestTogether:SetOption("chatBubbleDuration", 4.5))
+	AssertEquals(QuestTogether:GetOption("chatBubbleDuration"), 4.5)
+	AssertFalse(QuestTogether:SetOption("chatBubbleDuration", 9))
+	AssertEquals(QuestTogether:GetOption("chatBubbleDuration"), 4.5)
 
 	AssertTrue(QuestTogether:SetOption("showProgressFor", "party_only"))
 	AssertEquals(QuestTogether:GetOption("showProgressFor"), "party_only")
 	AssertFalse(QuestTogether:SetOption("showProgressFor", "everyone"))
 	AssertEquals(QuestTogether:GetOption("showProgressFor"), "party_only")
+end)
+
+QuestTogether:RegisterTest("legacy bubble settings migrate to numeric values", function()
+	QuestTogether.db.profile.chatBubbleSize = "small"
+	QuestTogether.db.profile.chatBubbleDuration = "4"
+	QuestTogether:NormalizeAnnouncementDisplayOptions()
+	AssertEquals(QuestTogether.db.profile.chatBubbleSize, 100)
+	AssertEquals(QuestTogether.db.profile.chatBubbleDuration, 4)
+
+	QuestTogether.db.profile.chatBubbleSize = "gigantic"
+	QuestTogether.db.profile.chatBubbleDuration = 99
+	QuestTogether:NormalizeAnnouncementDisplayOptions()
+	AssertEquals(QuestTogether.db.profile.chatBubbleSize, QuestTogether.DEFAULTS.profile.chatBubbleSize)
+	AssertEquals(QuestTogether.db.profile.chatBubbleDuration, QuestTogether.DEFAULTS.profile.chatBubbleDuration)
 end)
 
 QuestTogether:RegisterTest("personal bubble anchor persists per character and resets to defaults", function()
@@ -206,7 +237,7 @@ QuestTogether:RegisterTest("console announcement message includes icon and playe
 	AssertTrue(string.find(message, "|cffffd200: hello there|r", 1, true) ~= nil)
 end)
 
-QuestTogether:RegisterTest("send announcement event uses shared channel target", function()
+QuestTogether:RegisterTest("bubble test announcement uses target player when available", function()
 	local sent = {}
 	QuestTogether.isEnabled = true
 	QuestTogether.API = CreateApiWithOverrides({
@@ -280,6 +311,151 @@ QuestTogether:RegisterTest("publish announcement sends even when local option is
 	AssertTrue(success)
 	AssertEquals(#sent, 1)
 	AssertEquals(#printed, 0)
+end)
+
+QuestTogether:RegisterTest("target test announcement sends target payload and handles locally as remote", function()
+	local sent = {}
+	local handledEvent = nil
+
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		UnitExists = function(unitToken)
+			AssertEquals(unitToken, "target")
+			return true
+		end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "target")
+			return "Nearby", "Realm"
+		end,
+		UnitClass = function(unitToken)
+			AssertEquals(unitToken, "target")
+			return "Mage", "MAGE"
+		end,
+		UnitGUID = function(unitToken)
+			AssertEquals(unitToken, "target")
+			return "Player-2-XYZ"
+		end,
+		GetChannelName = function()
+			return 8
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+			return 0
+		end,
+	})
+
+	WithPatchedMethod(_G, "UnitIsPlayer", function(unitToken)
+		AssertEquals(unitToken, "target")
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "HandleAnnouncementEvent", function(_, eventData, isLocal)
+			handledEvent = {
+				eventType = eventData.eventType,
+				senderGUID = eventData.senderGUID,
+				classFile = eventData.classFile,
+				senderName = eventData.senderName,
+				text = eventData.text,
+				isLocal = isLocal,
+			}
+			return true
+		end, function()
+			local ok, senderName = QuestTogether:SendBubbleAnnouncementTest("Testing nearby player bubble")
+			AssertTrue(ok)
+			AssertEquals(senderName, "Nearby-Realm")
+		end)
+	end)
+
+	AssertEquals(#sent, 1)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "CHANNEL")
+	AssertEquals(sent[1].target, 8)
+	AssertTrue(string.find(sent[1].message, "^ANN|", 1) ~= nil)
+	AssertEquals(handledEvent.eventType, "QUEST_PROGRESS")
+	AssertEquals(handledEvent.senderGUID, "Player-2-XYZ")
+	AssertEquals(handledEvent.classFile, "MAGE")
+	AssertEquals(handledEvent.senderName, "Nearby-Realm")
+	AssertEquals(handledEvent.text, "Testing nearby player bubble")
+	AssertFalse(handledEvent.isLocal)
+end)
+
+QuestTogether:RegisterTest("bubble test announcement uses explicit visible player name without target", function()
+	local sent = {}
+	local handledEvent = nil
+	local nearbyFrame = {
+		GetUnit = function()
+			return "nameplate7"
+		end,
+	}
+
+	WithTemporaryAPI({
+		UnitExists = function(unitToken)
+			AssertEquals(unitToken, "target")
+			return false
+		end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "nameplate7")
+			return "Nearby", "Realm"
+		end,
+		UnitClass = function(unitToken)
+			AssertEquals(unitToken, "nameplate7")
+			return "Mage", "MAGE"
+		end,
+		UnitGUID = function(unitToken)
+			AssertEquals(unitToken, "nameplate7")
+			return "Player-2-XYZ"
+		end,
+		GetChannelName = function()
+			return 8
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+			return 0
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function(_, senderGUID, senderName)
+		AssertEquals(senderGUID, "")
+		AssertEquals(senderName, "Nearby")
+		return nearbyFrame
+	end, function()
+		WithPatchedMethod(QuestTogether, "HandleAnnouncementEvent", function(_, eventData, isLocal)
+			handledEvent = {
+				eventType = eventData.eventType,
+				senderGUID = eventData.senderGUID,
+				classFile = eventData.classFile,
+				senderName = eventData.senderName,
+				text = eventData.text,
+				isLocal = isLocal,
+			}
+			return true
+		end, function()
+			local ok, senderName = QuestTogether:SendBubbleAnnouncementTest("Testing nearby player bubble", "Nearby")
+			AssertTrue(ok)
+			AssertEquals(senderName, "Nearby-Realm")
+		end)
+	end)
+
+	AssertEquals(#sent, 1)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "CHANNEL")
+	AssertEquals(sent[1].target, 8)
+	AssertTrue(string.find(sent[1].message, "^ANN|", 1) ~= nil)
+	AssertEquals(handledEvent.eventType, "QUEST_PROGRESS")
+	AssertEquals(handledEvent.senderGUID, "Player-2-XYZ")
+	AssertEquals(handledEvent.classFile, "MAGE")
+	AssertEquals(handledEvent.senderName, "Nearby-Realm")
+	AssertEquals(handledEvent.text, "Testing nearby player bubble")
+	AssertFalse(handledEvent.isLocal)
 end)
 
 QuestTogether:RegisterTest("remote grouped sender prints chat log without nearby nameplate", function()

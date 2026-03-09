@@ -21,6 +21,12 @@ _G.QuestTogether = QuestTogether
 QuestTogether.addonName = addonName or "QuestTogether"
 QuestTogether.commPrefix = "QuestTogether"
 QuestTogether.announcementChannelName = "QuestTogetherAnnounce1"
+QuestTogether.CHAT_BUBBLE_SIZE_MIN = 80
+QuestTogether.CHAT_BUBBLE_SIZE_MAX = 160
+QuestTogether.CHAT_BUBBLE_SIZE_STEP = 5
+QuestTogether.CHAT_BUBBLE_DURATION_MIN = 1
+QuestTogether.CHAT_BUBBLE_DURATION_MAX = 8
+QuestTogether.CHAT_BUBBLE_DURATION_STEP = 0.5
 
 -- Runtime state flags.
 QuestTogether.isInitialized = QuestTogether.isInitialized or false
@@ -49,7 +55,7 @@ QuestTogether.DEFAULTS = {
 		hideMyOwnChatBubbles = false,
 		showChatLogs = true,
 		showProgressFor = "party_nearby",
-		chatBubbleSize = "medium",
+		chatBubbleSize = 120,
 		chatBubbleDuration = 3,
 		debugMode = false,
 		doEmotes = true,
@@ -92,32 +98,6 @@ QuestTogether.showProgressForOrder = {
 	"party_only",
 }
 
-QuestTogether.chatBubbleSizeLabels = {
-	large = "Large",
-	medium = "Medium",
-	small = "Small",
-}
-
-QuestTogether.chatBubbleSizeOrder = {
-	"large",
-	"medium",
-	"small",
-}
-
-QuestTogether.chatBubbleDurationLabels = {
-	[2] = "2 Seconds",
-	[3] = "3 Seconds",
-	[4] = "4 Seconds",
-	[5] = "5 Seconds",
-}
-
-QuestTogether.chatBubbleDurationOrder = {
-	2,
-	3,
-	4,
-	5,
-}
-
 QuestTogether.DEFAULT_PERSONAL_BUBBLE_ANCHOR = {
 	point = "CENTER",
 	relativePoint = "CENTER",
@@ -134,23 +114,55 @@ function QuestTogether:IsShowProgressFor(value)
 	return false
 end
 
-function QuestTogether:IsChatBubbleSize(sizeKey)
-	for _, candidate in ipairs(self.chatBubbleSizeOrder) do
-		if candidate == sizeKey then
-			return true
-		end
+function QuestTogether:NormalizeChatBubbleSizeValue(value)
+	local legacyValues = {
+		small = 100,
+		medium = 120,
+		large = 140,
+	}
+
+	if type(value) == "string" and legacyValues[value] then
+		value = legacyValues[value]
 	end
-	return false
+
+	local numericValue = tonumber(value)
+	if not numericValue then
+		return nil
+	end
+
+	local step = self.CHAT_BUBBLE_SIZE_STEP or 5
+	numericValue = math.floor((numericValue / step) + 0.5) * step
+
+	if numericValue < self.CHAT_BUBBLE_SIZE_MIN or numericValue > self.CHAT_BUBBLE_SIZE_MAX then
+		return nil
+	end
+
+	return numericValue
 end
 
-function QuestTogether:IsChatBubbleDuration(durationValue)
-	local numericValue = tonumber(durationValue)
-	for _, candidate in ipairs(self.chatBubbleDurationOrder) do
-		if candidate == numericValue then
-			return true
-		end
+function QuestTogether:IsChatBubbleSize(value)
+	return self:NormalizeChatBubbleSizeValue(value) ~= nil
+end
+
+function QuestTogether:NormalizeChatBubbleDurationValue(value)
+	local numericValue = tonumber(value)
+	if not numericValue then
+		return nil
 	end
-	return false
+
+	local step = self.CHAT_BUBBLE_DURATION_STEP or 0.5
+	numericValue = math.floor((numericValue / step) + 0.5) * step
+	numericValue = math.floor((numericValue * 10) + 0.5) / 10
+
+	if numericValue < self.CHAT_BUBBLE_DURATION_MIN or numericValue > self.CHAT_BUBBLE_DURATION_MAX then
+		return nil
+	end
+
+	return numericValue
+end
+
+function QuestTogether:IsChatBubbleDuration(value)
+	return self:NormalizeChatBubbleDurationValue(value) ~= nil
 end
 
 function QuestTogether:IsNameplateQuestIconStyle(styleKey)
@@ -179,12 +191,25 @@ function QuestTogether:GetShowProgressForLabel(value)
 end
 
 function QuestTogether:GetChatBubbleSizeLabel(sizeKey)
-	return self.chatBubbleSizeLabels[sizeKey] or tostring(sizeKey)
+	local numericValue = self:NormalizeChatBubbleSizeValue(sizeKey)
+	if not numericValue then
+		return tostring(sizeKey)
+	end
+
+	return tostring(numericValue) .. "%"
 end
 
 function QuestTogether:GetChatBubbleDurationLabel(durationValue)
-	local numericValue = tonumber(durationValue)
-	return self.chatBubbleDurationLabels[numericValue] or tostring(durationValue)
+	local numericValue = self:NormalizeChatBubbleDurationValue(durationValue)
+	if not numericValue then
+		return tostring(durationValue)
+	end
+
+	if math.abs(numericValue - math.floor(numericValue)) < 0.001 then
+		return string.format("%d sec", numericValue)
+	end
+
+	return string.format("%.1f sec", numericValue)
 end
 
 function QuestTogether:GetPersonalBubbleAnchorKey()
@@ -609,12 +634,10 @@ function QuestTogether:NormalizeAnnouncementDisplayOptions()
 	if not self:IsShowProgressFor(profile.showProgressFor) then
 		profile.showProgressFor = self.DEFAULTS.profile.showProgressFor
 	end
-	if not self:IsChatBubbleSize(profile.chatBubbleSize) then
-		profile.chatBubbleSize = self.DEFAULTS.profile.chatBubbleSize
-	end
-	if not self:IsChatBubbleDuration(profile.chatBubbleDuration) then
-		profile.chatBubbleDuration = self.DEFAULTS.profile.chatBubbleDuration
-	end
+	profile.chatBubbleSize = self:NormalizeChatBubbleSizeValue(profile.chatBubbleSize)
+		or self.DEFAULTS.profile.chatBubbleSize
+	profile.chatBubbleDuration = self:NormalizeChatBubbleDurationValue(profile.chatBubbleDuration)
+		or self.DEFAULTS.profile.chatBubbleDuration
 end
 
 function QuestTogether:GetOption(key)
@@ -631,11 +654,17 @@ function QuestTogether:SetOption(key, value)
 	if key == "showProgressFor" and not self:IsShowProgressFor(value) then
 		return false
 	end
-	if key == "chatBubbleSize" and not self:IsChatBubbleSize(value) then
-		return false
+	if key == "chatBubbleSize" then
+		value = self:NormalizeChatBubbleSizeValue(value)
+		if not value then
+			return false
+		end
 	end
-	if key == "chatBubbleDuration" and not self:IsChatBubbleDuration(value) then
-		return false
+	if key == "chatBubbleDuration" then
+		value = self:NormalizeChatBubbleDurationValue(value)
+		if not value then
+			return false
+		end
 	end
 	if key == "nameplateQuestIconStyle" and not self:IsNameplateQuestIconStyle(value) then
 		return false
@@ -657,8 +686,14 @@ function QuestTogether:SetOption(key, value)
 		or key == "chatBubbleSize"
 		or key == "chatBubbleDuration"
 	then
+		if self.RefreshActivePrototypeBubbles then
+			self:RefreshActivePrototypeBubbles()
+		end
 		if self.RefreshPersonalBubbleAnchorVisualState then
 			self:RefreshPersonalBubbleAnchorVisualState()
+		end
+		if self.RefreshPersonalBubbleEditModeDialog then
+			self:RefreshPersonalBubbleEditModeDialog()
 		end
 	end
 	if
@@ -813,6 +848,19 @@ function QuestTogether:Disable()
 	return true
 end
 
+function QuestTogether:OpenHudEditMode()
+	if not EditModeManagerFrame then
+		pcall(UIParentLoadAddOn, "Blizzard_EditMode")
+	end
+
+	if EditModeManagerFrame and ShowUIPanel then
+		ShowUIPanel(EditModeManagerFrame)
+		return true
+	end
+
+	return false
+end
+
 function QuestTogether:InitializeSlashCommands()
 	SLASH_QUESTTOGETHER1 = "/qt"
 	SLASH_QUESTTOGETHER2 = "/questtogether"
@@ -845,6 +893,8 @@ function QuestTogether:PrintHelp()
 	self:Print("/qt set <option> <value> - Set a boolean option (e.g. doEmotes off)")
 	self:Print("/qt get <option> - Read an option value")
 	self:Print("/qt scan - Rescan your quest log now")
+	self:Print("/qt bubbletest <text> - Send a QUEST_PROGRESS test event as your current target")
+	self:Print("/qt bubbletest <player> <text> - Send a QUEST_PROGRESS test event as a nearby visible player")
 	self:Print("/qt test - Run in-game unit tests")
 end
 
@@ -925,6 +975,38 @@ function QuestTogether:HandleSlashCommand(input)
 
 	if command == "scan" then
 		self:ScanQuestLog()
+		return
+	end
+
+	if command == "bubbletest" then
+		if rest == nil or rest == "" then
+			self:Print("Usage: /qt bubbletest <text>")
+			self:Print("   or: /qt bubbletest <player> <text>")
+			return
+		end
+		if not self.SendBubbleAnnouncementTest then
+			self:Print("Bubble test is unavailable.")
+			return
+		end
+
+		local senderName = nil
+		local testText = rest
+		if not (self.API.UnitExists and self.API.UnitExists("target")) then
+			local explicitSenderName, explicitText = string.match(rest, "^(%S+)%s+(.+)$")
+			if not explicitSenderName or not explicitText then
+				self:Print("Usage without a target: /qt bubbletest <player> <text>")
+				return
+			end
+			senderName = explicitSenderName
+			testText = explicitText
+		end
+
+		local ok, senderNameOrError = self:SendBubbleAnnouncementTest(testText, senderName)
+		if not ok then
+			self:Print(senderNameOrError)
+			return
+		end
+		self:Print("Sent bubble test announcement for " .. tostring(self:GetShortDisplayName(senderNameOrError)))
 		return
 	end
 

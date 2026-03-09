@@ -16,36 +16,9 @@ local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
 local PROTOTYPE_BUBBLE_Y_OFFSET = 22
 local PROTOTYPE_BUBBLE_FADE_IN_SECONDS = 0.2
 local PROTOTYPE_BUBBLE_FADE_OUT_SECONDS = 0.4
-local PERSONAL_BUBBLE_ANCHOR_EDIT_WIDTH = 220
-local PERSONAL_BUBBLE_ANCHOR_EDIT_HEIGHT = 40
+local PERSONAL_BUBBLE_SETTINGS_DIALOG_WIDTH = 380
+local PERSONAL_BUBBLE_SETTINGS_DIALOG_HEIGHT = 220
 local ApplyQuestIconVisual
-
-local CHAT_BUBBLE_SIZE_CONFIGS = {
-	small = {
-		fontSize = 14,
-		iconSize = 18,
-		iconGap = 8,
-		minTextWidth = 48,
-		maxTextWidth = 220,
-		inset = 16,
-	},
-	medium = {
-		fontSize = 17,
-		iconSize = 22,
-		iconGap = 10,
-		minTextWidth = 60,
-		maxTextWidth = 260,
-		inset = 18,
-	},
-	large = {
-		fontSize = 20,
-		iconSize = 26,
-		iconGap = 12,
-		minTextWidth = 72,
-		maxTextWidth = 300,
-		inset = 20,
-	},
-}
 
 -- Original icon used by this addon's first nameplate implementation.
 QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE = "Interface\\OPTIONSFRAME\\UI-OptionsFrame-NewFeatureIcon"
@@ -92,9 +65,10 @@ QuestTogether.nameplateBaseHealthColorByUnitFrame = QuestTogether.nameplateBaseH
 	or setmetatable({}, { __mode = "k" })
 QuestTogether.nameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
 	or setmetatable({}, { __mode = "k" })
+QuestTogether.nameplateHealthTintRefreshPendingByUnitToken = QuestTogether.nameplateHealthTintRefreshPendingByUnitToken or {}
 
 local function GetPrototypeBubbleLifetimeSeconds()
-	local configuredDuration = tonumber(QuestTogether:GetOption("chatBubbleDuration"))
+	local configuredDuration = QuestTogether:NormalizeChatBubbleDurationValue(QuestTogether:GetOption("chatBubbleDuration"))
 	if not configuredDuration or configuredDuration <= 0 then
 		configuredDuration = QuestTogether.DEFAULTS.profile.chatBubbleDuration
 	end
@@ -108,9 +82,426 @@ local function GetPrototypeBubbleUnitFrame(hostFrame)
 	return hostFrame.UnitFrame or hostFrame
 end
 
+local function ScaleBubbleMetric(baseValue, sizeScale, minimumValue)
+	local scaledValue = math.floor((baseValue * sizeScale) + 0.5)
+	if minimumValue then
+		return math.max(minimumValue, scaledValue)
+	end
+	return scaledValue
+end
+
+local function GetPersonalBubbleAnchorFontDefinition()
+	if ChatBubbleFont and ChatBubbleFont.GetFont then
+		local fontPath, _, fontFlags = ChatBubbleFont:GetFont()
+		if fontPath and fontPath ~= "" then
+			return fontPath, fontFlags
+		end
+	end
+
+	if GameFontHighlightMedium and GameFontHighlightMedium.GetFont then
+		local fontPath, _, fontFlags = GameFontHighlightMedium:GetFont()
+		if fontPath and fontPath ~= "" then
+			return fontPath, fontFlags
+		end
+	end
+
+	return STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", ""
+end
+
 local function GetPrototypeBubbleVisualConfig()
-	local configuredSize = QuestTogether:GetOption("chatBubbleSize")
-	return CHAT_BUBBLE_SIZE_CONFIGS[configuredSize] or CHAT_BUBBLE_SIZE_CONFIGS.medium
+	local configuredSize = QuestTogether:NormalizeChatBubbleSizeValue(QuestTogether:GetOption("chatBubbleSize"))
+		or QuestTogether.DEFAULTS.profile.chatBubbleSize
+	local sizeScale = configuredSize / 100
+
+	return {
+		fontSize = ScaleBubbleMetric(14, sizeScale, 10),
+		iconSize = ScaleBubbleMetric(18, sizeScale, 12),
+		iconGap = ScaleBubbleMetric(8, sizeScale, 4),
+		minTextWidth = ScaleBubbleMetric(48, sizeScale, 40),
+		maxTextWidth = ScaleBubbleMetric(220, sizeScale, 160),
+		inset = ScaleBubbleMetric(16, sizeScale, 12),
+	}
+end
+
+local function EnsurePersonalBubbleAnchorSelection(hostFrame)
+	if not hostFrame or hostFrame.Selection then
+		return hostFrame and hostFrame.Selection or nil
+	end
+	if not EditModeManagerFrame then
+		return nil
+	end
+
+	local ok, selection = pcall(CreateFrame, "Frame", nil, hostFrame, "EditModeSystemSelectionTemplate")
+	if not ok or not selection then
+		return nil
+	end
+
+	selection:SetAllPoints()
+	selection:SetFrameLevel(hostFrame:GetFrameLevel() + 20)
+	selection:EnableMouse(false)
+	selection:Hide()
+	if selection.SetSystem then
+		selection:SetSystem({
+			GetSystemName = function()
+				return "QuestTogether Bubble"
+			end,
+		})
+	elseif selection.SetGetLabelTextFunction then
+		selection:SetGetLabelTextFunction(function()
+			return "QuestTogether Bubble"
+		end)
+	end
+	if selection.Label then
+		selection.Label:Hide()
+	end
+	selection.UpdateLabelVisibility = function(frame)
+		if frame.Label then
+			frame.Label:Hide()
+		end
+		if frame.HorizontalLabel then
+			frame.HorizontalLabel:Hide()
+		end
+		if frame.VerticalLabel then
+			frame.VerticalLabel:Hide()
+		end
+	end
+
+	hostFrame.Selection = selection
+	return selection
+end
+
+local function GetPersonalBubbleAnchorDialogAttachPoint(hostFrame)
+	local parentFrame = hostFrame and hostFrame:GetParent() or UIParent
+	if not hostFrame or not parentFrame or not hostFrame.GetCenter or not parentFrame.GetCenter then
+		return "TOPLEFT", hostFrame, "TOPRIGHT", 24, 12
+	end
+
+	local hostCenterX, hostCenterY = hostFrame:GetCenter()
+	local parentCenterX, parentCenterY = parentFrame:GetCenter()
+	if not hostCenterX or not hostCenterY or not parentCenterX or not parentCenterY then
+		return "TOPLEFT", hostFrame, "TOPRIGHT", 24, 12
+	end
+
+	local horizontalPoint = hostCenterX < parentCenterX and "TOPLEFT" or "TOPRIGHT"
+	local relativeHorizontalPoint = hostCenterX < parentCenterX and "TOPRIGHT" or "TOPLEFT"
+	local horizontalOffset = hostCenterX < parentCenterX and 24 or -24
+	local verticalOffset = hostCenterY < parentCenterY and 36 or 12
+	return horizontalPoint, hostFrame, relativeHorizontalPoint, horizontalOffset, verticalOffset
+end
+
+local function SavePersonalBubbleDialogPosition(dialog)
+	if not dialog then
+		return
+	end
+
+	local point, _, relativePoint, offsetX, offsetY = dialog:GetPoint(1)
+	if not point or not relativePoint then
+		return
+	end
+
+	dialog.qtUserPlaced = {
+		point = point,
+		relativePoint = relativePoint,
+		x = offsetX,
+		y = offsetY,
+	}
+end
+
+local function GetPersonalBubbleEditSession()
+	return QuestTogether.personalBubbleEditSession
+end
+
+local function EnsurePersonalBubbleEditSession()
+	if QuestTogether.personalBubbleEditSession then
+		return QuestTogether.personalBubbleEditSession
+	end
+
+	local session = {
+		saved = {
+			chatBubbleSize = QuestTogether:NormalizeChatBubbleSizeValue(QuestTogether:GetOption("chatBubbleSize"))
+				or QuestTogether.DEFAULTS.profile.chatBubbleSize,
+			chatBubbleDuration = QuestTogether:NormalizeChatBubbleDurationValue(QuestTogether:GetOption("chatBubbleDuration"))
+				or QuestTogether.DEFAULTS.profile.chatBubbleDuration,
+			anchor = QuestTogether:DeepCopy(QuestTogether:GetPersonalBubbleAnchor()),
+		},
+		pending = false,
+	}
+
+	QuestTogether.personalBubbleEditSession = session
+	return session
+end
+
+local function SyncPersonalBubbleEditModeDirtyState()
+	local session = GetPersonalBubbleEditSession()
+	local isPending = session and session.pending or false
+	if not EditModeManagerFrame then
+		return
+	end
+
+	if isPending then
+		if EditModeManagerFrame.SetHasActiveChanges then
+			EditModeManagerFrame:SetHasActiveChanges(true)
+		end
+	elseif EditModeManagerFrame.CheckForSystemActiveChanges then
+		EditModeManagerFrame:CheckForSystemActiveChanges()
+	end
+end
+
+local function IsPersonalBubbleEditSnapshotEqual(snapshot)
+	if type(snapshot) ~= "table" then
+		return true
+	end
+
+	local currentSize = QuestTogether:NormalizeChatBubbleSizeValue(QuestTogether:GetOption("chatBubbleSize"))
+		or QuestTogether.DEFAULTS.profile.chatBubbleSize
+	local currentDuration = QuestTogether:NormalizeChatBubbleDurationValue(QuestTogether:GetOption("chatBubbleDuration"))
+		or QuestTogether.DEFAULTS.profile.chatBubbleDuration
+	local currentAnchor = QuestTogether:GetPersonalBubbleAnchor()
+	local savedAnchor = snapshot.anchor or QuestTogether.DEFAULT_PERSONAL_BUBBLE_ANCHOR
+
+	return currentSize == snapshot.chatBubbleSize
+		and currentDuration == snapshot.chatBubbleDuration
+		and currentAnchor.point == savedAnchor.point
+		and currentAnchor.relativePoint == savedAnchor.relativePoint
+		and currentAnchor.x == savedAnchor.x
+		and currentAnchor.y == savedAnchor.y
+end
+
+local function IsPersonalBubbleAtDefaultState()
+	local defaults = QuestTogether.DEFAULTS.profile
+	local anchorDefaults = QuestTogether.DEFAULT_PERSONAL_BUBBLE_ANCHOR
+	local currentSize = QuestTogether:NormalizeChatBubbleSizeValue(QuestTogether:GetOption("chatBubbleSize"))
+		or defaults.chatBubbleSize
+	local currentDuration = QuestTogether:NormalizeChatBubbleDurationValue(QuestTogether:GetOption("chatBubbleDuration"))
+		or defaults.chatBubbleDuration
+	local currentAnchor = QuestTogether:GetPersonalBubbleAnchor()
+
+	return currentSize == defaults.chatBubbleSize
+		and currentDuration == defaults.chatBubbleDuration
+		and currentAnchor.point == anchorDefaults.point
+		and currentAnchor.relativePoint == anchorDefaults.relativePoint
+		and currentAnchor.x == anchorDefaults.x
+		and currentAnchor.y == anchorDefaults.y
+end
+
+local function UpdatePersonalBubbleEditSessionDirtyState()
+	local session = EnsurePersonalBubbleEditSession()
+	session.pending = not IsPersonalBubbleEditSnapshotEqual(session.saved)
+	if
+		QuestTogether.personalBubbleEditModeDialog
+		and QuestTogether.personalBubbleEditModeDialog.RevertButton
+	then
+		QuestTogether.personalBubbleEditModeDialog.RevertButton:SetEnabled(session.pending)
+		QuestTogether.personalBubbleEditModeDialog.ResetButton:SetEnabled(not IsPersonalBubbleAtDefaultState())
+	end
+	SyncPersonalBubbleEditModeDirtyState()
+end
+
+local function ConfigureEditModeSlider(settingFrame, settingData, onValueChanged)
+	if not settingFrame then
+		return
+	end
+
+	if settingFrame.cbrHandles then
+		settingFrame.cbrHandles:Unregister()
+	end
+	if not settingFrame.qtCbrHandles then
+		settingFrame.qtCbrHandles = EventUtil.CreateCallbackHandleContainer()
+	end
+	settingFrame.qtCbrHandles:Unregister()
+	settingFrame.qtCbrHandles:RegisterCallback(
+		settingFrame.Slider,
+		MinimalSliderWithSteppersMixin.Event.OnValueChanged,
+		function(_, value)
+			if type(onValueChanged) == "function" then
+				onValueChanged(value)
+			end
+		end,
+		settingFrame
+	)
+	settingFrame.qtCbrHandles:RegisterCallback(
+		settingFrame.Slider,
+		MinimalSliderWithSteppersMixin.Event.OnInteractStart,
+		function()
+		end,
+		settingFrame
+	)
+	settingFrame.qtCbrHandles:RegisterCallback(
+		settingFrame.Slider,
+		MinimalSliderWithSteppersMixin.Event.OnInteractEnd,
+		function()
+		end,
+		settingFrame
+	)
+
+	settingFrame.OnSliderValueChanged = function()
+	end
+	settingFrame.OnSliderInteractEnd = function()
+	end
+	settingFrame.OnSliderInteractStart = function()
+	end
+	settingFrame:SetupSetting(settingData)
+	settingFrame:Show()
+end
+
+function QuestTogether:ApplyPersonalBubbleEditSnapshot(snapshot)
+	if type(snapshot) ~= "table" then
+		return
+	end
+
+	self.personalBubbleEditSessionRestoring = true
+
+	if snapshot.chatBubbleSize then
+		self:SetOption("chatBubbleSize", snapshot.chatBubbleSize)
+	end
+	if snapshot.chatBubbleDuration then
+		self:SetOption("chatBubbleDuration", snapshot.chatBubbleDuration)
+	end
+	if snapshot.anchor then
+		self:SetPersonalBubbleAnchor(
+			snapshot.anchor.point,
+			snapshot.anchor.relativePoint,
+			snapshot.anchor.x,
+			snapshot.anchor.y
+		)
+	end
+
+	self.personalBubbleEditSessionRestoring = false
+	self:RefreshPersonalBubbleAnchorVisualState()
+	self:AttachPersonalBubbleEditModeDialog()
+	self:RefreshPersonalBubbleEditModeDialog()
+end
+
+function QuestTogether:CommitPersonalBubbleEditSession()
+	self.personalBubbleEditSession = nil
+	self.personalBubbleEditSessionRestoring = false
+	SyncPersonalBubbleEditModeDirtyState()
+	if self.personalBubbleEditModeDialog and self.personalBubbleEditModeDialog.RevertButton then
+		self.personalBubbleEditModeDialog.RevertButton:SetEnabled(false)
+	end
+end
+
+function QuestTogether:RevertPersonalBubbleEditSession()
+	local session = GetPersonalBubbleEditSession()
+	if not session then
+		return
+	end
+
+	self:ApplyPersonalBubbleEditSnapshot(session.saved)
+	session.pending = false
+	SyncPersonalBubbleEditModeDirtyState()
+	if self.personalBubbleEditModeDialog and self.personalBubbleEditModeDialog.RevertButton then
+		self.personalBubbleEditModeDialog.RevertButton:SetEnabled(false)
+	end
+end
+
+function QuestTogether:ResetPersonalBubbleEditSessionToDefaults()
+	self.personalBubbleEditSessionRestoring = true
+	self:SetOption("chatBubbleSize", self.DEFAULTS.profile.chatBubbleSize)
+	self:SetOption("chatBubbleDuration", self.DEFAULTS.profile.chatBubbleDuration)
+	self:ResetPersonalBubbleAnchor()
+	self.personalBubbleEditSessionRestoring = false
+
+	UpdatePersonalBubbleEditSessionDirtyState()
+	self:RefreshPersonalBubbleAnchorVisualState()
+	self:AttachPersonalBubbleEditModeDialog()
+	self:RefreshPersonalBubbleEditModeDialog()
+end
+
+local function EnsurePersonalBubbleEditModeDialog()
+	if QuestTogether.personalBubbleEditModeDialog then
+		return QuestTogether.personalBubbleEditModeDialog
+	end
+	if not EditModeManagerFrame then
+		return nil
+	end
+
+	local dialog = CreateFrame("Frame", "QuestTogetherPersonalBubbleSettingsDialog", UIParent)
+	dialog:SetSize(PERSONAL_BUBBLE_SETTINGS_DIALOG_WIDTH, PERSONAL_BUBBLE_SETTINGS_DIALOG_HEIGHT)
+	dialog:SetFrameStrata("DIALOG")
+	dialog:SetFrameLevel(250)
+	dialog:SetClampedToScreen(true)
+	dialog:SetMovable(true)
+	dialog:EnableMouse(true)
+	dialog:RegisterForDrag("LeftButton")
+	dialog:EnableKeyboard(true)
+	dialog:Hide()
+
+	local border = CreateFrame("Frame", nil, dialog, "DialogBorderTranslucentTemplate")
+	border:SetAllPoints()
+	dialog.Border = border
+
+	local title = dialog:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
+	title:SetPoint("TOP", dialog, "TOP", 0, -15)
+	title:SetText("QuestTogether Bubble")
+	dialog.Title = title
+
+	local closeButton = CreateFrame("Button", nil, dialog, "UIPanelCloseButton")
+	closeButton:SetPoint("TOPRIGHT", dialog, "TOPRIGHT")
+	closeButton:SetScript("OnClick", function()
+		QuestTogether:DeselectPersonalBubbleAnchor()
+	end)
+	dialog.CloseButton = closeButton
+
+	local dragHandle = CreateFrame("Frame", nil, dialog)
+	dragHandle:SetPoint("TOPLEFT", dialog, "TOPLEFT", 8, -8)
+	dragHandle:SetPoint("TOPRIGHT", closeButton, "TOPLEFT", -4, -8)
+	dragHandle:SetHeight(28)
+	dragHandle:EnableMouse(true)
+	dragHandle:RegisterForDrag("LeftButton")
+	dragHandle:SetScript("OnDragStart", function()
+		dialog:StartMoving()
+	end)
+	dragHandle:SetScript("OnDragStop", function()
+		dialog:StopMovingOrSizing()
+		SavePersonalBubbleDialogPosition(dialog)
+	end)
+	dialog.DragHandle = dragHandle
+
+	local sizeSlider = CreateFrame("Frame", nil, dialog, "EditModeSettingSliderTemplate")
+	sizeSlider:SetPoint("TOPLEFT", dialog, "TOPLEFT", 24, -48)
+	dialog.SizeSlider = sizeSlider
+
+	local durationSlider = CreateFrame("Frame", nil, dialog, "EditModeSettingSliderTemplate")
+	durationSlider:SetPoint("TOPLEFT", sizeSlider, "BOTTOMLEFT", 0, -18)
+	dialog.DurationSlider = durationSlider
+
+	local revertButton = CreateFrame("Button", nil, dialog, "EditModeSystemSettingsDialogButtonTemplate")
+	revertButton:SetSize(160, 28)
+	revertButton:SetPoint("BOTTOMLEFT", dialog, "BOTTOMLEFT", 24, 18)
+	revertButton:SetText("Revert Changes")
+	revertButton:SetScript("OnClick", function()
+		QuestTogether:RevertPersonalBubbleEditSession()
+	end)
+	dialog.RevertButton = revertButton
+
+	local resetButton = CreateFrame("Button", nil, dialog, "EditModeSystemSettingsDialogButtonTemplate")
+	resetButton:SetSize(160, 28)
+	resetButton:SetPoint("BOTTOMRIGHT", dialog, "BOTTOMRIGHT", -24, 18)
+	resetButton:SetText("Reset To Default")
+	resetButton:SetScript("OnClick", function()
+		QuestTogether:ResetPersonalBubbleEditSessionToDefaults()
+	end)
+	dialog.ResetButton = resetButton
+
+	dialog:SetScript("OnDragStart", function(frame)
+		frame:StartMoving()
+	end)
+	dialog:SetScript("OnDragStop", function(frame)
+		frame:StopMovingOrSizing()
+		SavePersonalBubbleDialogPosition(frame)
+	end)
+	dialog:SetScript("OnHide", function(frame)
+		frame:StopMovingOrSizing()
+	end)
+	dialog:SetScript("OnKeyDown", function(_, key)
+		if key == "ESCAPE" then
+			QuestTogether:DeselectPersonalBubbleAnchor()
+		end
+	end)
+
+	QuestTogether.personalBubbleEditModeDialog = dialog
+	return dialog
 end
 
 local function GetPrototypeBubbleScreenHostFrame()
@@ -133,66 +524,58 @@ local function GetPrototypeBubbleScreenHostFrame()
 	hostFrame:EnableMouse(false)
 
 	local background = hostFrame:CreateTexture(nil, "BACKGROUND")
-	background:SetAllPoints()
-	background:SetColorTexture(0.05, 0.05, 0.05, 0.7)
+	background:SetPoint("TOPLEFT", hostFrame, "TOPLEFT", 6, -6)
+	background:SetPoint("BOTTOMRIGHT", hostFrame, "BOTTOMRIGHT", -6, 6)
+	background:SetColorTexture(0.03, 0.03, 0.03, 0.68)
 	background:Hide()
 	hostFrame.EditBackground = background
 
-	local borderTop = hostFrame:CreateTexture(nil, "BORDER")
-	borderTop:SetColorTexture(1, 0.82, 0, 0.95)
-	borderTop:SetPoint("TOPLEFT", hostFrame, "TOPLEFT", 0, 0)
-	borderTop:SetPoint("TOPRIGHT", hostFrame, "TOPRIGHT", 0, 0)
-	borderTop:SetHeight(1)
-	borderTop:Hide()
-	hostFrame.EditBorderTop = borderTop
-
-	local borderBottom = hostFrame:CreateTexture(nil, "BORDER")
-	borderBottom:SetColorTexture(1, 0.82, 0, 0.95)
-	borderBottom:SetPoint("BOTTOMLEFT", hostFrame, "BOTTOMLEFT", 0, 0)
-	borderBottom:SetPoint("BOTTOMRIGHT", hostFrame, "BOTTOMRIGHT", 0, 0)
-	borderBottom:SetHeight(1)
-	borderBottom:Hide()
-	hostFrame.EditBorderBottom = borderBottom
-
-	local borderLeft = hostFrame:CreateTexture(nil, "BORDER")
-	borderLeft:SetColorTexture(1, 0.82, 0, 0.95)
-	borderLeft:SetPoint("TOPLEFT", hostFrame, "TOPLEFT", 0, 0)
-	borderLeft:SetPoint("BOTTOMLEFT", hostFrame, "BOTTOMLEFT", 0, 0)
-	borderLeft:SetWidth(1)
-	borderLeft:Hide()
-	hostFrame.EditBorderLeft = borderLeft
-
-	local borderRight = hostFrame:CreateTexture(nil, "BORDER")
-	borderRight:SetColorTexture(1, 0.82, 0, 0.95)
-	borderRight:SetPoint("TOPRIGHT", hostFrame, "TOPRIGHT", 0, 0)
-	borderRight:SetPoint("BOTTOMRIGHT", hostFrame, "BOTTOMRIGHT", 0, 0)
-	borderRight:SetWidth(1)
-	borderRight:Hide()
-	hostFrame.EditBorderRight = borderRight
+	local border = hostFrame:CreateTexture(nil, "BORDER")
+	border:SetPoint("TOPLEFT", background, "TOPLEFT", 0, 0)
+	border:SetPoint("BOTTOMRIGHT", background, "BOTTOMRIGHT", 0, 0)
+	border:SetColorTexture(0.45, 0.52, 0.6, 0.35)
+	border:Hide()
+	hostFrame.EditBorder = border
 
 	local icon = hostFrame:CreateTexture(nil, "ARTWORK")
 	icon:SetSize(16, 16)
-	icon:SetPoint("LEFT", hostFrame, "LEFT", 8, 0)
+	icon:SetPoint("LEFT", hostFrame, "LEFT", 16, 0)
 	ApplyQuestIconVisual(icon)
 	icon:Hide()
 	hostFrame.EditIcon = icon
 
-	local label = hostFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	local label = hostFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightMedium")
 	label:SetPoint("LEFT", icon, "RIGHT", 8, 0)
 	label:SetJustifyH("LEFT")
+	label:SetJustifyV("MIDDLE")
+	label:SetTextColor(1, 0.82, 0, 1)
 	label:SetText("QuestTogether Bubble")
 	label:Hide()
 	hostFrame.EditLabel = label
 
+	hostFrame:SetScript("OnEnter", function()
+		QuestTogether:RefreshPersonalBubbleAnchorVisualState()
+	end)
+	hostFrame:SetScript("OnLeave", function()
+		QuestTogether:RefreshPersonalBubbleAnchorVisualState()
+	end)
+	hostFrame:SetScript("OnMouseDown", function(_, button)
+		if button ~= "LeftButton" then
+			return
+		end
+		QuestTogether:SelectPersonalBubbleAnchor()
+	end)
 	hostFrame:SetScript("OnDragStart", function(frame)
 		if not QuestTogether:IsPersonalBubbleAnchorInEditMode() then
 			return
 		end
+		QuestTogether:SelectPersonalBubbleAnchor()
 		frame:StartMoving()
 	end)
 	hostFrame:SetScript("OnDragStop", function(frame)
 		frame:StopMovingOrSizing()
 		QuestTogether:SavePersonalBubbleAnchorFromFrame(frame)
+		QuestTogether:AttachPersonalBubbleEditModeDialog()
 	end)
 
 	QuestTogether.prototypeBubbleScreenHostFrame = hostFrame
@@ -217,6 +600,9 @@ function QuestTogether:ApplySavedPersonalBubbleAnchor()
 	local anchor = self:GetPersonalBubbleAnchor()
 	hostFrame:ClearAllPoints()
 	hostFrame:SetPoint(anchor.point, parentFrame, anchor.relativePoint, anchor.x, anchor.y)
+	if self.personalBubbleEditModeDialog and self.personalBubbleEditModeDialog:IsShown() then
+		self:AttachPersonalBubbleEditModeDialog()
+	end
 end
 
 local function RoundOffset(value)
@@ -237,7 +623,135 @@ function QuestTogether:SavePersonalBubbleAnchorFromFrame(hostFrame)
 		return false
 	end
 
-	return self:SetPersonalBubbleAnchor(point, relativePoint, RoundOffset(offsetX), RoundOffset(offsetY))
+	local changed = self:SetPersonalBubbleAnchor(point, relativePoint, RoundOffset(offsetX), RoundOffset(offsetY))
+	if changed and self:IsPersonalBubbleAnchorInEditMode() and not self.personalBubbleEditSessionRestoring then
+		UpdatePersonalBubbleEditSessionDirtyState()
+		self:RefreshPersonalBubbleEditModeDialog()
+	end
+	return changed
+end
+
+function QuestTogether:AttachPersonalBubbleEditModeDialog()
+	local hostFrame = self.prototypeBubbleScreenHostFrame
+	local dialog = self.personalBubbleEditModeDialog
+	if not hostFrame or not dialog then
+		return
+	end
+
+	if dialog.qtUserPlaced then
+		dialog:ClearAllPoints()
+		dialog:SetPoint(
+			dialog.qtUserPlaced.point,
+			UIParent,
+			dialog.qtUserPlaced.relativePoint,
+			dialog.qtUserPlaced.x,
+			dialog.qtUserPlaced.y
+		)
+		return
+	end
+
+	local point, relativeTo, relativePoint, offsetX, offsetY = GetPersonalBubbleAnchorDialogAttachPoint(hostFrame)
+	dialog:ClearAllPoints()
+	dialog:SetPoint(point, relativeTo, relativePoint, offsetX, offsetY)
+end
+
+function QuestTogether:RefreshPersonalBubbleEditModeDialog()
+	local dialog = EnsurePersonalBubbleEditModeDialog()
+	if not dialog then
+		return
+	end
+
+	local session = GetPersonalBubbleEditSession()
+
+	local function FormatDurationLabel(value)
+		local normalized = self:NormalizeChatBubbleDurationValue(value) or self.DEFAULTS.profile.chatBubbleDuration
+		if math.abs(normalized - math.floor(normalized)) < 0.001 then
+			return string.format("%d sec", normalized)
+		end
+		return string.format("%.1f sec", normalized)
+	end
+
+	ConfigureEditModeSlider(dialog.SizeSlider, {
+		displayInfo = {
+			setting = "chatBubbleSize",
+			formatter = function(value)
+				local normalized = self:NormalizeChatBubbleSizeValue(value) or self.DEFAULTS.profile.chatBubbleSize
+				return self:GetChatBubbleSizeLabel(normalized)
+			end,
+			minValue = self.CHAT_BUBBLE_SIZE_MIN,
+			maxValue = self.CHAT_BUBBLE_SIZE_MAX,
+			stepSize = self.CHAT_BUBBLE_SIZE_STEP,
+		},
+		currentValue = self:NormalizeChatBubbleSizeValue(self:GetOption("chatBubbleSize")) or self.DEFAULTS.profile.chatBubbleSize,
+		settingName = "Font Size",
+	}, function(value)
+		if self:SetOption("chatBubbleSize", value) and not self.personalBubbleEditSessionRestoring then
+			UpdatePersonalBubbleEditSessionDirtyState()
+			self:RefreshPersonalBubbleAnchorVisualState()
+			self:AttachPersonalBubbleEditModeDialog()
+		end
+	end)
+
+	ConfigureEditModeSlider(dialog.DurationSlider, {
+		displayInfo = {
+			setting = "chatBubbleDuration",
+			formatter = FormatDurationLabel,
+			minValue = self.CHAT_BUBBLE_DURATION_MIN,
+			maxValue = self.CHAT_BUBBLE_DURATION_MAX,
+			stepSize = self.CHAT_BUBBLE_DURATION_STEP,
+		},
+		currentValue = self:NormalizeChatBubbleDurationValue(self:GetOption("chatBubbleDuration"))
+			or self.DEFAULTS.profile.chatBubbleDuration,
+		settingName = "Display Duration",
+	}, function(value)
+		if self:SetOption("chatBubbleDuration", value) and not self.personalBubbleEditSessionRestoring then
+			UpdatePersonalBubbleEditSessionDirtyState()
+			self:RefreshPersonalBubbleAnchorVisualState()
+			self:AttachPersonalBubbleEditModeDialog()
+		end
+	end)
+
+	if dialog.RevertButton then
+		dialog.RevertButton:SetEnabled(session and session.pending or false)
+	end
+	if dialog.ResetButton then
+		dialog.ResetButton:SetEnabled(not IsPersonalBubbleAtDefaultState())
+	end
+end
+
+function QuestTogether:SelectPersonalBubbleAnchor()
+	if not self:IsPersonalBubbleAnchorInEditMode() then
+		return
+	end
+
+	EnsurePersonalBubbleEditSession()
+
+	local hostFrame = GetPrototypeBubbleScreenHostFrame()
+	if not hostFrame then
+		return
+	end
+
+	if EditModeManagerFrame and EditModeManagerFrame.ClearSelectedSystem then
+		EditModeManagerFrame:ClearSelectedSystem()
+	end
+
+	self.personalBubbleAnchorSelected = true
+	self:RefreshPersonalBubbleAnchorVisualState()
+	self:AttachPersonalBubbleEditModeDialog()
+	self:RefreshPersonalBubbleEditModeDialog()
+
+	local dialog = EnsurePersonalBubbleEditModeDialog()
+	if dialog then
+		dialog:Show()
+	end
+end
+
+function QuestTogether:DeselectPersonalBubbleAnchor()
+	self.personalBubbleAnchorSelected = false
+	if self.personalBubbleEditModeDialog then
+		self.personalBubbleEditModeDialog:Hide()
+	end
+	self:RefreshPersonalBubbleAnchorVisualState()
 end
 
 function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
@@ -246,9 +760,31 @@ function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
 		return
 	end
 
+	EnsurePersonalBubbleAnchorSelection(hostFrame)
+
 	local editModeActive = self:IsPersonalBubbleAnchorInEditMode()
 	if editModeActive then
-		hostFrame:SetSize(PERSONAL_BUBBLE_ANCHOR_EDIT_WIDTH, PERSONAL_BUBBLE_ANCHOR_EDIT_HEIGHT)
+		local visualConfig = GetPrototypeBubbleVisualConfig()
+		local fontPath, fontFlags = GetPersonalBubbleAnchorFontDefinition()
+		hostFrame.EditLabel:SetFont(fontPath, visualConfig.fontSize, fontFlags)
+		hostFrame.EditLabel:SetWidth(0)
+		hostFrame.EditLabel:SetText("QuestTogether Bubble")
+
+		local labelWidth = hostFrame.EditLabel.GetUnboundedStringWidth and hostFrame.EditLabel:GetUnboundedStringWidth() or 0
+		local labelHeight = hostFrame.EditLabel:GetStringHeight() or visualConfig.fontSize
+		labelWidth = math.max(visualConfig.minTextWidth, math.min(visualConfig.maxTextWidth, labelWidth))
+		local anchorWidth = labelWidth + visualConfig.iconSize + visualConfig.iconGap + (visualConfig.inset * 2)
+		local anchorHeight = math.max(visualConfig.iconSize, labelHeight) + (visualConfig.inset * 2)
+
+		hostFrame:SetSize(anchorWidth, anchorHeight)
+
+		hostFrame.EditIcon:SetSize(visualConfig.iconSize, visualConfig.iconSize)
+		hostFrame.EditIcon:ClearAllPoints()
+		hostFrame.EditIcon:SetPoint("LEFT", hostFrame, "LEFT", visualConfig.inset, 0)
+
+		hostFrame.EditLabel:ClearAllPoints()
+		hostFrame.EditLabel:SetPoint("LEFT", hostFrame.EditIcon, "RIGHT", visualConfig.iconGap, 0)
+		hostFrame.EditLabel:SetWidth(labelWidth)
 	else
 		hostFrame:SetSize(1, 1)
 	end
@@ -256,10 +792,7 @@ function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
 
 	local visibleFields = {
 		hostFrame.EditBackground,
-		hostFrame.EditBorderTop,
-		hostFrame.EditBorderBottom,
-		hostFrame.EditBorderLeft,
-		hostFrame.EditBorderRight,
+		hostFrame.EditBorder,
 		hostFrame.EditIcon,
 		hostFrame.EditLabel,
 	}
@@ -271,6 +804,25 @@ function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
 			else
 				field:Hide()
 			end
+		end
+	end
+
+	if hostFrame.Selection then
+		if editModeActive then
+			if self.personalBubbleAnchorSelected then
+				hostFrame.Selection:ShowSelected()
+			else
+				hostFrame.Selection:ShowHighlighted()
+			end
+		else
+			hostFrame.Selection:Hide()
+		end
+	end
+
+	if not editModeActive then
+		self.personalBubbleAnchorSelected = false
+		if self.personalBubbleEditModeDialog then
+			self.personalBubbleEditModeDialog:Hide()
 		end
 	end
 
@@ -287,13 +839,37 @@ function QuestTogether:TryInstallPersonalBubbleEditModeHooks()
 	end
 
 	GetPrototypeBubbleScreenHostFrame()
+	EnsurePersonalBubbleEditModeDialog()
 
 	EditModeManagerFrame:HookScript("OnShow", function()
+		EnsurePersonalBubbleEditSession()
 		QuestTogether:RefreshPersonalBubbleAnchorVisualState()
+		QuestTogether:RefreshPersonalBubbleEditModeDialog()
 	end)
 	EditModeManagerFrame:HookScript("OnHide", function()
-		QuestTogether:RefreshPersonalBubbleAnchorVisualState()
+		QuestTogether:DeselectPersonalBubbleAnchor()
 	end)
+
+	hooksecurefunc(EditModeManagerFrame, "SelectSystem", function(_, systemFrame)
+		local hostFrame = QuestTogether.prototypeBubbleScreenHostFrame
+		if hostFrame and systemFrame ~= hostFrame then
+			QuestTogether:DeselectPersonalBubbleAnchor()
+		end
+	end)
+	hooksecurefunc(EditModeManagerFrame, "ClearSelectedSystem", function()
+		QuestTogether:DeselectPersonalBubbleAnchor()
+	end)
+	hooksecurefunc(EditModeManagerFrame, "SaveLayouts", function()
+		QuestTogether:CommitPersonalBubbleEditSession()
+	end)
+	hooksecurefunc(EditModeManagerFrame, "RevertAllChanges", function()
+		QuestTogether:RevertPersonalBubbleEditSession()
+	end)
+	if EditModeManagerFrame.RevertAllChangesButton and EditModeManagerFrame.RevertAllChangesButton.HookScript then
+		EditModeManagerFrame.RevertAllChangesButton:HookScript("OnClick", function()
+			QuestTogether:RevertPersonalBubbleEditSession()
+		end)
+	end
 
 	self.personalBubbleEditModeHooksInstalled = true
 end
@@ -937,6 +1513,25 @@ function QuestTogether:HidePrototypeBubble(hostFrame)
 	end
 end
 
+function QuestTogether:RefreshActivePrototypeBubbles()
+	for unitFrame, bubble in pairs(self.nameplateBubbleByUnitFrame) do
+		if bubble and bubble.qtCurrentText and bubble.qtCurrentText ~= "" then
+			local hostFrame = bubble.qtHostFrame
+			if hostFrame and self:GetOption("showChatBubbles") then
+				if hostFrame == self.prototypeBubbleScreenHostFrame or (hostFrame.IsShown and hostFrame:IsShown()) then
+					self:ShowPrototypeBubbleOnNameplate(hostFrame, bubble.qtCurrentText)
+				else
+					self:HidePrototypeBubble(hostFrame)
+				end
+			elseif hostFrame then
+				self:HidePrototypeBubble(hostFrame)
+			elseif unitFrame then
+				self.nameplateBubbleByUnitFrame[unitFrame] = nil
+			end
+		end
+	end
+end
+
 function QuestTogether:GetPrototypeBubbleHostFrameForUnit(unitToken)
 	if unitToken == "player" then
 		return GetPrototypeBubbleScreenHostFrame()
@@ -982,6 +1577,8 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text)
 	if not bubble or not bubble.String then
 		return false
 	end
+	bubble.qtCurrentText = message
+	bubble.qtHostFrame = namePlateFrameBase
 
 	local anchorFrame = unitFrame.HealthBarsContainer or unitFrame
 	local visualConfig = GetPrototypeBubbleVisualConfig()
@@ -1201,6 +1798,45 @@ function QuestTogether:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObj
 	end
 end
 
+function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken)
+	if not self:IsNameplateUnitToken(unitToken) then
+		return
+	end
+	if self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] then
+		return
+	end
+
+	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = true
+	self.API.Delay(0, function()
+		self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
+		if not self.isEnabled or not C_NamePlate or not C_NamePlate.GetNamePlateForUnit then
+			return
+		end
+
+		local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
+		if not namePlateFrameBase or not namePlateFrameBase.UnitFrame or not namePlateFrameBase:IsShown() then
+			return
+		end
+
+		local unitFrame = namePlateFrameBase.UnitFrame
+		local isQuestObjective = self.nameplateQuestStateByUnitToken[unitToken]
+		if isQuestObjective == nil then
+			isQuestObjective = self:IsQuestObjectiveNameplate(unitToken, unitFrame)
+			self.nameplateQuestStateByUnitToken[unitToken] = isQuestObjective and true or false
+		end
+
+		local shouldTint = self.isEnabled
+			and not self:IsNameplateAugmentationBlockedInCurrentContext()
+			and self:GetOption("nameplateQuestHealthColorEnabled")
+			and isQuestObjective
+		if shouldTint then
+			self:ApplyQuestTintToNameplate(unitFrame)
+		else
+			self:RestoreNameplateHealthColor(unitFrame)
+		end
+	end)
+end
+
 function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 	if not namePlateFrameBase or not namePlateFrameBase.UnitFrame then
 		return
@@ -1393,6 +2029,7 @@ function QuestTogether:OnNameplateRemoved(unitToken)
 		self.nameplateQuestObjectiveCache[unitGuid] = nil
 	end
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
+	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
 
 	local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
 	if namePlateFrameBase then
@@ -1431,22 +2068,7 @@ function QuestTogether:TryInstallNameplateHooks()
 			if not QuestTogether:IsNameplateUnitToken(frame.unit) then
 				return
 			end
-
-			local isQuestObjective = QuestTogether.nameplateQuestStateByUnitToken[frame.unit]
-			if isQuestObjective == nil then
-				isQuestObjective = QuestTogether:IsQuestObjectiveNameplate(frame.unit, frame)
-				QuestTogether.nameplateQuestStateByUnitToken[frame.unit] = isQuestObjective and true or false
-			end
-
-			local shouldTint = QuestTogether.isEnabled
-				and not QuestTogether:IsNameplateAugmentationBlockedInCurrentContext()
-				and QuestTogether:GetOption("nameplateQuestHealthColorEnabled")
-				and isQuestObjective
-			if shouldTint then
-				QuestTogether:ApplyQuestTintToNameplate(frame)
-			else
-				QuestTogether:RestoreNameplateHealthColor(frame)
-			end
+			QuestTogether:ScheduleNameplateHealthTintRefresh(frame.unit)
 		end)
 		self.nameplateHealthColorHookInstalled = true
 	end
