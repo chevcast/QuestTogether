@@ -79,6 +79,8 @@ function QuestTogether:HandleQuestCompleted(questTitle, questId)
 	self:Debugf("quest", "Quest completed questId=%s title=%s", tostring(questId), tostring(questTitle))
 	if questId and self:IsWorldQuest(questId) then
 		self:PublishAnnouncementEvent("WORLD_QUEST_COMPLETED", "World Quest Completed: " .. tostring(questTitle))
+	elseif questId and self:IsBonusObjective(questId) then
+		self:PublishAnnouncementEvent("BONUS_OBJECTIVE_COMPLETED", "Bonus Objective Completed: " .. tostring(questTitle))
 	else
 		self:PublishAnnouncementEvent("QUEST_COMPLETED", "Quest Completed: " .. tostring(questTitle))
 	end
@@ -93,6 +95,16 @@ end
 
 function QuestTogether:ShouldPublishObjectiveProgress(currentValue)
 	return currentValue and currentValue > 0
+end
+
+function QuestTogether:GetTaskAnnouncementType(questId)
+	if self:IsWorldQuest(questId) then
+		return "world"
+	end
+	if self:IsBonusObjective(questId) then
+		return "bonus"
+	end
+	return nil
 end
 
 function QuestTogether:HandleGroupRosterChanged(reason)
@@ -111,19 +123,21 @@ function QuestTogether:HandleGroupRosterChanged(reason)
 	)
 end
 
--- Snapshot world quests from the current area task table.
--- Blizzard's tracker uses GetTasksTable() for local-area world quests.
-function QuestTogether:GetActiveWorldQuestAreaSnapshot()
+-- Snapshot area task quests from Blizzard's local task table.
+-- World quests and bonus objectives share the same source and differ only by classification.
+function QuestTogether:GetTaskAreaSnapshot(taskType)
 	local activeByQuestId = {}
 
 	-- Use Blizzard's local task snapshot only.
-	-- We intentionally do not merge tracked-watch lists here because watched world quests
+	-- We intentionally do not merge tracked-watch lists here because watched tasks
 	-- are shown by Blizzard even when out of area, which is not suitable for enter/leave.
 	if type(GetTasksTable) == "function" then
 		local tasksTable = GetTasksTable()
 		if type(tasksTable) == "table" then
 			for _, questId in ipairs(tasksTable) do
-				if self:IsWorldQuest(questId) then
+				local matchesType = taskType == "world" and self:IsWorldQuest(questId)
+					or taskType == "bonus" and self:IsBonusObjective(questId)
+				if matchesType then
 					local inArea = type(GetTaskInfo) ~= "function" or (GetTaskInfo(questId) and true or false)
 					if inArea then
 						activeByQuestId[questId] = self:GetQuestTitle(questId)
@@ -136,14 +150,47 @@ function QuestTogether:GetActiveWorldQuestAreaSnapshot()
 	return activeByQuestId
 end
 
--- Track area enter/leave transitions for world quests.
--- We compare Blizzard's current local-area task snapshot with our previous snapshot.
-function QuestTogether:RefreshWorldQuestAreaState(shouldAnnounce)
-	local previousState = self.worldQuestAreaStateByQuestID or {}
-	local currentState = self:GetActiveWorldQuestAreaSnapshot()
+function QuestTogether:GetActiveWorldQuestAreaSnapshot()
+	return self:GetTaskAreaSnapshot("world")
+end
+
+function QuestTogether:GetActiveBonusObjectiveAreaSnapshot()
+	return self:GetTaskAreaSnapshot("bonus")
+end
+
+function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
+	local configByType = {
+		world = {
+			stateKey = "worldQuestAreaStateByQuestID",
+			snapshotMethod = "GetActiveWorldQuestAreaSnapshot",
+			enterEvent = "WORLD_QUEST_ENTERED",
+			leftEvent = "WORLD_QUEST_LEFT",
+			enterPrefix = "World Quest Entered: ",
+			leftPrefix = "Left World Quest: ",
+			debugLabel = "World quest",
+		},
+		bonus = {
+			stateKey = "bonusObjectiveAreaStateByQuestID",
+			snapshotMethod = "GetActiveBonusObjectiveAreaSnapshot",
+			enterEvent = "BONUS_OBJECTIVE_ENTERED",
+			leftEvent = "BONUS_OBJECTIVE_LEFT",
+			enterPrefix = "Bonus Objective Entered: ",
+			leftPrefix = "Left Bonus Objective: ",
+			debugLabel = "Bonus objective",
+		},
+	}
+
+	local config = configByType[taskType]
+	if not config or type(self[config.snapshotMethod]) ~= "function" then
+		return
+	end
+
+	local previousState = self[config.stateKey] or {}
+	local currentState = self[config.snapshotMethod](self)
 	self:Debugf(
 		"quest",
-		"RefreshWorldQuestAreaState announce=%s prev=%d curr=%d",
+		"RefreshTaskAreaState type=%s announce=%s prev=%d curr=%d",
+		tostring(taskType),
 		tostring(shouldAnnounce),
 		CountKeys(previousState),
 		CountKeys(currentState)
@@ -151,8 +198,14 @@ function QuestTogether:RefreshWorldQuestAreaState(shouldAnnounce)
 
 	for questId, questTitle in pairs(currentState) do
 		if not previousState[questId] and shouldAnnounce then
-			self:Debugf("quest", "World quest area entered questId=%s title=%s", tostring(questId), tostring(questTitle))
-			self:PublishAnnouncementEvent("WORLD_QUEST_ENTERED", "World Quest Entered: " .. tostring(questTitle))
+			self:Debugf(
+				"quest",
+				"%s area entered questId=%s title=%s",
+				tostring(config.debugLabel),
+				tostring(questId),
+				tostring(questTitle)
+			)
+			self:PublishAnnouncementEvent(config.enterEvent, config.enterPrefix .. tostring(questTitle))
 		end
 	end
 
@@ -161,13 +214,32 @@ function QuestTogether:RefreshWorldQuestAreaState(shouldAnnounce)
 			local wasCompleted = self.questsCompleted[questId] == true
 			if shouldAnnounce and not wasCompleted then
 				local questTitle = previousTitle or self:GetQuestTitle(questId)
-				self:Debugf("quest", "World quest area left questId=%s title=%s", tostring(questId), tostring(questTitle))
-				self:PublishAnnouncementEvent("WORLD_QUEST_LEFT", "Left World Quest: " .. tostring(questTitle))
+				self:Debugf(
+					"quest",
+					"%s area left questId=%s title=%s",
+					tostring(config.debugLabel),
+					tostring(questId),
+					tostring(questTitle)
+				)
+				self:PublishAnnouncementEvent(config.leftEvent, config.leftPrefix .. tostring(questTitle))
 			end
 		end
 	end
 
-	self.worldQuestAreaStateByQuestID = currentState
+	self[config.stateKey] = currentState
+end
+
+function QuestTogether:RefreshWorldQuestAreaState(shouldAnnounce)
+	self:RefreshTaskAreaState("world", shouldAnnounce)
+end
+
+function QuestTogether:RefreshBonusObjectiveAreaState(shouldAnnounce)
+	self:RefreshTaskAreaState("bonus", shouldAnnounce)
+end
+
+function QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
+	self:RefreshWorldQuestAreaState(shouldAnnounce)
+	self:RefreshBonusObjectiveAreaState(shouldAnnounce)
 end
 
 -- QUEST_ACCEPTED fires early; defer reads until QUEST_LOG_UPDATE.
@@ -180,13 +252,13 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 			return
 		end
 
-		local isWorldQuest = self:IsWorldQuest(questId)
+		local taskAnnouncementType = self:GetTaskAnnouncementType(questId)
 		local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
 		if not questLogIndex then
-			if isWorldQuest then
-				local worldQuestTitle = self:GetQuestTitle(questId)
-				self:WatchQuest(questId, { title = worldQuestTitle })
-				self:RefreshWorldQuestAreaState(true)
+			if taskAnnouncementType then
+				local taskQuestTitle = self:GetQuestTitle(questId)
+				self:WatchQuest(questId, { title = taskQuestTitle })
+				self:RefreshTaskAreaState(taskAnnouncementType, true)
 			else
 				self:Debugf("quest", "Quest not found in log questId=%s during accept", tostring(questId))
 			end
@@ -198,18 +270,18 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 			return
 		end
 
-		if questInfo.isHidden and not isWorldQuest then
+		if questInfo.isHidden and not taskAnnouncementType then
 			return
 		end
 
-		if not isWorldQuest then
+		if not taskAnnouncementType then
 			self:Debugf("quest", "Publishing accepted announcement questId=%s title=%s", tostring(questId), tostring(questInfo.title))
 			self:PublishAnnouncementEvent("QUEST_ACCEPTED", "Quest Accepted: " .. tostring(questInfo.title))
 		end
 
 		self:WatchQuest(questId, questInfo)
-		if isWorldQuest then
-			self:RefreshWorldQuestAreaState(true)
+		if taskAnnouncementType then
+			self:RefreshTaskAreaState(taskAnnouncementType, true)
 		end
 	end)
 end
@@ -231,26 +303,27 @@ function QuestTogether:QUEST_REMOVED(_, questId)
 			end
 
 			local questTitle = trackedQuest.title or ("Quest " .. tostring(questId))
-			local isWorldQuest = self:IsWorldQuest(questId)
+			local taskAnnouncementType = self:GetTaskAnnouncementType(questId)
 			local questWasCompleted = self.questsCompleted[questId] == true
 			self:Debugf(
 				"quest",
-				"Processing removal questId=%s title=%s worldQuest=%s completed=%s",
+				"Processing removal questId=%s title=%s taskType=%s completed=%s",
 				tostring(questId),
 				tostring(questTitle),
-				tostring(isWorldQuest),
+				tostring(taskAnnouncementType),
 				tostring(questWasCompleted)
 			)
 
 			if questWasCompleted then
 				self:HandleQuestCompleted(questTitle, questId)
-			elseif not isWorldQuest then
+			elseif not taskAnnouncementType then
 				self:HandleQuestRemoved(questTitle)
 			end
 
 			self.worldQuestAreaStateByQuestID[questId] = nil
+			self.bonusObjectiveAreaStateByQuestID[questId] = nil
 			tracker[questId] = nil
-			self:RefreshWorldQuestAreaState(true)
+			self:RefreshTaskAreaStates(true)
 			if questWasCompleted then
 				self.questsCompleted[questId] = nil
 			end
@@ -288,7 +361,9 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 
 					if objectiveType == "progressbar" then
 						local progress = GetQuestProgressBarPercent(questId)
-						objectiveText = tostring(progress) .. "% " .. tostring(objectiveText)
+						objectiveText = tostring(progress)
+							.. "% "
+							.. tostring(self:StripTrailingParentheticalPercent(objectiveText))
 						currentValue = progress
 					end
 
@@ -314,7 +389,13 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 						if (not isInitialObjectiveBaseline) and hasForwardProgress and self:ShouldPublishObjectiveProgress(
 							resolvedProgressValue
 						) then
-							local eventType = self:IsWorldQuest(questId) and "WORLD_QUEST_PROGRESS" or "QUEST_PROGRESS"
+							local taskAnnouncementType = self:GetTaskAnnouncementType(questId)
+							local eventType = "QUEST_PROGRESS"
+							if taskAnnouncementType == "world" then
+								eventType = "WORLD_QUEST_PROGRESS"
+							elseif taskAnnouncementType == "bonus" then
+								eventType = "BONUS_OBJECTIVE_PROGRESS"
+							end
 							self:Debugf("quest", "Publishing progress event questId=%s eventType=%s", tostring(questId), tostring(eventType))
 							self:PublishAnnouncementEvent(eventType, objectiveText)
 						end
@@ -376,33 +457,33 @@ function QuestTogether:QUEST_LOG_UPDATE()
 		self.onQuestLogUpdate = {}
 	end
 
-	self:RefreshWorldQuestAreaState(true)
+	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:QUEST_POI_UPDATE()
-	self:RefreshWorldQuestAreaState(true)
+	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:AREA_POIS_UPDATED()
-	self:RefreshWorldQuestAreaState(true)
+	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:ZONE_CHANGED()
-	self:RefreshWorldQuestAreaState(true)
+	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:ZONE_CHANGED_INDOORS()
-	self:RefreshWorldQuestAreaState(true)
+	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:ZONE_CHANGED_NEW_AREA()
-	self:RefreshWorldQuestAreaState(true)
+	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:PLAYER_ENTERING_WORLD()
 	-- Refresh state after loading screens without emitting synthetic enter/leave lines.
 	self:Debug("PLAYER_ENTERING_WORLD()", "events")
-	self:RefreshWorldQuestAreaState(false)
+	self:RefreshTaskAreaStates(false)
 	if self.EnsureAnnouncementChannelJoined and self.isEnabled then
 		self:EnsureAnnouncementChannelJoined()
 	end

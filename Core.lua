@@ -38,6 +38,7 @@ QuestTogether.isEnabled = QuestTogether.isEnabled or false
 QuestTogether.onQuestLogUpdate = QuestTogether.onQuestLogUpdate or {}
 QuestTogether.questsCompleted = QuestTogether.questsCompleted or {}
 QuestTogether.worldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID or {}
+QuestTogether.bonusObjectiveAreaStateByQuestID = QuestTogether.bonusObjectiveAreaStateByQuestID or {}
 
 -- Default settings for SavedVariables.
 -- We keep the old profile/global shape so existing logic and future migration are simple.
@@ -52,6 +53,10 @@ QuestTogether.DEFAULTS = {
 		announceWorldQuestAreaLeave = true,
 		announceWorldQuestProgress = true,
 		announceWorldQuestCompleted = true,
+		announceBonusObjectiveAreaEnter = true,
+		announceBonusObjectiveAreaLeave = true,
+		announceBonusObjectiveProgress = true,
+		announceBonusObjectiveCompleted = true,
 		showChatBubbles = true,
 		hideMyOwnChatBubbles = false,
 		showChatLogs = true,
@@ -471,6 +476,12 @@ QuestTogether.API = QuestTogether.API or {
 	UnitIsPlayer = function(unitToken)
 		return UnitIsPlayer(unitToken)
 	end,
+	IsAddOnLoaded = function(addonName)
+		if C_AddOns and C_AddOns.IsAddOnLoaded then
+			return C_AddOns.IsAddOnLoaded(addonName)
+		end
+		return IsAddOnLoaded(addonName)
+	end,
 	UnitInParty = function(unitToken)
 		return UnitInParty(unitToken)
 	end,
@@ -668,6 +679,9 @@ end
 
 function QuestTogether:HandleQuestLogChatFrameClosed(chatFrame)
 	if self.suppressQuestLogChatCloseHook then
+		return false
+	end
+	if self.isLoggingOut then
 		return false
 	end
 	if not self:IsQuestLogChatFrame(chatFrame) then
@@ -882,8 +896,21 @@ function QuestTogether:GetShortDisplayName(name)
 	return tostring(name)
 end
 
-function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile)
-	local iconTag = self:GetQuestIconChatTag(14)
+function QuestTogether:GetAnnouncementIconChatTag(eventType, size)
+	if self:IsWorldQuestAnnouncementType(eventType) then
+		local pixelSize = tonumber(size) or 14
+		return "|A:worldquest-icon:" .. tostring(pixelSize) .. ":" .. tostring(pixelSize) .. "|a"
+	end
+	if self:IsBonusObjectiveAnnouncementType(eventType) then
+		local pixelSize = tonumber(size) or 14
+		return "|A:Bonus-Objective-Star:" .. tostring(pixelSize) .. ":" .. tostring(pixelSize) .. "|a"
+	end
+
+	return self:GetQuestIconChatTag(size)
+end
+
+function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType)
+	local iconTag = self:GetAnnouncementIconChatTag(eventType, 14)
 	local trimmedTargetName = self:GetShortDisplayName(targetName)
 	local trimmedMessage = tostring(message or "")
 	local body = trimmedMessage
@@ -898,7 +925,7 @@ function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, clas
 	return speakerText .. "|cffffd200: " .. body .. "|r"
 end
 
-function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile)
+function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, eventType)
 	local speakerName = targetName
 	if speakerName == nil or speakerName == "" then
 		speakerName = self:GetPlayerName()
@@ -907,7 +934,7 @@ function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile)
 	if not resolvedClassFile or resolvedClassFile == "" then
 		resolvedClassFile = self:GetPlayerClassFile()
 	end
-	self:PrintChatLogRaw(self:BuildConsoleAnnouncementMessage(speakerName, message, resolvedClassFile))
+	self:PrintChatLogRaw(self:BuildConsoleAnnouncementMessage(speakerName, message, resolvedClassFile, eventType))
 end
 
 function QuestTogether:PrintChatLogDestinationMessage()
@@ -969,9 +996,27 @@ function QuestTogether:GetAnnouncementOptionKey(eventType)
 		WORLD_QUEST_LEFT = "announceWorldQuestAreaLeave",
 		WORLD_QUEST_PROGRESS = "announceWorldQuestProgress",
 		WORLD_QUEST_COMPLETED = "announceWorldQuestCompleted",
+		BONUS_OBJECTIVE_ENTERED = "announceBonusObjectiveAreaEnter",
+		BONUS_OBJECTIVE_LEFT = "announceBonusObjectiveAreaLeave",
+		BONUS_OBJECTIVE_PROGRESS = "announceBonusObjectiveProgress",
+		BONUS_OBJECTIVE_COMPLETED = "announceBonusObjectiveCompleted",
 	}
 
 	return keysByType[eventType]
+end
+
+function QuestTogether:IsWorldQuestAnnouncementType(eventType)
+	return eventType == "WORLD_QUEST_ENTERED"
+		or eventType == "WORLD_QUEST_LEFT"
+		or eventType == "WORLD_QUEST_PROGRESS"
+		or eventType == "WORLD_QUEST_COMPLETED"
+end
+
+function QuestTogether:IsBonusObjectiveAnnouncementType(eventType)
+	return eventType == "BONUS_OBJECTIVE_ENTERED"
+		or eventType == "BONUS_OBJECTIVE_LEFT"
+		or eventType == "BONUS_OBJECTIVE_PROGRESS"
+		or eventType == "BONUS_OBJECTIVE_COMPLETED"
 end
 
 function QuestTogether:ShouldDisplayAnnouncementType(eventType)
@@ -1000,6 +1045,19 @@ function QuestTogether:IsWorldQuest(questId)
 	return ok and isWorldQuest and true or false
 end
 
+function QuestTogether:IsBonusObjective(questId)
+	if not questId or not C_QuestLog or not C_QuestLog.IsQuestTask then
+		return false
+	end
+
+	local ok, isTaskQuest = pcall(C_QuestLog.IsQuestTask, questId)
+	if not (ok and isTaskQuest) then
+		return false
+	end
+
+	return not self:IsWorldQuest(questId)
+end
+
 function QuestTogether:GetQuestTitle(questId, questInfo)
 	if questInfo and type(questInfo.title) == "string" and questInfo.title ~= "" then
 		return questInfo.title
@@ -1020,6 +1078,19 @@ function QuestTogether:GetQuestTitle(questId, questInfo)
 	end
 
 	return "Quest " .. tostring(questId)
+end
+
+function QuestTogether:StripTrailingParentheticalPercent(objectiveText)
+	if type(objectiveText) ~= "string" or objectiveText == "" then
+		return objectiveText
+	end
+
+	local strippedText = objectiveText:gsub("%s*%(%d+%%%s*%)%s*$", "")
+	if strippedText == "" then
+		return objectiveText
+	end
+
+	return strippedText
 end
 
 function QuestTogether:NormalizeNameplateOptions()
@@ -1491,7 +1562,7 @@ function QuestTogether:ScanQuestLog()
 		end
 	end
 
-	-- World quests in the current area can exist outside normal quest-log rows.
+	-- Area task quests can exist outside normal quest-log rows.
 	-- Add them explicitly so progress announcements can still operate on them.
 	if self.GetActiveWorldQuestAreaSnapshot then
 		for questId, questTitle in pairs(self:GetActiveWorldQuestAreaSnapshot()) do
@@ -1503,9 +1574,22 @@ function QuestTogether:ScanQuestLog()
 			end
 		end
 	end
+	if self.GetActiveBonusObjectiveAreaSnapshot then
+		for questId, questTitle in pairs(self:GetActiveBonusObjectiveAreaSnapshot()) do
+			if not tracker[questId] then
+				self:WatchQuest(questId, { title = questTitle })
+				if tracker[questId] then
+					questsTracked = questsTracked + 1
+				end
+			end
+		end
+	end
 
 	if self.RefreshWorldQuestAreaState then
 		self:RefreshWorldQuestAreaState(false)
+	end
+	if self.RefreshBonusObjectiveAreaState then
+		self:RefreshBonusObjectiveAreaState(false)
 	end
 
 	self:Debugf("quest", "Scan complete questsTracked=%d", questsTracked)
@@ -1543,7 +1627,9 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		local objectiveText, objectiveType, _, currentValue = GetQuestObjectiveInfo(questId, objectiveIndex, false)
 		if objectiveType == "progressbar" then
 			local progress = GetQuestProgressBarPercent(questId)
-			objectiveText = tostring(progress) .. "% " .. tostring(objectiveText)
+			objectiveText = tostring(progress)
+				.. "% "
+				.. tostring(self:StripTrailingParentheticalPercent(objectiveText))
 			currentValue = progress
 		end
 		tracker[questId].objectives[objectiveIndex] = objectiveText
@@ -1573,6 +1659,7 @@ end
 
 function QuestTogether:OnLogin()
 	self.hasLoggedIn = true
+	self.isLoggingOut = false
 	self:Debugf("core", "PLAYER_LOGIN processed enabledSetting=%s", tostring(self.db and self.db.profile and self.db.profile.enabled))
 	if self.db.profile.enabled then
 		self:Enable()
@@ -1583,6 +1670,15 @@ end
 function QuestTogether:ADDON_LOADED(_, loadedAddonName)
 	if self.TryInstallNameplateHooks and self.isInitialized then
 		self:TryInstallNameplateHooks()
+	end
+	if
+		self.isInitialized
+		and self.IsKnownNameplateAddonName
+		and self:IsKnownNameplateAddonName(loadedAddonName)
+		and self.RefreshNameplateAugmentation
+	then
+		self:Debugf("nameplate", "Detected known nameplate addon=%s; refreshing augmentation compatibility", tostring(loadedAddonName))
+		self:RefreshNameplateAugmentation()
 	end
 	if loadedAddonName == "Blizzard_EditMode" and self.TryInstallPersonalBubbleEditModeHooks then
 		self:TryInstallPersonalBubbleEditModeHooks()
@@ -1604,6 +1700,10 @@ function QuestTogether:PLAYER_LOGIN()
 	self:OnLogin()
 end
 
+function QuestTogether:PLAYER_LOGOUT()
+	self.isLoggingOut = true
+end
+
 -- Shared event dispatcher for all WoW events this addon listens for.
 local function DispatchEvent(_, eventName, ...)
 	local handler = QuestTogether[eventName]
@@ -1621,3 +1721,4 @@ QuestTogether.eventFrame = QuestTogether.eventFrame or CreateFrame("Frame")
 QuestTogether.eventFrame:SetScript("OnEvent", DispatchEvent)
 QuestTogether.eventFrame:RegisterEvent("ADDON_LOADED")
 QuestTogether.eventFrame:RegisterEvent("PLAYER_LOGIN")
+QuestTogether.eventFrame:RegisterEvent("PLAYER_LOGOUT")

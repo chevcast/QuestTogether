@@ -393,7 +393,7 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 		local shouldPrint = isLocal or isGrouped or hasNearbySignal
 		if shouldPrint then
 			self:Debugf("comms", "Printing chat log sender=%s class=%s", tostring(senderName), tostring(classFile))
-			self:PrintConsoleAnnouncement(eventData.text, senderName, classFile)
+			self:PrintConsoleAnnouncement(eventData.text, senderName, classFile, eventData.eventType)
 		else
 			self:Debugf("comms", "Skipped chat log sender=%s reason=no nearby/group signal", tostring(senderName))
 		end
@@ -405,13 +405,13 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 		if isLocal then
 			if not self:GetOption("hideMyOwnChatBubbles") and self.ShowPrototypeBubbleOnUnitNameplate then
 				self:Debug("Showing local personal bubble", "bubble")
-				self:ShowPrototypeBubbleOnUnitNameplate("player", eventData.text)
+				self:ShowPrototypeBubbleOnUnitNameplate("player", eventData.text, eventData.eventType)
 			else
 				self:Debug("Skipped local personal bubble due to hideMyOwnChatBubbles or unavailable renderer", "bubble")
 			end
 		elseif hasNearbyNameplate and self.ShowPrototypeBubbleOnNameplate then
 			self:Debugf("bubble", "Showing remote nearby bubble sender=%s", tostring(senderName))
-			self:ShowPrototypeBubbleOnNameplate(nearbyNameplate, eventData.text)
+			self:ShowPrototypeBubbleOnNameplate(nearbyNameplate, eventData.text, eventData.eventType)
 		else
 			self:Debugf("bubble", "Skipped remote bubble sender=%s reason=no nearby nameplate", tostring(senderName))
 		end

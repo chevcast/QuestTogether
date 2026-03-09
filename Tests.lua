@@ -79,12 +79,15 @@ local function WithIsolatedState(testFn)
 	local originalIsEnabled = QuestTogether.isEnabled
 	local originalProfileEnabled = QuestTogether.db.profile.enabled
 	local originalWorldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID
+	local originalBonusObjectiveAreaStateByQuestID = QuestTogether.bonusObjectiveAreaStateByQuestID
 	local originalNameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken
 	local originalNameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache
 	local originalNameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache
 	local originalNameplateBaseHealthColorByUnitFrame = QuestTogether.nameplateBaseHealthColorByUnitFrame
 	local originalNameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
 	local originalNameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken
+	local originalNameplateHealthTintRefreshPendingByUnitToken =
+		QuestTogether.nameplateHealthTintRefreshPendingByUnitToken
 	local originalPrototypeBubbleScreenHostFrame = QuestTogether.prototypeBubbleScreenHostFrame
 	local originalAnnouncementChannelLocalID = QuestTogether.announcementChannelLocalID
 	local originalQuestLogChatFrameID = QuestTogether.db.global.questLogChatFrameID
@@ -103,12 +106,14 @@ local function WithIsolatedState(testFn)
 	QuestTogether.partyMemberOrder = {}
 	QuestTogether.partyRosterFingerprint = ""
 	QuestTogether.worldQuestAreaStateByQuestID = {}
+	QuestTogether.bonusObjectiveAreaStateByQuestID = {}
 	QuestTogether.nameplateQuestStateByUnitToken = {}
 	QuestTogether.nameplateQuestObjectiveCache = {}
 	QuestTogether.nameplateQuestTitleCache = {}
 	QuestTogether.nameplateBaseHealthColorByUnitFrame = setmetatable({}, { __mode = "k" })
 	QuestTogether.nameplateBubbleByUnitFrame = setmetatable({}, { __mode = "k" })
 	QuestTogether.nameplateRefreshPendingByUnitToken = {}
+	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken = {}
 	QuestTogether.prototypeBubbleScreenHostFrame = nil
 	QuestTogether.announcementChannelLocalID = nil
 
@@ -137,12 +142,15 @@ local function WithIsolatedState(testFn)
 	QuestTogether.db.profile.enabled = originalProfileEnabled
 	QuestTogether.isEnabled = originalIsEnabled
 	QuestTogether.worldQuestAreaStateByQuestID = originalWorldQuestAreaStateByQuestID
+	QuestTogether.bonusObjectiveAreaStateByQuestID = originalBonusObjectiveAreaStateByQuestID
 	QuestTogether.nameplateQuestStateByUnitToken = originalNameplateQuestStateByUnitToken
 	QuestTogether.nameplateQuestObjectiveCache = originalNameplateQuestObjectiveCache
 	QuestTogether.nameplateQuestTitleCache = originalNameplateQuestTitleCache
 	QuestTogether.nameplateBaseHealthColorByUnitFrame = originalNameplateBaseHealthColorByUnitFrame
 	QuestTogether.nameplateBubbleByUnitFrame = originalNameplateBubbleByUnitFrame
 	QuestTogether.nameplateRefreshPendingByUnitToken = originalNameplateRefreshPendingByUnitToken
+	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken =
+		originalNameplateHealthTintRefreshPendingByUnitToken
 	QuestTogether.prototypeBubbleScreenHostFrame = originalPrototypeBubbleScreenHostFrame
 	QuestTogether.announcementChannelLocalID = originalAnnouncementChannelLocalID
 
@@ -191,6 +199,10 @@ end
 
 QuestTogether:RegisterTest("default profile contains new announcement display options", function()
 	AssertTrue(QuestTogether.DEFAULTS.profile.announceAccepted ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.announceBonusObjectiveAreaEnter ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.announceBonusObjectiveAreaLeave ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.announceBonusObjectiveProgress ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.announceBonusObjectiveCompleted ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.showChatBubbles ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.hideMyOwnChatBubbles ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.showChatLogs ~= nil)
@@ -244,6 +256,32 @@ QuestTogether:RegisterTest("legacy bubble settings migrate to numeric values", f
 	AssertEquals(QuestTogether.db.profile.chatBubbleDuration, QuestTogether.DEFAULTS.profile.chatBubbleDuration)
 end)
 
+QuestTogether:RegisterTest("progressbar objective text strips trailing parenthetical percent", function()
+	AssertEquals(
+		QuestTogether:StripTrailingParentheticalPercent("Fill the vial (34%)"),
+		"Fill the vial"
+	)
+	AssertEquals(
+		QuestTogether:StripTrailingParentheticalPercent("Refine potadpalate"),
+		"Refine potadpalate"
+	)
+end)
+
+QuestTogether:RegisterTest("known nameplate addons suppress the QuestTogether quest icon", function()
+	QuestTogether.db.profile.nameplateQuestIconEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		IsAddOnLoaded = function(addonName)
+			return addonName == "Plater"
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "IsQuestObjectiveNameplate", function()
+		return true
+	end, function()
+		AssertFalse(QuestTogether:ShouldShowQuestNameplateIcon("nameplate1", {}))
+	end)
+end)
+
 QuestTogether:RegisterTest("personal bubble anchor persists per character and resets to defaults", function()
 	WithPatchedMethod(QuestTogether, "GetPlayerFullName", function()
 		return "MyPlayer-Realm"
@@ -278,6 +316,26 @@ QuestTogether:RegisterTest("console announcement message includes icon and playe
 	AssertTrue(string.find(message, "|T" .. QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE, 1, true) ~= nil)
 	AssertTrue(string.find(message, "MyPlayer", 1, true) ~= nil)
 	AssertTrue(string.find(message, "|cffffd200: hello there|r", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("world quest console announcement uses world quest icon", function()
+	local message =
+		QuestTogether:BuildConsoleAnnouncementMessage("MyPlayer-Realm", "entered the area", "MAGE", "WORLD_QUEST_ENTERED")
+	AssertTrue(string.find(message, "|A:worldquest%-icon:14:14|a") ~= nil)
+	AssertTrue(string.find(message, "MyPlayer", 1, true) ~= nil)
+	AssertTrue(string.find(message, "|cffffd200: entered the area|r", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("bonus objective console announcement uses bonus objective icon", function()
+	local message = QuestTogether:BuildConsoleAnnouncementMessage(
+		"MyPlayer-Realm",
+		"entered the area",
+		"MAGE",
+		"BONUS_OBJECTIVE_ENTERED"
+	)
+	AssertTrue(string.find(message, "|A:Bonus%-Objective%-Star:14:14|a") ~= nil)
+	AssertTrue(string.find(message, "MyPlayer", 1, true) ~= nil)
+	AssertTrue(string.find(message, "|cffffd200: entered the area|r", 1, true) ~= nil)
 end)
 
 QuestTogether:RegisterTest("console announcements use separate QuestTogether chat frame when configured", function()
