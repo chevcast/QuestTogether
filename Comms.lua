@@ -12,6 +12,23 @@ local ANNOUNCEMENT_WIRE_VERSION = 2
 local ANNOUNCEMENT_COMMAND = "ANN"
 local ANNOUNCEMENT_MAX_TEXT_LENGTH = 220
 
+local function IsSecretValue(value)
+	if type(issecretvalue) ~= "function" then
+		return false
+	end
+
+	local ok, result = pcall(issecretvalue, value)
+	return ok and result and true or false
+end
+
+local function SafeDebugString(value)
+	if IsSecretValue(value) then
+		return "<secret>"
+	end
+
+	return tostring(value)
+end
+
 local function SplitByDelimiter(text, delimiter)
 	local pieces = {}
 	if text == nil or text == "" then
@@ -132,6 +149,9 @@ function QuestTogether:GetAnnouncementChannelLocalID()
 	end
 
 	local localID = self.API.GetChannelName(self.announcementChannelName)
+	if IsSecretValue(localID) then
+		return nil
+	end
 	if type(localID) == "number" and localID > 0 then
 		return localID
 	end
@@ -252,12 +272,19 @@ function QuestTogether:IsAnnouncementChannelEvent(channel, localID, name)
 		return false
 	end
 
+	if type(name) == "string" and name ~= "" then
+		return name == self.announcementChannelName
+	end
+
 	local expectedLocalID = self:GetAnnouncementChannelLocalID() or self.announcementChannelLocalID
+	if IsSecretValue(expectedLocalID) or IsSecretValue(localID) then
+		return false
+	end
 	if type(expectedLocalID) == "number" and expectedLocalID > 0 and type(localID) == "number" then
 		return expectedLocalID == localID
 	end
 
-	return name == self.announcementChannelName
+	return false
 end
 
 function QuestTogether:SendAnnouncementEvent(eventType, text, questId)
@@ -483,7 +510,7 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 		"Received addon message channel=%s sender=%s localID=%s name=%s bytes=%d",
 		tostring(channel),
 		tostring(sender),
-		tostring(localID),
+		SafeDebugString(localID),
 		tostring(name),
 		type(message) == "string" and #message or 0
 	)
