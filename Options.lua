@@ -195,6 +195,31 @@ local function CreateShowProgressForDropdown(parent, x, y)
 	)
 end
 
+local function CreateChatLogDestinationDropdown(parent, x, y)
+	return CreateDropdown(
+		parent,
+		"Chat Log Destination",
+		"Choose whether QuestTogether chat logs print to your main chat frame or a dedicated QuestTogether chat frame.",
+		x,
+		y,
+		190,
+		function(_, level)
+			for _, value in ipairs(QuestTogether.chatLogDestinationOrder) do
+				local info = UIDropDownMenu_CreateInfo()
+				info.text = QuestTogether:GetChatLogDestinationLabel(value)
+				info.func = function()
+					QuestTogether:Debugf("options", "Dropdown selected key=chatLogDestination value=%s", tostring(value))
+					QuestTogether:SetOption("chatLogDestination", value)
+					QuestTogether:RefreshOptionsWindow()
+					CloseDropDownMenus()
+				end
+				info.checked = QuestTogether:GetOption("chatLogDestination") == value
+				UIDropDownMenu_AddButton(info, level)
+			end
+		end
+	)
+end
+
 local function CreateNameplateIconStyleDropdown(parent, x, y)
 	return CreateDropdown(
 		parent,
@@ -250,6 +275,15 @@ function QuestTogether:RefreshOptionsWindow()
 	)
 
 	UIDropDownMenu_Initialize(
+		controls.chatLogDestinationDropdown,
+		controls.chatLogDestinationDropdown.initializeMenu
+	)
+	UIDropDownMenu_SetText(
+		controls.chatLogDestinationDropdown,
+		self:GetChatLogDestinationLabel(self:GetOption("chatLogDestination"))
+	)
+
+	UIDropDownMenu_Initialize(
 		controls.nameplateQuestIconStyleDropdown,
 		controls.nameplateQuestIconStyleDropdown.initializeMenu
 	)
@@ -272,6 +306,17 @@ function QuestTogether:RefreshOptionsWindow()
 	controls.hideMyOwnChatBubbles.Label:SetShown(showBubbleControls)
 	controls.personalBubbleEditHint:SetShown(showBubbleControls)
 	controls.openHudEditMode:SetShown(showBubbleControls)
+
+	local showChatLogControls = self:GetOption("showChatLogs")
+	if UIDropDownMenu_EnableDropDown and UIDropDownMenu_DisableDropDown then
+		if showChatLogControls then
+			UIDropDownMenu_EnableDropDown(controls.chatLogDestinationDropdown)
+		else
+			UIDropDownMenu_DisableDropDown(controls.chatLogDestinationDropdown)
+		end
+	end
+	controls.chatLogDestinationDropdown:SetAlpha(showChatLogControls and 1 or 0.5)
+	controls.chatLogDestinationDropdown.title:SetAlpha(showChatLogControls and 1 or 0.5)
 end
 
 function QuestTogether:OpenOptionsWindow()
@@ -302,7 +347,7 @@ function QuestTogether:InitializeOptionsWindow()
 	scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 8)
 
 	local content = CreateFrame("Frame", nil, scrollFrame)
-	content:SetSize(680, 780)
+	content:SetSize(680, 820)
 	scrollFrame:SetScrollChild(content)
 	frame.ScrollFrame = scrollFrame
 	frame.Content = content
@@ -347,6 +392,7 @@ function QuestTogether:InitializeOptionsWindow()
 		16,
 		-292
 	)
+	local chatLogDestinationDropdown = CreateChatLogDestinationDropdown(content, 330, -292)
 	local showProgressForDropdown = CreateShowProgressForDropdown(content, 330, -236)
 
 	local openHudEditMode = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
@@ -452,6 +498,7 @@ function QuestTogether:InitializeOptionsWindow()
 		showChatBubbles = showChatBubbles,
 		hideMyOwnChatBubbles = hideMyOwnChatBubbles,
 		showChatLogs = showChatLogs,
+		chatLogDestinationDropdown = chatLogDestinationDropdown,
 		showProgressForDropdown = showProgressForDropdown,
 		openHudEditMode = openHudEditMode,
 		personalBubbleEditHint = personalBubbleEditHint,

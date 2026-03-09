@@ -72,6 +72,7 @@ local function WithIsolatedState(testFn)
 	local originalAPI = QuestTogether.API
 	local originalPrint = QuestTogether.Print
 	local originalPrintRaw = QuestTogether.PrintRaw
+	local originalPrintChatLogRaw = QuestTogether.PrintChatLogRaw
 	local originalPartyMembers = QuestTogether.partyMembers
 	local originalPartyMemberOrder = QuestTogether.partyMemberOrder
 	local originalPartyRosterFingerprint = QuestTogether.partyRosterFingerprint
@@ -86,6 +87,7 @@ local function WithIsolatedState(testFn)
 	local originalNameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken
 	local originalPrototypeBubbleScreenHostFrame = QuestTogether.prototypeBubbleScreenHostFrame
 	local originalAnnouncementChannelLocalID = QuestTogether.announcementChannelLocalID
+	local originalQuestLogChatFrameID = QuestTogether.db.global.questLogChatFrameID
 
 	if QuestTogether.UnregisterRuntimeEvents then
 		QuestTogether:UnregisterRuntimeEvents()
@@ -112,11 +114,23 @@ local function WithIsolatedState(testFn)
 
 	local ok, err = pcall(testFn)
 
+	local createdQuestLogChatFrameID = QuestTogether.db
+		and QuestTogether.db.global
+		and QuestTogether.db.global.questLogChatFrameID
+	if
+		createdQuestLogChatFrameID
+		and createdQuestLogChatFrameID ~= originalQuestLogChatFrameID
+		and QuestTogether.CloseQuestLogChatFrame
+	then
+		pcall(QuestTogether.CloseQuestLogChatFrame, QuestTogether)
+	end
+
 	QuestTogether.db.profile = originalProfile
 	QuestTogether.db.global = originalGlobal
 	QuestTogether.API = originalAPI
 	QuestTogether.Print = originalPrint
 	QuestTogether.PrintRaw = originalPrintRaw
+	QuestTogether.PrintChatLogRaw = originalPrintChatLogRaw
 	QuestTogether.partyMembers = originalPartyMembers
 	QuestTogether.partyMemberOrder = originalPartyMemberOrder
 	QuestTogether.partyRosterFingerprint = originalPartyRosterFingerprint
@@ -180,6 +194,7 @@ QuestTogether:RegisterTest("default profile contains new announcement display op
 	AssertTrue(QuestTogether.DEFAULTS.profile.showChatBubbles ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.hideMyOwnChatBubbles ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.showChatLogs ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.chatLogDestination ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.showProgressFor ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.chatBubbleSize ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.chatBubbleDuration ~= nil)
@@ -202,6 +217,17 @@ QuestTogether:RegisterTest("chat bubble option validation rejects unknown values
 	AssertEquals(QuestTogether:GetOption("showProgressFor"), "party_only")
 	AssertFalse(QuestTogether:SetOption("showProgressFor", "everyone"))
 	AssertEquals(QuestTogether:GetOption("showProgressFor"), "party_only")
+
+	WithPatchedMethod(QuestTogether, "EnsureQuestLogChatFrame", function()
+		return {
+			AddMessage = function() end,
+		}, 3
+	end, function()
+		AssertTrue(QuestTogether:SetOption("chatLogDestination", "separate"))
+		AssertEquals(QuestTogether:GetOption("chatLogDestination"), "separate")
+		AssertFalse(QuestTogether:SetOption("chatLogDestination", "guild"))
+		AssertEquals(QuestTogether:GetOption("chatLogDestination"), "separate")
+	end)
 end)
 
 QuestTogether:RegisterTest("legacy bubble settings migrate to numeric values", function()
@@ -252,6 +278,146 @@ QuestTogether:RegisterTest("console announcement message includes icon and playe
 	AssertTrue(string.find(message, "|T" .. QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE, 1, true) ~= nil)
 	AssertTrue(string.find(message, "MyPlayer", 1, true) ~= nil)
 	AssertTrue(string.find(message, "|cffffd200: hello there|r", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("console announcements use separate QuestTogether chat frame when configured", function()
+	local printedToFrame = {}
+	local fallbackPrinted = {}
+	local fakeFrame = {
+		AddMessage = function(_, message)
+			printedToFrame[#printedToFrame + 1] = message
+		end,
+	}
+
+	QuestTogether.db.profile.chatLogDestination = "separate"
+	QuestTogether.PrintRaw = function(_, message)
+		fallbackPrinted[#fallbackPrinted + 1] = message
+	end
+
+	WithPatchedMethod(QuestTogether, "EnsureQuestLogChatFrame", function()
+		return fakeFrame, 3
+	end, function()
+		QuestTogether:PrintConsoleAnnouncement("hello there", "MyPlayer-Realm", "MAGE")
+	end)
+
+	AssertEquals(#printedToFrame, 1)
+	AssertEquals(#fallbackPrinted, 0)
+	AssertTrue(string.find(printedToFrame[1], "hello there", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("separate chat window inherits main chat font size when enabled", function()
+	local appliedFontSize = nil
+	local fakeMainFrame = {
+		GetID = function()
+			return 1
+		end,
+	}
+	local fakeQuestFrame = {
+		GetID = function()
+			return 3
+		end,
+	}
+
+	QuestTogether.API = CreateApiWithOverrides({
+		GetChatWindowInfo = function(chatFrameID)
+			if chatFrameID == 1 then
+				return "General", 18
+			end
+			if chatFrameID == 3 then
+				return "QuestTogether", 14
+			end
+			return nil
+		end,
+		SetChatWindowFontSize = function(chatFrame, fontSize)
+			appliedFontSize = {
+				frameID = chatFrame:GetID(),
+				fontSize = fontSize,
+			}
+		end,
+	})
+
+	local ok, err = pcall(function()
+		WithPatchedMethod(QuestTogether, "GetMainChatFrame", function()
+			return fakeMainFrame
+		end, function()
+			WithPatchedMethod(QuestTogether, "EnsureQuestLogChatFrame", function()
+				return fakeQuestFrame, 3
+			end, function()
+				AssertTrue(QuestTogether:SetOption("chatLogDestination", "separate"))
+			end)
+		end)
+	end)
+	if not ok then
+		error(err, 0)
+	end
+
+	AssertTrue(appliedFontSize ~= nil)
+	AssertEquals(appliedFontSize.frameID, 3)
+	AssertEquals(appliedFontSize.fontSize, 18)
+end)
+
+QuestTogether:RegisterTest("switching chat logs back to main closes QuestTogether chat window", function()
+	local closeCalls = {}
+	local fakeQuestFrame = {
+		GetID = function()
+			return 3
+		end,
+	}
+
+	QuestTogether.db.profile.chatLogDestination = "separate"
+	QuestTogether.db.global.questLogChatFrameID = 3
+	QuestTogether.API = CreateApiWithOverrides({
+		GetChatFrameByID = function(chatFrameID)
+			if chatFrameID == 3 then
+				return fakeQuestFrame
+			end
+			return nil
+		end,
+		GetChatWindowInfo = function(chatFrameID)
+			if chatFrameID == 3 then
+				return "QuestTogether", 18
+			end
+			return nil
+		end,
+		CloseChatWindow = function(chatFrame)
+			closeCalls[#closeCalls + 1] = chatFrame:GetID()
+		end,
+	})
+
+	AssertTrue(QuestTogether:SetOption("chatLogDestination", "main"))
+	AssertEquals(#closeCalls, 1)
+	AssertEquals(closeCalls[1], 3)
+	AssertEquals(QuestTogether.db.global.questLogChatFrameID, nil)
+end)
+
+QuestTogether:RegisterTest("closing QuestTogether chat window reverts chat log destination to main", function()
+	local refreshed = 0
+	local fakeQuestFrame = {
+		GetID = function()
+			return 3
+		end,
+	}
+
+	QuestTogether.db.profile.chatLogDestination = "separate"
+	QuestTogether.db.global.questLogChatFrameID = 3
+	QuestTogether.API = CreateApiWithOverrides({
+		GetChatWindowInfo = function(chatFrameID)
+			if chatFrameID == 3 then
+				return "QuestTogether", 18
+			end
+			return nil
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshOptionsWindow", function()
+		refreshed = refreshed + 1
+	end, function()
+		AssertTrue(QuestTogether:HandleQuestLogChatFrameClosed(fakeQuestFrame))
+	end)
+
+	AssertEquals(QuestTogether.db.profile.chatLogDestination, "main")
+	AssertEquals(QuestTogether.db.global.questLogChatFrameID, nil)
+	AssertEquals(refreshed, 1)
 end)
 
 QuestTogether:RegisterTest("bubble test announcement uses target player when available", function()
@@ -352,6 +518,10 @@ QuestTogether:RegisterTest("target test announcement sends target payload and ha
 			AssertEquals(unitToken, "target")
 			return "Player-2-XYZ"
 		end,
+		UnitIsPlayer = function(unitToken)
+			AssertEquals(unitToken, "target")
+			return true
+		end,
 		GetChannelName = function()
 			return 8
 		end,
@@ -366,27 +536,21 @@ QuestTogether:RegisterTest("target test announcement sends target payload and ha
 		end,
 	})
 
-	WithPatchedMethod(_G, "UnitIsPlayer", function(unitToken)
-		AssertEquals(unitToken, "target")
+	WithPatchedMethod(QuestTogether, "HandleAnnouncementEvent", function(_, eventData, isLocal)
+		handledEvent = {
+			eventType = eventData.eventType,
+			senderGUID = eventData.senderGUID,
+			classFile = eventData.classFile,
+			senderName = eventData.senderName,
+			text = eventData.text,
+			isLocal = isLocal,
+		}
 		return true
 	end, function()
-		WithPatchedMethod(QuestTogether, "HandleAnnouncementEvent", function(_, eventData, isLocal)
-			handledEvent = {
-				eventType = eventData.eventType,
-				senderGUID = eventData.senderGUID,
-				classFile = eventData.classFile,
-				senderName = eventData.senderName,
-				text = eventData.text,
-				isLocal = isLocal,
-			}
-			return true
-		end, function()
-			local ok, senderName = QuestTogether:SendBubbleAnnouncementTest("Testing nearby player bubble")
-			AssertTrue(ok)
-			AssertEquals(senderName, "Nearby-Realm")
-		end)
+		local ok, senderName = QuestTogether:SendBubbleAnnouncementTest("Testing nearby player bubble")
+		AssertTrue(ok)
+		AssertEquals(senderName, "Nearby-Realm")
 	end)
-
 	AssertEquals(#sent, 1)
 	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
 	AssertEquals(sent[1].channel, "CHANNEL")
@@ -488,7 +652,7 @@ QuestTogether:RegisterTest("remote grouped sender prints chat log without nearby
 		},
 	}
 
-	QuestTogether.PrintRaw = function(_, message)
+	QuestTogether.PrintChatLogRaw = function(_, message)
 		printed[#printed + 1] = message
 	end
 
@@ -512,7 +676,7 @@ QuestTogether:RegisterTest("remote nearby nongroup sender is filtered by party o
 	QuestTogether.db.profile.showChatBubbles = false
 	QuestTogether.db.profile.showProgressFor = "party_only"
 
-	QuestTogether.PrintRaw = function()
+	QuestTogether.PrintChatLogRaw = function()
 		printed = printed + 1
 	end
 
@@ -539,7 +703,7 @@ QuestTogether:RegisterTest("remote nearby sender shows bubble and chat log for p
 	QuestTogether.db.profile.showChatBubbles = true
 	QuestTogether.db.profile.showProgressFor = "party_nearby"
 
-	QuestTogether.PrintRaw = function(_, message)
+	QuestTogether.PrintChatLogRaw = function(_, message)
 		printed[#printed + 1] = message
 	end
 
@@ -576,7 +740,7 @@ QuestTogether:RegisterTest("remote sender with matching target prints chat log w
 	QuestTogether.db.profile.showChatBubbles = false
 	QuestTogether.db.profile.showProgressFor = "party_nearby"
 
-	QuestTogether.PrintRaw = function(_, message)
+	QuestTogether.PrintChatLogRaw = function(_, message)
 		printed[#printed + 1] = message
 	end
 
@@ -611,7 +775,7 @@ QuestTogether:RegisterTest("local announcement hides own bubble when configured"
 	QuestTogether.db.profile.showChatBubbles = true
 	QuestTogether.db.profile.hideMyOwnChatBubbles = true
 
-	QuestTogether.PrintRaw = function(_, message)
+	QuestTogether.PrintChatLogRaw = function(_, message)
 		printed[#printed + 1] = message
 	end
 

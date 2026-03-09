@@ -21,6 +21,7 @@ _G.QuestTogether = QuestTogether
 QuestTogether.addonName = addonName or "QuestTogether"
 QuestTogether.commPrefix = "QuestTogether"
 QuestTogether.announcementChannelName = "QuestTogetherAnnounce1"
+QuestTogether.questLogWindowName = "QuestTogether"
 QuestTogether.CHAT_BUBBLE_SIZE_MIN = 80
 QuestTogether.CHAT_BUBBLE_SIZE_MAX = 160
 QuestTogether.CHAT_BUBBLE_SIZE_STEP = 5
@@ -54,6 +55,7 @@ QuestTogether.DEFAULTS = {
 		showChatBubbles = true,
 		hideMyOwnChatBubbles = false,
 		showChatLogs = true,
+		chatLogDestination = "main",
 		showProgressFor = "party_nearby",
 		chatBubbleSize = 120,
 		chatBubbleDuration = 3,
@@ -71,6 +73,7 @@ QuestTogether.DEFAULTS = {
 	global = {
 		questTrackers = {},
 		personalBubbleAnchors = {},
+		questLogChatFrameID = nil,
 	},
 }
 
@@ -98,6 +101,16 @@ QuestTogether.showProgressForOrder = {
 	"party_only",
 }
 
+QuestTogether.chatLogDestinationLabels = {
+	main = "Main Chat Window",
+	separate = "Separate Chat Window",
+}
+
+QuestTogether.chatLogDestinationOrder = {
+	"main",
+	"separate",
+}
+
 QuestTogether.DEFAULT_PERSONAL_BUBBLE_ANCHOR = {
 	point = "CENTER",
 	relativePoint = "CENTER",
@@ -112,6 +125,19 @@ function QuestTogether:IsShowProgressFor(value)
 		end
 	end
 	return false
+end
+
+function QuestTogether:IsChatLogDestination(value)
+	for _, candidate in ipairs(self.chatLogDestinationOrder) do
+		if candidate == value then
+			return true
+		end
+	end
+	return false
+end
+
+function QuestTogether:GetChatLogDestinationLabel(value)
+	return self.chatLogDestinationLabels[value] or tostring(value)
 end
 
 function QuestTogether:NormalizeChatBubbleSizeValue(value)
@@ -374,6 +400,24 @@ QuestTogether.API = QuestTogether.API or {
 	GetChannelName = function(name)
 		return GetChannelName(name)
 	end,
+	GetNumChatWindows = function()
+		return NUM_CHAT_WINDOWS or 0
+	end,
+	GetChatWindowInfo = function(chatFrameID)
+		return FCF_GetChatWindowInfo(chatFrameID)
+	end,
+	GetChatFrameByID = function(chatFrameID)
+		return FCF_GetChatFrameByID(chatFrameID)
+	end,
+	OpenChatWindow = function(name, noDefaultChannels)
+		return FCF_OpenNewWindow(name, noDefaultChannels)
+	end,
+	CloseChatWindow = function(chatFrame)
+		return FCF_Close(chatFrame)
+	end,
+	SetChatWindowFontSize = function(chatFrame, fontSize)
+		return FCF_SetChatWindowFontSize(nil, chatFrame, fontSize)
+	end,
 	RegisterAddonPrefix = function(prefix)
 		return C_ChatInfo.RegisterAddonMessagePrefix(prefix)
 	end,
@@ -423,6 +467,9 @@ QuestTogether.API = QuestTogether.API or {
 	end,
 	UnitName = function(unitToken)
 		return UnitName(unitToken)
+	end,
+	UnitIsPlayer = function(unitToken)
+		return UnitIsPlayer(unitToken)
 	end,
 	UnitInParty = function(unitToken)
 		return UnitInParty(unitToken)
@@ -532,6 +579,262 @@ function QuestTogether:PrintRaw(message)
 	end
 end
 
+function QuestTogether:GetMainChatFrame()
+	return DEFAULT_CHAT_FRAME
+end
+
+function QuestTogether:GetConfiguredQuestLogChatFrameID()
+	if not self.db or not self.db.global then
+		return nil
+	end
+
+	local configuredID = tonumber(self.db.global.questLogChatFrameID)
+	if configuredID and configuredID > 0 then
+		return configuredID
+	end
+
+	return nil
+end
+
+function QuestTogether:SetConfiguredQuestLogChatFrameID(chatFrameID)
+	if not self.db or not self.db.global then
+		return false
+	end
+
+	local numericID = tonumber(chatFrameID)
+	if numericID and numericID > 0 then
+		self.db.global.questLogChatFrameID = numericID
+	else
+		self.db.global.questLogChatFrameID = nil
+	end
+
+	return true
+end
+
+function QuestTogether:FindQuestLogChatFrame()
+	local chatWindowName = self.questLogWindowName or "QuestTogether"
+	local configuredID = self:GetConfiguredQuestLogChatFrameID()
+	if configuredID and self.API.GetChatFrameByID and self.API.GetChatWindowInfo then
+		local configuredFrame = self.API.GetChatFrameByID(configuredID)
+		local configuredName = self.API.GetChatWindowInfo(configuredID)
+		if configuredFrame and configuredName == chatWindowName then
+			return configuredFrame, configuredID
+		end
+	end
+
+	local maxWindows = tonumber(self.API.GetNumChatWindows and self.API.GetNumChatWindows()) or 0
+	for chatFrameID = 1, maxWindows do
+		local frameName = self.API.GetChatWindowInfo and self.API.GetChatWindowInfo(chatFrameID)
+		if frameName == chatWindowName then
+			local chatFrame = nil
+			if self.API.GetChatFrameByID then
+				chatFrame = self.API.GetChatFrameByID(chatFrameID)
+			end
+			if not chatFrame then
+				chatFrame = _G["ChatFrame" .. tostring(chatFrameID)]
+			end
+			if chatFrame then
+				self:SetConfiguredQuestLogChatFrameID(chatFrameID)
+				return chatFrame, chatFrameID
+			end
+		end
+	end
+
+	self:SetConfiguredQuestLogChatFrameID(nil)
+	return nil, nil
+end
+
+function QuestTogether:IsQuestLogChatFrame(chatFrame)
+	if not chatFrame or not chatFrame.GetID then
+		return false
+	end
+
+	local expectedName = self.questLogWindowName or "QuestTogether"
+	local frameID = chatFrame:GetID()
+	local configuredID = self:GetConfiguredQuestLogChatFrameID()
+	if configuredID and configuredID == frameID then
+		return true
+	end
+
+	if self.API.GetChatWindowInfo then
+		local frameName = self.API.GetChatWindowInfo(frameID)
+		if frameName == expectedName then
+			return true
+		end
+	end
+
+	return false
+end
+
+function QuestTogether:HandleQuestLogChatFrameClosed(chatFrame)
+	if self.suppressQuestLogChatCloseHook then
+		return false
+	end
+	if not self:IsQuestLogChatFrame(chatFrame) then
+		return false
+	end
+
+	self:SetConfiguredQuestLogChatFrameID(nil)
+	if self.db and self.db.profile and self.db.profile.chatLogDestination == "separate" then
+		self.db.profile.chatLogDestination = "main"
+		self:Debug("QuestTogether chat window was closed; reverting chat log destination to main chat window", "chat")
+		if self.RefreshOptionsWindow then
+			self:RefreshOptionsWindow()
+		end
+		if self.isEnabled and self.hasLoggedIn then
+			self:PrintChatLogDestinationMessage()
+		end
+	end
+
+	return true
+end
+
+function QuestTogether:TryInstallChatWindowHooks()
+	if self.chatWindowHooksInstalled then
+		return
+	end
+	if type(hooksecurefunc) ~= "function" or type(FCF_Close) ~= "function" then
+		return
+	end
+
+	hooksecurefunc("FCF_Close", function(frame, fallback)
+		local closedFrame = fallback or frame
+		QuestTogether:HandleQuestLogChatFrameClosed(closedFrame)
+	end)
+
+	self.chatWindowHooksInstalled = true
+	self:Debug("Installed chat window hooks", "chat")
+end
+
+function QuestTogether:ActivateQuestLogChatFrame(chatFrame)
+	if not chatFrame or not chatFrame.GetID then
+		return false
+	end
+
+	local chatTab = _G[chatFrame:GetName() .. "Tab"]
+	local frameShown = chatFrame.IsShown and chatFrame:IsShown()
+	local tabShown = chatTab and chatTab.IsShown and chatTab:IsShown()
+	if frameShown or tabShown then
+		return true
+	end
+
+	if FCF_CheckShowChatFrame then
+		FCF_CheckShowChatFrame(chatFrame)
+		if chatTab then
+			FCF_CheckShowChatFrame(chatTab)
+		end
+	end
+	if SetChatWindowShown then
+		SetChatWindowShown(chatFrame:GetID(), true)
+	end
+	if FCF_DockFrame and FCFDock_GetChatFrames and GENERAL_CHAT_DOCK then
+		FCF_DockFrame(chatFrame, (#FCFDock_GetChatFrames(GENERAL_CHAT_DOCK) + 1), true)
+	end
+	if FCF_FadeInChatFrame and FCFDock_GetSelectedWindow and GENERAL_CHAT_DOCK then
+		local selectedFrame = FCFDock_GetSelectedWindow(GENERAL_CHAT_DOCK)
+		if selectedFrame then
+			FCF_FadeInChatFrame(selectedFrame)
+		end
+	end
+	if ChatFrameUtil and ChatFrameUtil.SetLastActiveWindow and chatFrame.editBox then
+		ChatFrameUtil.SetLastActiveWindow(chatFrame.editBox)
+	end
+
+	self:Debugf("chat", "Reactivated existing QuestTogether chat window id=%s", tostring(chatFrame:GetID()))
+	return true
+end
+
+function QuestTogether:EnsureQuestLogChatFrame()
+	local existingFrame, existingID = self:FindQuestLogChatFrame()
+	if existingFrame then
+		self:ActivateQuestLogChatFrame(existingFrame)
+		return existingFrame, existingID
+	end
+
+	if not self.API.OpenChatWindow then
+		return nil, nil
+	end
+
+	local chatFrame, chatFrameID = self.API.OpenChatWindow(self.questLogWindowName or "QuestTogether", true)
+	if not chatFrame then
+		return nil, nil
+	end
+
+	if chatFrame.RemoveAllMessageGroups then
+		chatFrame:RemoveAllMessageGroups()
+	end
+	if chatFrame.RemoveAllChannels then
+		chatFrame:RemoveAllChannels()
+	end
+	self:SetConfiguredQuestLogChatFrameID(chatFrameID)
+	self:Debugf("chat", "Created QuestTogether chat window id=%s", tostring(chatFrameID))
+	return chatFrame, chatFrameID
+end
+
+function QuestTogether:CloseQuestLogChatFrame()
+	local chatFrame, chatFrameID = self:FindQuestLogChatFrame()
+	if not chatFrame then
+		self:SetConfiguredQuestLogChatFrameID(nil)
+		return false
+	end
+
+	if self.API.CloseChatWindow then
+		self.suppressQuestLogChatCloseHook = true
+		self.API.CloseChatWindow(chatFrame)
+		self.suppressQuestLogChatCloseHook = false
+	end
+
+	self:SetConfiguredQuestLogChatFrameID(nil)
+	self:Debugf("chat", "Closed QuestTogether chat window id=%s", tostring(chatFrameID))
+	if self.isEnabled and self.hasLoggedIn then
+		self:PrintChatLogDestinationMessage()
+	end
+	return true
+end
+
+function QuestTogether:ApplyMainChatFontSizeToChatFrame(chatFrame)
+	if not chatFrame or not chatFrame.GetID or not self.API.GetChatWindowInfo or not self.API.SetChatWindowFontSize then
+		return false
+	end
+	local mainChatFrame = self:GetMainChatFrame()
+	if not mainChatFrame or not mainChatFrame.GetID then
+		return false
+	end
+
+	local mainChatID = mainChatFrame:GetID()
+	local _, fontSize = self.API.GetChatWindowInfo(mainChatID)
+	fontSize = tonumber(fontSize)
+	if not fontSize or fontSize <= 0 then
+		return false
+	end
+
+	self.API.SetChatWindowFontSize(chatFrame, fontSize)
+	self:Debugf("chat", "Applied main chat font size=%s to QuestTogether chat frame id=%s", tostring(fontSize), tostring(chatFrame:GetID()))
+	return true
+end
+
+function QuestTogether:GetChatLogFrame()
+	if self:GetOption("chatLogDestination") == "separate" then
+		local chatFrame = self:EnsureQuestLogChatFrame()
+		if chatFrame and chatFrame.AddMessage then
+			return chatFrame
+		end
+		self:Debug("Separate QuestTogether chat window unavailable; falling back to main chat", "chat")
+	end
+
+	return DEFAULT_CHAT_FRAME
+end
+
+function QuestTogether:PrintChatLogRaw(message)
+	local text = tostring(message)
+	local chatFrame = self:GetChatLogFrame()
+	if chatFrame and chatFrame.AddMessage then
+		chatFrame:AddMessage(text)
+	else
+		self:PrintRaw(text)
+	end
+end
+
 function QuestTogether:IsDebugEnabled()
 	return self.db and self.db.profile and self.db.profile.debugMode == true
 end
@@ -589,7 +892,7 @@ function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, clas
 	local speakerText = speakerColor .. speakerLabel .. "|r"
 
 	if iconTag ~= "" then
-		return iconTag .. " " .. speakerText .. "|cffffd200: " .. body .. "|r"
+		return iconTag .. speakerText .. "|cffffd200: " .. body .. "|r"
 	end
 
 	return speakerText .. "|cffffd200: " .. body .. "|r"
@@ -604,7 +907,11 @@ function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile)
 	if not resolvedClassFile or resolvedClassFile == "" then
 		resolvedClassFile = self:GetPlayerClassFile()
 	end
-	self:PrintRaw(self:BuildConsoleAnnouncementMessage(speakerName, message, resolvedClassFile))
+	self:PrintChatLogRaw(self:BuildConsoleAnnouncementMessage(speakerName, message, resolvedClassFile))
+end
+
+function QuestTogether:PrintChatLogDestinationMessage()
+	self:PrintConsoleAnnouncement("You will now see QuestTogether logs here.")
 end
 
 function QuestTogether:Debug(message, category)
@@ -724,6 +1031,9 @@ end
 
 function QuestTogether:NormalizeAnnouncementDisplayOptions()
 	local profile = self.db.profile
+	if not self:IsChatLogDestination(profile.chatLogDestination) then
+		profile.chatLogDestination = self.DEFAULTS.profile.chatLogDestination
+	end
 	if not self:IsShowProgressFor(profile.showProgressFor) then
 		profile.showProgressFor = self.DEFAULTS.profile.showProgressFor
 	end
@@ -747,6 +1057,10 @@ function QuestTogether:SetOption(key, value)
 	local oldValue = self.db.profile[key]
 	if key == "showProgressFor" and not self:IsShowProgressFor(value) then
 		self:Debugf("options", "Rejected option change key=%s invalidValue=%s", tostring(key), FormatDebugValue(value))
+		return false
+	end
+	if key == "chatLogDestination" and not self:IsChatLogDestination(value) then
+		self:Debugf("options", "Rejected option change key=%s invalid chat destination=%s", tostring(key), tostring(value))
 		return false
 	end
 	if key == "chatBubbleSize" then
@@ -778,8 +1092,20 @@ function QuestTogether:SetOption(key, value)
 	if key == "nameplateQuestIconStyle" then
 		self:NormalizeNameplateOptions()
 	end
-	if key == "showProgressFor" or key == "chatBubbleSize" or key == "chatBubbleDuration" then
+	if key == "chatLogDestination" or key == "showProgressFor" or key == "chatBubbleSize" or key == "chatBubbleDuration" then
 		self:NormalizeAnnouncementDisplayOptions()
+	end
+	if key == "chatLogDestination" and value == "separate" then
+		local chatFrame = self:EnsureQuestLogChatFrame()
+		if chatFrame then
+			self:ApplyMainChatFontSizeToChatFrame(chatFrame)
+			if self.isEnabled and self.hasLoggedIn then
+				self:PrintChatLogDestinationMessage()
+			end
+		end
+	end
+	if key == "chatLogDestination" and value == "main" then
+		self:CloseQuestLogChatFrame()
 	end
 	if key == "debugMode" then
 		if self.RefreshPartyRoster then
@@ -1236,6 +1562,7 @@ function QuestTogether:OnInitialize()
 	if self.TryInstallPersonalBubbleEditModeHooks then
 		self:TryInstallPersonalBubbleEditModeHooks()
 	end
+	self:TryInstallChatWindowHooks()
 	self:InitializeSlashCommands()
 	if self.InitializeOptionsWindow then
 		self:InitializeOptionsWindow()

@@ -291,7 +291,7 @@ function QuestTogether:SendBubbleAnnouncementTest(text, senderName)
 
 	local eventData = nil
 	if self.API.UnitExists and self.API.UnitExists("target") then
-		if not UnitIsPlayer or not UnitIsPlayer("target") then
+		if not self.API.UnitIsPlayer or not self.API.UnitIsPlayer("target") then
 			return false, "Your target must be a player."
 		end
 		self:Debug("bubbletest using current target", "comms")
