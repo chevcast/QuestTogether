@@ -338,6 +338,86 @@ QuestTogether:RegisterTest("bonus objective console announcement uses bonus obje
 	AssertTrue(string.find(message, "|cffffd200: entered the area|r", 1, true) ~= nil)
 end)
 
+QuestTogether:RegisterTest("world quest announcement icon info uses Blizzard world quest atlas", function()
+	WithPatchedMethod(QuestTogether, "GetQuestTagInfo", function(_, questId)
+		AssertEquals(questId, 12345)
+		return { worldQuestType = 7 }
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetWorldQuestAtlasInfo", function(_, questId, tagInfo, inProgress)
+			AssertEquals(questId, 12345)
+			AssertEquals(tagInfo.worldQuestType, 7)
+			AssertEquals(inProgress, false)
+			return "worldquest-icon-petbattle"
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetQuestDetailsThemePoiIcon", function()
+				return nil
+			end, function()
+				local asset, kind = QuestTogether:GetAnnouncementIconInfo("WORLD_QUEST_PROGRESS", 12345)
+				AssertEquals(asset, "worldquest-icon-petbattle")
+				AssertEquals(kind, "atlas")
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("bonus objective announcement icon info prefers quest tag atlas", function()
+	WithPatchedMethod(QuestTogether, "GetQuestTagInfo", function(_, questId)
+		AssertEquals(questId, 54321)
+		return { tagID = 9, worldQuestType = nil }
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetQuestTagAtlas", function(_, tagID, worldQuestType)
+			AssertEquals(tagID, 9)
+			AssertEquals(worldQuestType, nil)
+			return "poi-door-arrow-up"
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetQuestDetailsThemePoiIcon", function()
+				return nil
+			end, function()
+				WithPatchedMethod(QuestTogether, "GetQuestStateAnnouncementIconInfo", function()
+					return "CampaignInProgressQuestIcon", "atlas"
+				end, function()
+					local asset, kind = QuestTogether:GetAnnouncementIconInfo("BONUS_OBJECTIVE_PROGRESS", 54321)
+					AssertEquals(asset, "poi-door-arrow-up")
+					AssertEquals(kind, "atlas")
+				end)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("console announcement uses sender provided quest icon asset", function()
+	local message = QuestTogether:BuildConsoleAnnouncementMessage(
+		"MyPlayer-Realm",
+		"1/3 Objectives",
+		"MAGE",
+		"QUEST_PROGRESS",
+		"CampaignInProgressQuestIcon",
+		"atlas"
+	)
+	AssertTrue(string.find(message, "|A:CampaignInProgressQuestIcon:14:14|a") ~= nil)
+	AssertTrue(string.find(message, "MyPlayer", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("local announcement event includes resolved icon metadata", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		UnitGUID = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Player-1-ABC"
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetAnnouncementIconInfo", function(_, eventType, questId)
+		AssertEquals(eventType, "QUEST_PROGRESS")
+		AssertEquals(questId, 12345)
+		return "CampaignInProgressQuestIcon", "atlas"
+	end, function()
+		local eventData = QuestTogether:BuildLocalAnnouncementEvent("QUEST_PROGRESS", "1/3 Objectives", 12345)
+		AssertEquals(eventData.questId, "12345")
+		AssertEquals(eventData.iconAsset, "CampaignInProgressQuestIcon")
+		AssertEquals(eventData.iconKind, "atlas")
+	end)
+end)
+
 QuestTogether:RegisterTest("console announcements use separate QuestTogether chat frame when configured", function()
 	local printedToFrame = {}
 	local fallbackPrinted = {}

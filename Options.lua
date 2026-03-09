@@ -30,6 +30,12 @@ local function ApplyAnnouncementGroupIcon(texture, iconType)
 		return
 	end
 
+	if iconType == "quest" then
+		texture:SetTexture("Interface\\GossipFrame\\AvailableQuestIcon")
+		texture:SetTexCoord(0, 1, 0, 1)
+		return
+	end
+
 	if QuestTogether.NAMEPLATE_QUEST_ICON_ATLAS and texture.SetAtlas then
 		texture:SetAtlas(QuestTogether.NAMEPLATE_QUEST_ICON_ATLAS, true)
 		texture:SetTexCoord(0, 1, 0, 1)

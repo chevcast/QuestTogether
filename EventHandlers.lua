@@ -78,11 +78,15 @@ end
 function QuestTogether:HandleQuestCompleted(questTitle, questId)
 	self:Debugf("quest", "Quest completed questId=%s title=%s", tostring(questId), tostring(questTitle))
 	if questId and self:IsWorldQuest(questId) then
-		self:PublishAnnouncementEvent("WORLD_QUEST_COMPLETED", "World Quest Completed: " .. tostring(questTitle))
+		self:PublishAnnouncementEvent("WORLD_QUEST_COMPLETED", "World Quest Completed: " .. tostring(questTitle), questId)
 	elseif questId and self:IsBonusObjective(questId) then
-		self:PublishAnnouncementEvent("BONUS_OBJECTIVE_COMPLETED", "Bonus Objective Completed: " .. tostring(questTitle))
+		self:PublishAnnouncementEvent(
+			"BONUS_OBJECTIVE_COMPLETED",
+			"Bonus Objective Completed: " .. tostring(questTitle),
+			questId
+		)
 	else
-		self:PublishAnnouncementEvent("QUEST_COMPLETED", "Quest Completed: " .. tostring(questTitle))
+		self:PublishAnnouncementEvent("QUEST_COMPLETED", "Quest Completed: " .. tostring(questTitle), questId)
 	end
 
 	self:PlayLocalCompletionEmote(self:PickRandomCompletionEmote())
@@ -205,7 +209,7 @@ function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
 				tostring(questId),
 				tostring(questTitle)
 			)
-			self:PublishAnnouncementEvent(config.enterEvent, config.enterPrefix .. tostring(questTitle))
+			self:PublishAnnouncementEvent(config.enterEvent, config.enterPrefix .. tostring(questTitle), questId)
 		end
 	end
 
@@ -221,7 +225,7 @@ function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
 					tostring(questId),
 					tostring(questTitle)
 				)
-				self:PublishAnnouncementEvent(config.leftEvent, config.leftPrefix .. tostring(questTitle))
+				self:PublishAnnouncementEvent(config.leftEvent, config.leftPrefix .. tostring(questTitle), questId)
 			end
 		end
 	end
@@ -276,7 +280,7 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 
 		if not taskAnnouncementType then
 			self:Debugf("quest", "Publishing accepted announcement questId=%s title=%s", tostring(questId), tostring(questInfo.title))
-			self:PublishAnnouncementEvent("QUEST_ACCEPTED", "Quest Accepted: " .. tostring(questInfo.title))
+			self:PublishAnnouncementEvent("QUEST_ACCEPTED", "Quest Accepted: " .. tostring(questInfo.title), questId)
 		end
 
 		self:WatchQuest(questId, questInfo)
@@ -317,7 +321,7 @@ function QuestTogether:QUEST_REMOVED(_, questId)
 			if questWasCompleted then
 				self:HandleQuestCompleted(questTitle, questId)
 			elseif not taskAnnouncementType then
-				self:HandleQuestRemoved(questTitle)
+				self:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: " .. tostring(questTitle), questId)
 			end
 
 			self.worldQuestAreaStateByQuestID[questId] = nil
@@ -397,7 +401,7 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 								eventType = "BONUS_OBJECTIVE_PROGRESS"
 							end
 							self:Debugf("quest", "Publishing progress event questId=%s eventType=%s", tostring(questId), tostring(eventType))
-							self:PublishAnnouncementEvent(eventType, objectiveText)
+							self:PublishAnnouncementEvent(eventType, objectiveText, questId)
 						end
 						questData.objectives[objectiveIndex] = objectiveText
 						questData.objectiveValues[objectiveIndex] = resolvedProgressValue

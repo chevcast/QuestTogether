@@ -863,6 +863,20 @@ function QuestTogether:GetQuestIconChatTag(size)
 	return string.format("|T%s:%d:%d:0:0|t", texturePath, iconSize, iconSize)
 end
 
+function QuestTogether:GetIconChatTagFromAsset(iconAsset, iconKind, size)
+	local asset = tostring(iconAsset or "")
+	if asset == "" then
+		return ""
+	end
+
+	local iconSize = math.max(1, math.floor(tonumber(size) or 14))
+	if iconKind == "atlas" then
+		return "|A:" .. asset .. ":" .. tostring(iconSize) .. ":" .. tostring(iconSize) .. "|a"
+	end
+
+	return string.format("|T%s:%d:%d:0:0|t", asset, iconSize, iconSize)
+end
+
 function QuestTogether:GetClassColorCode(classFile)
 	local colorTable = nil
 	if CUSTOM_CLASS_COLORS and classFile and CUSTOM_CLASS_COLORS[classFile] then
@@ -896,21 +910,175 @@ function QuestTogether:GetShortDisplayName(name)
 	return tostring(name)
 end
 
-function QuestTogether:GetAnnouncementIconChatTag(eventType, size)
+function QuestTogether:GetQuestTagInfo(questId)
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId or not C_QuestLog or not C_QuestLog.GetQuestTagInfo then
+		return nil
+	end
+
+	local ok, tagInfo = pcall(C_QuestLog.GetQuestTagInfo, numericQuestId)
+	if not ok or type(tagInfo) ~= "table" then
+		return nil
+	end
+
+	return tagInfo
+end
+
+function QuestTogether:GetQuestDetailsThemePoiIcon(questId)
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId or not C_QuestLog or not C_QuestLog.GetQuestDetailsTheme then
+		return nil
+	end
+
+	local ok, theme = pcall(C_QuestLog.GetQuestDetailsTheme, numericQuestId)
+	if not ok or type(theme) ~= "table" then
+		return nil
+	end
+
+	local poiIcon = theme.poiIcon
+	if type(poiIcon) ~= "string" or poiIcon == "" then
+		return nil
+	end
+
+	return poiIcon
+end
+
+function QuestTogether:GetQuestTagAtlas(tagID, worldQuestType)
+	if type(QuestUtils_GetQuestTagAtlas) ~= "function" then
+		return nil
+	end
+
+	local ok, atlas = pcall(QuestUtils_GetQuestTagAtlas, tagID, worldQuestType)
+	if not ok or type(atlas) ~= "string" or atlas == "" then
+		return nil
+	end
+
+	return atlas
+end
+
+function QuestTogether:GetWorldQuestAtlasInfo(questId, tagInfo, inProgress)
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId or type(tagInfo) ~= "table" or not QuestUtil or not QuestUtil.GetWorldQuestAtlasInfo then
+		return nil
+	end
+
+	local ok, atlas = pcall(QuestUtil.GetWorldQuestAtlasInfo, numericQuestId, tagInfo, inProgress and true or false)
+	if not ok or type(atlas) ~= "string" or atlas == "" then
+		return nil
+	end
+
+	return atlas
+end
+
+function QuestTogether:GetQuestStateAnnouncementIconInfo(eventType, questId)
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId or not QuestUtil then
+		return nil, nil
+	end
+
+	local asset = nil
+	local isAtlas = nil
+	if eventType == "QUEST_ACCEPTED" and QuestUtil.GetQuestIconOfferForQuestID then
+		asset, isAtlas = QuestUtil.GetQuestIconOfferForQuestID(numericQuestId)
+	elseif
+		(eventType == "QUEST_PROGRESS" or eventType == "QUEST_REMOVED" or eventType == "QUEST_COMPLETED")
+		and QuestUtil.GetQuestIconActiveForQuestID
+	then
+		asset, isAtlas = QuestUtil.GetQuestIconActiveForQuestID(numericQuestId, eventType == "QUEST_COMPLETED")
+	end
+
+	if type(asset) ~= "string" or asset == "" then
+		return nil, nil
+	end
+
+	return asset, isAtlas and "atlas" or "texture"
+end
+
+function QuestTogether:GetWorldQuestAnnouncementIconInfo(questId)
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId then
+		return "worldquest-icon", "atlas"
+	end
+
+	local tagInfo = self:GetQuestTagInfo(numericQuestId)
+	if tagInfo then
+		local atlas = self:GetWorldQuestAtlasInfo(numericQuestId, tagInfo, false)
+		if atlas then
+			return atlas, "atlas"
+		end
+	end
+
+	local poiIcon = self:GetQuestDetailsThemePoiIcon(numericQuestId)
+	if poiIcon then
+		return poiIcon, "atlas"
+	end
+
+	return "worldquest-icon", "atlas"
+end
+
+function QuestTogether:GetBonusObjectiveAnnouncementIconInfo(eventType, questId)
+	local numericQuestId = tonumber(questId)
+	if numericQuestId then
+		local tagInfo = self:GetQuestTagInfo(numericQuestId)
+		if tagInfo then
+			local atlas = self:GetQuestTagAtlas(tagInfo.tagID, tagInfo.worldQuestType)
+			if atlas then
+				return atlas, "atlas"
+			end
+		end
+
+		local poiIcon = self:GetQuestDetailsThemePoiIcon(numericQuestId)
+		if poiIcon then
+			return poiIcon, "atlas"
+		end
+	end
+
+	local questStateEventType = eventType
+	if eventType == "BONUS_OBJECTIVE_ENTERED" then
+		questStateEventType = "QUEST_ACCEPTED"
+	elseif
+		eventType == "BONUS_OBJECTIVE_PROGRESS"
+		or eventType == "BONUS_OBJECTIVE_LEFT"
+	then
+		questStateEventType = "QUEST_PROGRESS"
+	elseif eventType == "BONUS_OBJECTIVE_COMPLETED" then
+		questStateEventType = "QUEST_COMPLETED"
+	end
+
+	local asset, kind = self:GetQuestStateAnnouncementIconInfo(questStateEventType, numericQuestId)
+	if asset and kind then
+		return asset, kind
+	end
+
+	return "Bonus-Objective-Star", "atlas"
+end
+
+function QuestTogether:GetAnnouncementIconInfo(eventType, questId)
 	if self:IsWorldQuestAnnouncementType(eventType) then
-		local pixelSize = tonumber(size) or 14
-		return "|A:worldquest-icon:" .. tostring(pixelSize) .. ":" .. tostring(pixelSize) .. "|a"
+		return self:GetWorldQuestAnnouncementIconInfo(questId)
 	end
 	if self:IsBonusObjectiveAnnouncementType(eventType) then
-		local pixelSize = tonumber(size) or 14
-		return "|A:Bonus-Objective-Star:" .. tostring(pixelSize) .. ":" .. tostring(pixelSize) .. "|a"
+		return self:GetBonusObjectiveAnnouncementIconInfo(eventType, questId)
+	end
+
+	return self:GetQuestStateAnnouncementIconInfo(eventType, questId)
+end
+
+function QuestTogether:GetAnnouncementIconChatTag(eventType, size, iconAsset, iconKind)
+	local asset = iconAsset
+	local kind = iconKind
+	if type(asset) ~= "string" or asset == "" then
+		asset, kind = self:GetAnnouncementIconInfo(eventType, nil)
+	end
+	if type(asset) == "string" and asset ~= "" then
+		return self:GetIconChatTagFromAsset(asset, kind, size)
 	end
 
 	return self:GetQuestIconChatTag(size)
 end
 
-function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType)
-	local iconTag = self:GetAnnouncementIconChatTag(eventType, 14)
+function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType, iconAsset, iconKind)
+	local iconTag = self:GetAnnouncementIconChatTag(eventType, 14, iconAsset, iconKind)
 	local trimmedTargetName = self:GetShortDisplayName(targetName)
 	local trimmedMessage = tostring(message or "")
 	local body = trimmedMessage
@@ -925,7 +1093,7 @@ function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, clas
 	return speakerText .. "|cffffd200: " .. body .. "|r"
 end
 
-function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, eventType)
+function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, eventType, iconAsset, iconKind)
 	local speakerName = targetName
 	if speakerName == nil or speakerName == "" then
 		speakerName = self:GetPlayerName()
@@ -934,7 +1102,9 @@ function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, 
 	if not resolvedClassFile or resolvedClassFile == "" then
 		resolvedClassFile = self:GetPlayerClassFile()
 	end
-	self:PrintChatLogRaw(self:BuildConsoleAnnouncementMessage(speakerName, message, resolvedClassFile, eventType))
+	self:PrintChatLogRaw(
+		self:BuildConsoleAnnouncementMessage(speakerName, message, resolvedClassFile, eventType, iconAsset, iconKind)
+	)
 end
 
 function QuestTogether:PrintChatLogDestinationMessage()

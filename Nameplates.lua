@@ -1416,8 +1416,8 @@ local function EnsureQuestIcon(unitFrame)
 		return existingIcon
 	end
 
-	local iconFrame = CreateFrame("Frame", nil, UIParent)
-	iconFrame:SetFrameStrata("HIGH")
+	local iconFrame = CreateFrame("Frame", nil, unitFrame)
+	iconFrame:SetFrameStrata(unitFrame:GetFrameStrata() or "LOW")
 	iconFrame:SetFrameLevel(((unitFrame.GetFrameLevel and unitFrame:GetFrameLevel()) or 0) + 10)
 
 	local icon = iconFrame:CreateTexture(nil, "ARTWORK")
@@ -1461,8 +1461,20 @@ ApplyQuestIconVisual = function(texture)
 	end
 end
 
-local function ApplyAnnouncementIconVisual(texture, eventType)
+local function ApplyAnnouncementIconVisual(texture, eventType, iconAsset, iconKind)
 	if not texture then
+		return
+	end
+
+	if type(iconAsset) == "string" and iconAsset ~= "" then
+		if iconKind == "atlas" and texture.SetAtlas then
+			texture:SetAtlas(iconAsset, true)
+			texture:SetTexCoord(0, 1, 0, 1)
+			return
+		end
+
+		texture:SetTexture(iconAsset)
+		texture:SetTexCoord(0, 1, 0, 1)
 		return
 	end
 
@@ -1628,7 +1640,13 @@ function QuestTogether:RefreshActivePrototypeBubbles()
 			local hostFrame = bubble.qtHostFrame
 			if hostFrame and self:GetOption("showChatBubbles") then
 				if hostFrame == self.prototypeBubbleScreenHostFrame or (hostFrame.IsShown and hostFrame:IsShown()) then
-					self:ShowPrototypeBubbleOnNameplate(hostFrame, bubble.qtCurrentText, bubble.qtCurrentEventType)
+					self:ShowPrototypeBubbleOnNameplate(
+						hostFrame,
+						bubble.qtCurrentText,
+						bubble.qtCurrentEventType,
+						bubble.qtCurrentIconAsset,
+						bubble.qtCurrentIconKind
+					)
 				else
 					self:HidePrototypeBubble(hostFrame)
 				end
@@ -1656,10 +1674,10 @@ function QuestTogether:GetPrototypeBubbleHostFrameForUnit(unitToken)
 	return nil
 end
 
-function QuestTogether:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text, eventType)
+function QuestTogether:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text, eventType, iconAsset, iconKind)
 	local hostFrame = self:GetPrototypeBubbleHostFrameForUnit(unitToken)
 	if hostFrame then
-		if not self:ShowPrototypeBubbleOnNameplate(hostFrame, text, eventType) then
+		if not self:ShowPrototypeBubbleOnNameplate(hostFrame, text, eventType, iconAsset, iconKind) then
 			self:Debugf("bubble", "Failed to show bubble on host for unit=%s", tostring(unitToken))
 			return false, "Unable to show a bubble on that nameplate."
 		end
@@ -1674,7 +1692,7 @@ function QuestTogether:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text, ev
 	return false, "Your personal bubble anchor is unavailable."
 end
 
-function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, eventType)
+function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, eventType, iconAsset, iconKind)
 	local unitFrame = GetPrototypeBubbleUnitFrame(namePlateFrameBase)
 	if not namePlateFrameBase or not unitFrame then
 		return false
@@ -1695,6 +1713,8 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, 
 	end
 	bubble.qtCurrentText = message
 	bubble.qtCurrentEventType = eventType
+	bubble.qtCurrentIconAsset = iconAsset
+	bubble.qtCurrentIconKind = iconKind
 	bubble.qtHostFrame = namePlateFrameBase
 
 	local anchorFrame = unitFrame.HealthBarsContainer or unitFrame
@@ -1752,7 +1772,7 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, 
 	bubble:SetSize(bubbleWidth, bubbleHeight)
 
 	if bubble.Icon then
-		ApplyAnnouncementIconVisual(bubble.Icon, eventType)
+		ApplyAnnouncementIconVisual(bubble.Icon, eventType, iconAsset, iconKind)
 		bubble.Icon:ClearAllPoints()
 		bubble.Icon:SetSize(visualConfig.iconSize, visualConfig.iconSize)
 		bubble.Icon:SetPoint("CENTER", bubble, "CENTER", -((visualConfig.iconGap + targetTextWidth) / 2), 0)
@@ -1778,7 +1798,7 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, 
 	return true
 end
 
-function QuestTogether:ShowPrototypeBubbleOnUnitNameplate(unitToken, text, eventType)
+function QuestTogether:ShowPrototypeBubbleOnUnitNameplate(unitToken, text, eventType, iconAsset, iconKind)
 	if type(unitToken) ~= "string" or unitToken == "" then
 		return false, "No unit token was provided."
 	end
@@ -1789,7 +1809,7 @@ function QuestTogether:ShowPrototypeBubbleOnUnitNameplate(unitToken, text, event
 		end
 	end
 
-	return self:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text, eventType)
+	return self:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text, eventType, iconAsset, iconKind)
 end
 
 function QuestTogether:ShowPrototypeBubbleOnRandomVisiblePlayer(text)

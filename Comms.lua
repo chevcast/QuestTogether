@@ -8,7 +8,7 @@ display preferences when deciding whether to render bubbles or print chat logs.
 
 local QuestTogether = _G.QuestTogether
 
-local ANNOUNCEMENT_WIRE_VERSION = 1
+local ANNOUNCEMENT_WIRE_VERSION = 2
 local ANNOUNCEMENT_COMMAND = "ANN"
 local ANNOUNCEMENT_MAX_TEXT_LENGTH = 220
 
@@ -81,6 +81,9 @@ function QuestTogether:EncodeAnnouncementPayload(eventData)
 		self:EscapePayload(eventData.classFile or ""),
 		self:EscapePayload(eventData.senderName or ""),
 		self:EscapePayload(eventData.text or ""),
+		self:EscapePayload(eventData.questId or ""),
+		self:EscapePayload(eventData.iconAsset or ""),
+		self:EscapePayload(eventData.iconKind or ""),
 	}
 
 	return table.concat(fields, ",")
@@ -93,7 +96,7 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 
 	local fields = SplitByDelimiter(payload, ",")
 	local version = tonumber(fields[1] or "")
-	if version ~= ANNOUNCEMENT_WIRE_VERSION then
+	if version ~= 1 and version ~= ANNOUNCEMENT_WIRE_VERSION then
 		return nil
 	end
 
@@ -102,6 +105,9 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 	local classFile = self:UnescapePayload(fields[4] or "")
 	local senderName = self:UnescapePayload(fields[5] or "")
 	local text = self:UnescapePayload(fields[6] or "")
+	local questId = self:UnescapePayload(fields[7] or "")
+	local iconAsset = self:UnescapePayload(fields[8] or "")
+	local iconKind = self:UnescapePayload(fields[9] or "")
 
 	if eventType == "" or senderName == "" or text == "" then
 		return nil
@@ -114,6 +120,9 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 		classFile = classFile,
 		senderName = senderName,
 		text = text,
+		questId = questId,
+		iconAsset = iconAsset,
+		iconKind = iconKind,
 	}
 end
 
@@ -184,10 +193,11 @@ function QuestTogether:LeaveAnnouncementChannel()
 	self.announcementChannelLocalID = nil
 end
 
-function QuestTogether:BuildLocalAnnouncementEvent(eventType, text)
+function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId)
 	local senderName = self:GetPlayerFullName() or self:GetPlayerName()
 	local senderGUID = self.API.UnitGUID and self.API.UnitGUID("player") or ""
 	local sanitizedText = self:SanitizeAnnouncementText(text)
+	local iconAsset, iconKind = self:GetAnnouncementIconInfo(eventType, questId)
 	if sanitizedText == "" then
 		return nil
 	end
@@ -199,6 +209,9 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text)
 		classFile = tostring(self:GetPlayerClassFile() or ""),
 		senderName = tostring(senderName or ""),
 		text = sanitizedText,
+		questId = questId and tostring(questId) or "",
+		iconAsset = tostring(iconAsset or ""),
+		iconKind = tostring(iconKind or ""),
 	}
 end
 
@@ -228,6 +241,9 @@ function QuestTogether:BuildAnnouncementEventForUnit(unitToken, eventType, text)
 		classFile = tostring(classFile or ""),
 		senderName = senderName,
 		text = sanitizedText,
+		questId = "",
+		iconAsset = "",
+		iconKind = "",
 	}
 end
 
@@ -244,13 +260,13 @@ function QuestTogether:IsAnnouncementChannelEvent(channel, localID, name)
 	return name == self.announcementChannelName
 end
 
-function QuestTogether:SendAnnouncementEvent(eventType, text)
+function QuestTogether:SendAnnouncementEvent(eventType, text, questId)
 	if not self.isEnabled then
 		self:Debugf("comms", "Skipping announcement send while disabled eventType=%s", tostring(eventType))
 		return false
 	end
 
-	local eventData = self:BuildLocalAnnouncementEvent(eventType, text)
+	local eventData = self:BuildLocalAnnouncementEvent(eventType, text, questId)
 	if not eventData then
 		self:Debugf("comms", "Failed to build local announcement event eventType=%s", tostring(eventType))
 		return false
@@ -393,7 +409,14 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 		local shouldPrint = isLocal or isGrouped or hasNearbySignal
 		if shouldPrint then
 			self:Debugf("comms", "Printing chat log sender=%s class=%s", tostring(senderName), tostring(classFile))
-			self:PrintConsoleAnnouncement(eventData.text, senderName, classFile, eventData.eventType)
+			self:PrintConsoleAnnouncement(
+				eventData.text,
+				senderName,
+				classFile,
+				eventData.eventType,
+				eventData.iconAsset,
+				eventData.iconKind
+			)
 		else
 			self:Debugf("comms", "Skipped chat log sender=%s reason=no nearby/group signal", tostring(senderName))
 		end
@@ -405,13 +428,25 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 		if isLocal then
 			if not self:GetOption("hideMyOwnChatBubbles") and self.ShowPrototypeBubbleOnUnitNameplate then
 				self:Debug("Showing local personal bubble", "bubble")
-				self:ShowPrototypeBubbleOnUnitNameplate("player", eventData.text, eventData.eventType)
+				self:ShowPrototypeBubbleOnUnitNameplate(
+					"player",
+					eventData.text,
+					eventData.eventType,
+					eventData.iconAsset,
+					eventData.iconKind
+				)
 			else
 				self:Debug("Skipped local personal bubble due to hideMyOwnChatBubbles or unavailable renderer", "bubble")
 			end
 		elseif hasNearbyNameplate and self.ShowPrototypeBubbleOnNameplate then
 			self:Debugf("bubble", "Showing remote nearby bubble sender=%s", tostring(senderName))
-			self:ShowPrototypeBubbleOnNameplate(nearbyNameplate, eventData.text, eventData.eventType)
+			self:ShowPrototypeBubbleOnNameplate(
+				nearbyNameplate,
+				eventData.text,
+				eventData.eventType,
+				eventData.iconAsset,
+				eventData.iconKind
+			)
 		else
 			self:Debugf("bubble", "Skipped remote bubble sender=%s reason=no nearby nameplate", tostring(senderName))
 		end
@@ -422,15 +457,15 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 	return true
 end
 
-function QuestTogether:PublishAnnouncementEvent(eventType, text)
-	local eventData = self:BuildLocalAnnouncementEvent(eventType, text)
+function QuestTogether:PublishAnnouncementEvent(eventType, text, questId)
+	local eventData = self:BuildLocalAnnouncementEvent(eventType, text, questId)
 	if not eventData then
 		self:Debugf("comms", "PublishAnnouncementEvent dropped eventType=%s due to empty payload", tostring(eventType))
 		return false
 	end
 
 	self:DebugState("comms", "publishAnnouncement", eventData)
-	self:SendAnnouncementEvent(eventType, text)
+	self:SendAnnouncementEvent(eventType, text, questId)
 	self:HandleAnnouncementEvent(eventData, true)
 	return true
 end
