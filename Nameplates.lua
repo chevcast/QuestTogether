@@ -13,6 +13,39 @@ Design constraints:
 
 local QuestTogether = _G.QuestTogether
 local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
+local PROTOTYPE_BUBBLE_Y_OFFSET = 22
+local PROTOTYPE_BUBBLE_FADE_IN_SECONDS = 0.2
+local PROTOTYPE_BUBBLE_FADE_OUT_SECONDS = 0.4
+local PERSONAL_BUBBLE_ANCHOR_EDIT_WIDTH = 220
+local PERSONAL_BUBBLE_ANCHOR_EDIT_HEIGHT = 40
+local ApplyQuestIconVisual
+
+local CHAT_BUBBLE_SIZE_CONFIGS = {
+	small = {
+		fontSize = 14,
+		iconSize = 18,
+		iconGap = 8,
+		minTextWidth = 48,
+		maxTextWidth = 220,
+		inset = 16,
+	},
+	medium = {
+		fontSize = 17,
+		iconSize = 22,
+		iconGap = 10,
+		minTextWidth = 60,
+		maxTextWidth = 260,
+		inset = 18,
+	},
+	large = {
+		fontSize = 20,
+		iconSize = 26,
+		iconGap = 12,
+		minTextWidth = 72,
+		maxTextWidth = 300,
+		inset = 20,
+	},
+}
 
 -- Original icon used by this addon's first nameplate implementation.
 QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE = "Interface\\OPTIONSFRAME\\UI-OptionsFrame-NewFeatureIcon"
@@ -57,6 +90,213 @@ QuestTogether.nameplateIconByUnitFrame = QuestTogether.nameplateIconByUnitFrame
 	or setmetatable({}, { __mode = "k" })
 QuestTogether.nameplateBaseHealthColorByUnitFrame = QuestTogether.nameplateBaseHealthColorByUnitFrame
 	or setmetatable({}, { __mode = "k" })
+QuestTogether.nameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
+	or setmetatable({}, { __mode = "k" })
+
+local function GetPrototypeBubbleLifetimeSeconds()
+	local configuredDuration = tonumber(QuestTogether:GetOption("chatBubbleDuration"))
+	if not configuredDuration or configuredDuration <= 0 then
+		configuredDuration = QuestTogether.DEFAULTS.profile.chatBubbleDuration
+	end
+	return configuredDuration
+end
+
+local function GetPrototypeBubbleUnitFrame(hostFrame)
+	if not hostFrame then
+		return nil
+	end
+	return hostFrame.UnitFrame or hostFrame
+end
+
+local function GetPrototypeBubbleVisualConfig()
+	local configuredSize = QuestTogether:GetOption("chatBubbleSize")
+	return CHAT_BUBBLE_SIZE_CONFIGS[configuredSize] or CHAT_BUBBLE_SIZE_CONFIGS.medium
+end
+
+local function GetPrototypeBubbleScreenHostFrame()
+	if QuestTogether.prototypeBubbleScreenHostFrame then
+		return QuestTogether.prototypeBubbleScreenHostFrame
+	end
+
+	local parentFrame = UIParent or (C_UI and C_UI.GetUIParent and C_UI.GetUIParent()) or nil
+	if not parentFrame then
+		return nil
+	end
+
+	local hostFrame = CreateFrame("Frame", "QuestTogetherPersonalBubbleAnchor", parentFrame)
+	hostFrame:SetSize(1, 1)
+	hostFrame:SetFrameStrata("HIGH")
+	hostFrame:SetFrameLevel(parentFrame:GetFrameLevel() + 50)
+	hostFrame:SetClampedToScreen(true)
+	hostFrame:SetMovable(true)
+	hostFrame:RegisterForDrag("LeftButton")
+	hostFrame:EnableMouse(false)
+
+	local background = hostFrame:CreateTexture(nil, "BACKGROUND")
+	background:SetAllPoints()
+	background:SetColorTexture(0.05, 0.05, 0.05, 0.7)
+	background:Hide()
+	hostFrame.EditBackground = background
+
+	local borderTop = hostFrame:CreateTexture(nil, "BORDER")
+	borderTop:SetColorTexture(1, 0.82, 0, 0.95)
+	borderTop:SetPoint("TOPLEFT", hostFrame, "TOPLEFT", 0, 0)
+	borderTop:SetPoint("TOPRIGHT", hostFrame, "TOPRIGHT", 0, 0)
+	borderTop:SetHeight(1)
+	borderTop:Hide()
+	hostFrame.EditBorderTop = borderTop
+
+	local borderBottom = hostFrame:CreateTexture(nil, "BORDER")
+	borderBottom:SetColorTexture(1, 0.82, 0, 0.95)
+	borderBottom:SetPoint("BOTTOMLEFT", hostFrame, "BOTTOMLEFT", 0, 0)
+	borderBottom:SetPoint("BOTTOMRIGHT", hostFrame, "BOTTOMRIGHT", 0, 0)
+	borderBottom:SetHeight(1)
+	borderBottom:Hide()
+	hostFrame.EditBorderBottom = borderBottom
+
+	local borderLeft = hostFrame:CreateTexture(nil, "BORDER")
+	borderLeft:SetColorTexture(1, 0.82, 0, 0.95)
+	borderLeft:SetPoint("TOPLEFT", hostFrame, "TOPLEFT", 0, 0)
+	borderLeft:SetPoint("BOTTOMLEFT", hostFrame, "BOTTOMLEFT", 0, 0)
+	borderLeft:SetWidth(1)
+	borderLeft:Hide()
+	hostFrame.EditBorderLeft = borderLeft
+
+	local borderRight = hostFrame:CreateTexture(nil, "BORDER")
+	borderRight:SetColorTexture(1, 0.82, 0, 0.95)
+	borderRight:SetPoint("TOPRIGHT", hostFrame, "TOPRIGHT", 0, 0)
+	borderRight:SetPoint("BOTTOMRIGHT", hostFrame, "BOTTOMRIGHT", 0, 0)
+	borderRight:SetWidth(1)
+	borderRight:Hide()
+	hostFrame.EditBorderRight = borderRight
+
+	local icon = hostFrame:CreateTexture(nil, "ARTWORK")
+	icon:SetSize(16, 16)
+	icon:SetPoint("LEFT", hostFrame, "LEFT", 8, 0)
+	ApplyQuestIconVisual(icon)
+	icon:Hide()
+	hostFrame.EditIcon = icon
+
+	local label = hostFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	label:SetPoint("LEFT", icon, "RIGHT", 8, 0)
+	label:SetJustifyH("LEFT")
+	label:SetText("QuestTogether Bubble")
+	label:Hide()
+	hostFrame.EditLabel = label
+
+	hostFrame:SetScript("OnDragStart", function(frame)
+		if not QuestTogether:IsPersonalBubbleAnchorInEditMode() then
+			return
+		end
+		frame:StartMoving()
+	end)
+	hostFrame:SetScript("OnDragStop", function(frame)
+		frame:StopMovingOrSizing()
+		QuestTogether:SavePersonalBubbleAnchorFromFrame(frame)
+	end)
+
+	QuestTogether.prototypeBubbleScreenHostFrame = hostFrame
+	QuestTogether:ApplySavedPersonalBubbleAnchor()
+	QuestTogether:RefreshPersonalBubbleAnchorVisualState()
+	hostFrame:Show()
+
+	return hostFrame
+end
+
+function QuestTogether:IsPersonalBubbleAnchorInEditMode()
+	return self.isEnabled and EditModeManagerFrame and EditModeManagerFrame:IsShown() and self:GetOption("showChatBubbles")
+end
+
+function QuestTogether:ApplySavedPersonalBubbleAnchor()
+	local hostFrame = self.prototypeBubbleScreenHostFrame
+	if not hostFrame then
+		return
+	end
+
+	local parentFrame = hostFrame:GetParent() or UIParent
+	local anchor = self:GetPersonalBubbleAnchor()
+	hostFrame:ClearAllPoints()
+	hostFrame:SetPoint(anchor.point, parentFrame, anchor.relativePoint, anchor.x, anchor.y)
+end
+
+local function RoundOffset(value)
+	local numberValue = tonumber(value) or 0
+	if numberValue >= 0 then
+		return math.floor(numberValue + 0.5)
+	end
+	return math.ceil(numberValue - 0.5)
+end
+
+function QuestTogether:SavePersonalBubbleAnchorFromFrame(hostFrame)
+	if not hostFrame then
+		return false
+	end
+
+	local point, _, relativePoint, offsetX, offsetY = hostFrame:GetPoint(1)
+	if not point or not relativePoint then
+		return false
+	end
+
+	return self:SetPersonalBubbleAnchor(point, relativePoint, RoundOffset(offsetX), RoundOffset(offsetY))
+end
+
+function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
+	local hostFrame = self.prototypeBubbleScreenHostFrame
+	if not hostFrame then
+		return
+	end
+
+	local editModeActive = self:IsPersonalBubbleAnchorInEditMode()
+	if editModeActive then
+		hostFrame:SetSize(PERSONAL_BUBBLE_ANCHOR_EDIT_WIDTH, PERSONAL_BUBBLE_ANCHOR_EDIT_HEIGHT)
+	else
+		hostFrame:SetSize(1, 1)
+	end
+	hostFrame:EnableMouse(editModeActive)
+
+	local visibleFields = {
+		hostFrame.EditBackground,
+		hostFrame.EditBorderTop,
+		hostFrame.EditBorderBottom,
+		hostFrame.EditBorderLeft,
+		hostFrame.EditBorderRight,
+		hostFrame.EditIcon,
+		hostFrame.EditLabel,
+	}
+
+	for _, field in ipairs(visibleFields) do
+		if field then
+			if editModeActive then
+				field:Show()
+			else
+				field:Hide()
+			end
+		end
+	end
+
+	hostFrame:Show()
+end
+
+function QuestTogether:TryInstallPersonalBubbleEditModeHooks()
+	if self.personalBubbleEditModeHooksInstalled then
+		return
+	end
+
+	if not EditModeManagerFrame or not EditModeManagerFrame.HookScript then
+		return
+	end
+
+	GetPrototypeBubbleScreenHostFrame()
+
+	EditModeManagerFrame:HookScript("OnShow", function()
+		QuestTogether:RefreshPersonalBubbleAnchorVisualState()
+	end)
+	EditModeManagerFrame:HookScript("OnHide", function()
+		QuestTogether:RefreshPersonalBubbleAnchorVisualState()
+	end)
+
+	self.personalBubbleEditModeHooksInstalled = true
+end
 
 -- Returns true only for the dynamic nameplate unit tokens (nameplate1, nameplate2, ...).
 function QuestTogether:IsNameplateUnitToken(unitToken)
@@ -546,6 +786,324 @@ local function EnsureQuestIcon(unitFrame)
 	return icon
 end
 
+ApplyQuestIconVisual = function(texture)
+	if not texture then
+		return
+	end
+
+	if texture.SetAtlas and QuestTogether.NAMEPLATE_QUEST_ICON_ATLAS then
+		texture:SetAtlas(QuestTogether.NAMEPLATE_QUEST_ICON_ATLAS, true)
+		texture:SetTexCoord(0, 1, 0, 1)
+	else
+		texture:SetTexture(QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE)
+		local coords = QuestTogether.NAMEPLATE_QUEST_ICON_TEX_COORDS
+		if coords then
+			texture:SetTexCoord(coords.left, coords.right, coords.top, coords.bottom)
+		else
+			texture:SetTexCoord(0, 1, 0, 1)
+		end
+	end
+end
+
+local function CreatePrototypeBubbleFrame(parentFrame)
+	local ok, bubble = pcall(CreateFrame, "Frame", nil, parentFrame, "ChatBubbleTemplate")
+	if ok and bubble then
+		return bubble
+	end
+
+	local fallbackBubble = CreateFrame("Frame", nil, parentFrame)
+	local background = fallbackBubble:CreateTexture(nil, "BACKGROUND")
+	background:SetAllPoints()
+	background:SetColorTexture(1, 1, 1, 0.92)
+	fallbackBubble.Background = background
+
+	local text = fallbackBubble:CreateFontString(nil, "ARTWORK", "ChatBubbleFont")
+	fallbackBubble.String = text
+	if text.SetNonSpaceWrap then
+		text:SetNonSpaceWrap(true)
+	end
+
+	local tail = fallbackBubble:CreateTexture(nil, "ARTWORK")
+	fallbackBubble.Tail = tail
+	tail:SetColorTexture(1, 1, 1, 0.92)
+	tail:SetSize(10, 10)
+	tail:SetPoint("TOP", fallbackBubble, "BOTTOM", 0, 4)
+	tail:SetRotation(math.rad(45))
+
+	local icon = fallbackBubble:CreateTexture(nil, "ARTWORK")
+	fallbackBubble.Icon = icon
+	ApplyQuestIconVisual(icon)
+
+	return fallbackBubble
+end
+
+local function EnsurePrototypeBubble(hostFrame)
+	local unitFrame = GetPrototypeBubbleUnitFrame(hostFrame)
+	if not hostFrame or not unitFrame then
+		return nil
+	end
+
+	local existingBubble = QuestTogether.nameplateBubbleByUnitFrame[unitFrame]
+	if existingBubble then
+		return existingBubble
+	end
+
+	local bubble = CreatePrototypeBubbleFrame(hostFrame)
+	if not bubble or not bubble.String then
+		return nil
+	end
+
+	bubble:SetFrameStrata(hostFrame:GetFrameStrata())
+	bubble:SetFrameLevel(unitFrame:GetFrameLevel() + 20)
+	bubble:SetAlpha(0)
+	bubble:Hide()
+
+	bubble:ClearAllPoints()
+
+	bubble.String:ClearAllPoints()
+	bubble.String:SetJustifyH("LEFT")
+	bubble.String:SetJustifyV("MIDDLE")
+	bubble.String:SetTextColor(1, 0.82, 0, 1)
+	if bubble.String.SetNonSpaceWrap then
+		bubble.String:SetNonSpaceWrap(true)
+	end
+	if bubble.String.SetSpacing then
+		bubble.String:SetSpacing(1)
+	end
+
+	if not bubble.Icon then
+		local icon = bubble:CreateTexture(nil, "ARTWORK", nil, 1)
+		bubble.Icon = icon
+	end
+	ApplyQuestIconVisual(bubble.Icon)
+
+	if bubble.Tail then
+		bubble.Tail:ClearAllPoints()
+		bubble.Tail:SetPoint("TOP", bubble, "BOTTOM", 0, 6)
+	end
+
+	local animationGroup = bubble:CreateAnimationGroup()
+	local fadeIn = animationGroup:CreateAnimation("Alpha")
+	fadeIn:SetOrder(1)
+	fadeIn:SetDuration(PROTOTYPE_BUBBLE_FADE_IN_SECONDS)
+	fadeIn:SetFromAlpha(0)
+	fadeIn:SetToAlpha(1)
+
+	local hold = animationGroup:CreateAnimation("Alpha")
+	hold:SetOrder(2)
+	hold:SetDuration(math.max(0, GetPrototypeBubbleLifetimeSeconds() - PROTOTYPE_BUBBLE_FADE_IN_SECONDS - PROTOTYPE_BUBBLE_FADE_OUT_SECONDS))
+	hold:SetFromAlpha(1)
+	hold:SetToAlpha(1)
+
+	local fadeOut = animationGroup:CreateAnimation("Alpha")
+	fadeOut:SetOrder(3)
+	fadeOut:SetDuration(PROTOTYPE_BUBBLE_FADE_OUT_SECONDS)
+	fadeOut:SetFromAlpha(1)
+	fadeOut:SetToAlpha(0)
+
+	animationGroup:SetScript("OnFinished", function()
+		bubble:SetAlpha(0)
+		bubble:Hide()
+	end)
+	animationGroup:SetScript("OnStop", function()
+		bubble:SetAlpha(0)
+		bubble:Hide()
+	end)
+	bubble.animationGroup = animationGroup
+	bubble.fadeInAnimation = fadeIn
+	bubble.holdAnimation = hold
+	bubble.fadeOutAnimation = fadeOut
+
+	QuestTogether.nameplateBubbleByUnitFrame[unitFrame] = bubble
+	return bubble
+end
+
+function QuestTogether:HidePrototypeBubble(hostFrame)
+	local unitFrame = GetPrototypeBubbleUnitFrame(hostFrame)
+	if not hostFrame or not unitFrame then
+		return
+	end
+
+	local bubble = self.nameplateBubbleByUnitFrame[unitFrame]
+	if not bubble then
+		return
+	end
+
+	if bubble.animationGroup and bubble.animationGroup:IsPlaying() then
+		bubble.animationGroup:Stop()
+	else
+		bubble:SetAlpha(0)
+		bubble:Hide()
+	end
+end
+
+function QuestTogether:GetPrototypeBubbleHostFrameForUnit(unitToken)
+	if unitToken == "player" then
+		return GetPrototypeBubbleScreenHostFrame()
+	end
+
+	local namePlateFrameBase = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit(unitToken, false)
+	if namePlateFrameBase and namePlateFrameBase.UnitFrame and namePlateFrameBase:IsShown() then
+		return namePlateFrameBase
+	end
+	return nil
+end
+
+function QuestTogether:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text)
+	local hostFrame = self:GetPrototypeBubbleHostFrameForUnit(unitToken)
+	if hostFrame then
+		if not self:ShowPrototypeBubbleOnNameplate(hostFrame, text) then
+			return false, "Unable to show a bubble on that nameplate."
+		end
+		local unitName = self.API.UnitName and self.API.UnitName(unitToken) or nil
+		return true, unitName or unitToken
+	end
+
+	if unitToken ~= "player" then
+		return false, "No visible nameplate found for that unit."
+	end
+	return false, "Your personal bubble anchor is unavailable."
+end
+
+function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text)
+	local unitFrame = GetPrototypeBubbleUnitFrame(namePlateFrameBase)
+	if not namePlateFrameBase or not unitFrame then
+		return false
+	end
+
+	local message = tostring(text or "")
+	message = string.gsub(message, "^%s+", "")
+	message = string.gsub(message, "%s+$", "")
+	if message == "" then
+		return false
+	end
+
+	local bubble = EnsurePrototypeBubble(namePlateFrameBase)
+	if not bubble or not bubble.String then
+		return false
+	end
+
+	local anchorFrame = unitFrame.HealthBarsContainer or unitFrame
+	local visualConfig = GetPrototypeBubbleVisualConfig()
+	local inset = visualConfig.inset or 16
+
+	if bubble.animationGroup and bubble.animationGroup:IsPlaying() then
+		bubble.animationGroup:Stop()
+	end
+
+	if bubble.holdAnimation then
+		local holdSeconds = math.max(
+			0,
+			GetPrototypeBubbleLifetimeSeconds() - PROTOTYPE_BUBBLE_FADE_IN_SECONDS - PROTOTYPE_BUBBLE_FADE_OUT_SECONDS
+		)
+		bubble.holdAnimation:SetDuration(holdSeconds)
+	end
+
+	local fontPath, _, fontFlags = bubble.String:GetFont()
+	if fontPath and bubble.String.SetFont then
+		bubble.String:SetFont(fontPath, visualConfig.fontSize, fontFlags)
+	end
+
+	bubble.String:SetWidth(visualConfig.maxTextWidth)
+	bubble.String:SetText(message)
+
+	local unboundedWidth = visualConfig.minTextWidth
+	if bubble.String.GetUnboundedStringWidth then
+		unboundedWidth = bubble.String:GetUnboundedStringWidth() or visualConfig.minTextWidth
+	end
+	local targetTextWidth = math.min(
+		visualConfig.maxTextWidth,
+		math.max(visualConfig.minTextWidth, unboundedWidth)
+	)
+	bubble.String:SetWidth(targetTextWidth)
+
+	local textHeight = bubble.String:GetStringHeight() or 0
+	local contentHeight = math.max(visualConfig.iconSize, textHeight)
+	local contentWidth = visualConfig.iconSize + visualConfig.iconGap + targetTextWidth
+	local bubbleWidth = contentWidth + (inset * 2)
+	local bubbleHeight = contentHeight + (inset * 2)
+
+	bubble:ClearAllPoints()
+	bubble:SetPoint("BOTTOM", anchorFrame, "TOP", 0, PROTOTYPE_BUBBLE_Y_OFFSET)
+	bubble:SetSize(bubbleWidth, bubbleHeight)
+
+	if bubble.Icon then
+		bubble.Icon:ClearAllPoints()
+		bubble.Icon:SetSize(visualConfig.iconSize, visualConfig.iconSize)
+		bubble.Icon:SetPoint("CENTER", bubble, "CENTER", -((visualConfig.iconGap + targetTextWidth) / 2), 0)
+		bubble.Icon:Show()
+	end
+
+	bubble.String:ClearAllPoints()
+	bubble.String:SetWidth(targetTextWidth)
+	bubble.String:SetPoint("CENTER", bubble, "CENTER", ((visualConfig.iconSize + visualConfig.iconGap) / 2), 0)
+
+	if bubble.SetClampRectInsets then
+		bubble:SetClampRectInsets(0, 0, 0, 0)
+	end
+
+	bubble:SetAlpha(0)
+	bubble:Show()
+	if bubble.Tail then
+		bubble.Tail:Show()
+	end
+	if bubble.animationGroup then
+		bubble.animationGroup:Play()
+	end
+	return true
+end
+
+function QuestTogether:ShowPrototypeBubbleOnUnitNameplate(unitToken, text)
+	if type(unitToken) ~= "string" or unitToken == "" then
+		return false, "No unit token was provided."
+	end
+
+	if not C_NamePlate or not C_NamePlate.GetNamePlateForUnit then
+		if unitToken ~= "player" then
+			return false, "Nameplates are unavailable."
+		end
+	end
+
+	return self:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text)
+end
+
+function QuestTogether:ShowPrototypeBubbleOnRandomVisiblePlayer(text)
+	local candidateNameplates = {}
+
+	self:ForEachVisibleNamePlate(function(frame)
+		if not frame or not frame.UnitFrame then
+			return
+		end
+
+		local unitToken = (frame.GetUnit and frame:GetUnit()) or nil
+		if not unitToken or not self:IsNameplateUnitToken(unitToken) then
+			return
+		end
+		if not self:IsNameplateUnitPlayer(unitToken) then
+			return
+		end
+		if UnitIsUnit and UnitIsUnit(unitToken, "player") then
+			return
+		end
+
+		candidateNameplates[#candidateNameplates + 1] = frame
+	end)
+
+	if #candidateNameplates == 0 then
+		return false, "No visible player nameplates found."
+	end
+
+	local randomIndex = self.API.Random(1, #candidateNameplates)
+	local namePlateFrameBase = candidateNameplates[randomIndex]
+	if not self:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text) then
+		return false, "Unable to show a bubble on the selected nameplate."
+	end
+
+	local unitToken = (namePlateFrameBase.GetUnit and namePlateFrameBase:GetUnit()) or nil
+	local unitName = unitToken and self.API.UnitName(unitToken) or nil
+	return true, unitName or "Unknown"
+end
+
 function QuestTogether:RememberNameplateBaseHealthColor(unitFrame)
 	if not unitFrame or not unitFrame.healthBar then
 		return
@@ -679,6 +1237,7 @@ function QuestTogether:HideNameplateIcon(namePlateFrameBase)
 	if icon then
 		icon:Hide()
 	end
+	self:HidePrototypeBubble(namePlateFrameBase)
 	self:RestoreNameplateHealthColor(namePlateFrameBase.UnitFrame)
 end
 
@@ -690,6 +1249,94 @@ function QuestTogether:ForEachVisibleNamePlate(callback)
 	for _, frame in pairs(C_NamePlate.GetNamePlates(false)) do
 		callback(frame)
 	end
+end
+
+function QuestTogether:FindVisiblePlayerNameplateForSender(senderGUID, senderName)
+	local normalizedSenderName = self:NormalizeMemberName(senderName)
+	local matchedFrame = nil
+
+	self:ForEachVisibleNamePlate(function(frame)
+		if matchedFrame or not frame or not frame.UnitFrame then
+			return
+		end
+
+		local unitToken = (frame.GetUnit and frame:GetUnit()) or nil
+		if not unitToken or not self:IsNameplateUnitToken(unitToken) then
+			return
+		end
+		if not self:IsNameplateUnitPlayer(unitToken) then
+			return
+		end
+
+		local unitGUID = self:GetNameplateUnitGuid(unitToken)
+		if senderGUID and senderGUID ~= "" and unitGUID == senderGUID then
+			matchedFrame = frame
+			return
+		end
+
+		if normalizedSenderName then
+			local unitName, unitRealm = self.API.UnitFullName(unitToken)
+			local fullUnitName = nil
+			if unitName then
+				fullUnitName = tostring(unitName) .. "-" .. tostring((unitRealm or self.API.GetRealmName() or ""):gsub("%s+", ""))
+			else
+				fullUnitName = self:NormalizeMemberName(self.API.UnitName(unitToken))
+			end
+			if fullUnitName and self:NormalizeMemberName(fullUnitName) == normalizedSenderName then
+				matchedFrame = frame
+			end
+		end
+	end)
+
+	return matchedFrame
+end
+
+function QuestTogether:DoesUnitTokenMatchSender(unitToken, senderGUID, senderName)
+	if type(unitToken) ~= "string" or unitToken == "" then
+		return false
+	end
+	if not self.API.UnitExists or not self.API.UnitExists(unitToken) then
+		return false
+	end
+	if not self:IsNameplateUnitPlayer(unitToken) then
+		return false
+	end
+
+	local unitGUID = self.API.UnitGUID and self.API.UnitGUID(unitToken) or nil
+	if senderGUID and senderGUID ~= "" and unitGUID == senderGUID then
+		return true
+	end
+
+	local normalizedSenderName = self:NormalizeMemberName(senderName)
+	if not normalizedSenderName then
+		return false
+	end
+
+	local unitName, unitRealm = self.API.UnitFullName and self.API.UnitFullName(unitToken)
+	local fullUnitName = nil
+	if unitName then
+		fullUnitName = tostring(unitName) .. "-" .. tostring((unitRealm or self.API.GetRealmName() or ""):gsub("%s+", ""))
+	else
+		fullUnitName = self:NormalizeMemberName(self.API.UnitName and self.API.UnitName(unitToken) or nil)
+	end
+
+	return fullUnitName ~= nil and self:NormalizeMemberName(fullUnitName) == normalizedSenderName
+end
+
+function QuestTogether:FindNearbyPlayerUnitTokenForSender(senderGUID, senderName)
+	local candidateUnits = {
+		"target",
+		"mouseover",
+		"focus",
+	}
+
+	for _, unitToken in ipairs(candidateUnits) do
+		if self:DoesUnitTokenMatchSender(unitToken, senderGUID, senderName) then
+			return unitToken
+		end
+	end
+
+	return nil
 end
 
 function QuestTogether:RefreshNameplateAugmentation()

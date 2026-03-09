@@ -1,18 +1,5 @@
 --[[
 QuestTogether In-Game Test Runner
-
-These are "unit-style" tests that run inside the WoW client.
-Why in-game:
-- The addon depends heavily on WoW runtime APIs.
-- Running in pure Lua outside the game would require a large shim layer.
-
-How to run:
-- /qt test
-- Press "Run In-Game Tests" in the options window
-
-Notes:
-- Tests temporarily patch addon methods/wrappers, then restore state after each case.
-- Results are printed to chat.
 ]]
 
 local QuestTogether = _G.QuestTogether
@@ -44,27 +31,6 @@ local function AssertEquals(actual, expected, message)
 	end
 end
 
-local function DeepEquals(left, right)
-	if type(left) ~= type(right) then
-		return false
-	end
-	if type(left) ~= "table" then
-		return left == right
-	end
-
-	for key, value in pairs(left) do
-		if not DeepEquals(value, right[key]) then
-			return false
-		end
-	end
-	for key in pairs(right) do
-		if left[key] == nil then
-			return false
-		end
-	end
-	return true
-end
-
 local function CreateApiWithOverrides(overrides)
 	local merged = {}
 	for key, value in pairs(QuestTogether.API) do
@@ -76,6 +42,19 @@ local function CreateApiWithOverrides(overrides)
 	return merged
 end
 
+local function WithPatchedMethod(targetTable, methodName, replacement, fn)
+	local original = targetTable[methodName]
+	targetTable[methodName] = replacement
+
+	local ok, err = pcall(fn)
+
+	targetTable[methodName] = original
+
+	if not ok then
+		error(err, 0)
+	end
+end
+
 local function WithIsolatedState(testFn)
 	if not QuestTogether.db then
 		QuestTogether:OnInitialize()
@@ -85,37 +64,33 @@ local function WithIsolatedState(testFn)
 	local originalGlobal = QuestTogether:DeepCopy(QuestTogether.db.global)
 	local originalAPI = QuestTogether.API
 	local originalPrint = QuestTogether.Print
-	local originalBroadcast = QuestTogether.Broadcast
-	local originalSendQuestDelta = QuestTogether.SendQuestDelta
-	local originalSendSnapshotToMember = QuestTogether.SendSnapshotToMember
-	local originalPendingObjectiveDeltas = QuestTogether.pendingObjectiveDeltas
-	local originalObjectiveDeltaFlushScheduled = QuestTogether.objectiveDeltaFlushScheduled
-	local originalPendingSnapshotChunks = QuestTogether.pendingSnapshotChunks
+	local originalPrintRaw = QuestTogether.PrintRaw
 	local originalPartyMembers = QuestTogether.partyMembers
 	local originalPartyMemberOrder = QuestTogether.partyMemberOrder
 	local originalPartyRosterFingerprint = QuestTogether.partyRosterFingerprint
-	local originalRemoteQuestState = QuestTogether.remoteQuestState
-	local originalRemoteQuestRevision = QuestTogether.remoteQuestRevision
-	local originalLocalQuestRevision = QuestTogether.localQuestRevision
-	local originalDebugPartyTemplates = QuestTogether.debugPartyTemplates
 	local originalIsEnabled = QuestTogether.isEnabled
 	local originalWorldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID
 	local originalNameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken
 	local originalNameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache
 	local originalNameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache
 	local originalNameplateBaseHealthColorByUnitFrame = QuestTogether.nameplateBaseHealthColorByUnitFrame
+	local originalNameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
+	local originalPrototypeBubbleScreenHostFrame = QuestTogether.prototypeBubbleScreenHostFrame
+	local originalAnnouncementChannelLocalID = QuestTogether.announcementChannelLocalID
 
-	-- Keep tests deterministic regardless of the player's current debugMode setting.
 	QuestTogether.db.profile.debugMode = false
 	QuestTogether.isEnabled = false
-	if QuestTogether.DisableNameplateAugmentation then
-		QuestTogether:DisableNameplateAugmentation()
-	end
-	QuestTogether.nameplateQuestStateByUnitToken = {}
+	QuestTogether.partyMembers = {}
+	QuestTogether.partyMemberOrder = {}
+	QuestTogether.partyRosterFingerprint = ""
 	QuestTogether.worldQuestAreaStateByQuestID = {}
+	QuestTogether.nameplateQuestStateByUnitToken = {}
 	QuestTogether.nameplateQuestObjectiveCache = {}
 	QuestTogether.nameplateQuestTitleCache = {}
 	QuestTogether.nameplateBaseHealthColorByUnitFrame = setmetatable({}, { __mode = "k" })
+	QuestTogether.nameplateBubbleByUnitFrame = setmetatable({}, { __mode = "k" })
+	QuestTogether.prototypeBubbleScreenHostFrame = nil
+	QuestTogether.announcementChannelLocalID = nil
 
 	local ok, err = pcall(testFn)
 
@@ -123,79 +98,19 @@ local function WithIsolatedState(testFn)
 	QuestTogether.db.global = originalGlobal
 	QuestTogether.API = originalAPI
 	QuestTogether.Print = originalPrint
-	QuestTogether.Broadcast = originalBroadcast
-	QuestTogether.SendQuestDelta = originalSendQuestDelta
-	QuestTogether.SendSnapshotToMember = originalSendSnapshotToMember
-	QuestTogether.pendingObjectiveDeltas = originalPendingObjectiveDeltas
-	QuestTogether.objectiveDeltaFlushScheduled = originalObjectiveDeltaFlushScheduled
-	QuestTogether.pendingSnapshotChunks = originalPendingSnapshotChunks
+	QuestTogether.PrintRaw = originalPrintRaw
 	QuestTogether.partyMembers = originalPartyMembers
 	QuestTogether.partyMemberOrder = originalPartyMemberOrder
 	QuestTogether.partyRosterFingerprint = originalPartyRosterFingerprint
-	QuestTogether.remoteQuestState = originalRemoteQuestState
-	QuestTogether.remoteQuestRevision = originalRemoteQuestRevision
-	QuestTogether.localQuestRevision = originalLocalQuestRevision
-	QuestTogether.debugPartyTemplates = originalDebugPartyTemplates
 	QuestTogether.isEnabled = originalIsEnabled
 	QuestTogether.worldQuestAreaStateByQuestID = originalWorldQuestAreaStateByQuestID
 	QuestTogether.nameplateQuestStateByUnitToken = originalNameplateQuestStateByUnitToken
 	QuestTogether.nameplateQuestObjectiveCache = originalNameplateQuestObjectiveCache
 	QuestTogether.nameplateQuestTitleCache = originalNameplateQuestTitleCache
 	QuestTogether.nameplateBaseHealthColorByUnitFrame = originalNameplateBaseHealthColorByUnitFrame
-	if originalIsEnabled and QuestTogether.EnableNameplateAugmentation then
-		QuestTogether:EnableNameplateAugmentation()
-	end
-
-	if not ok then
-		error(err, 0)
-	end
-end
-
-local function WithMockUnitApi(unitsByToken, fn)
-	local oldAPI = QuestTogether.API
-	QuestTogether.API = CreateApiWithOverrides({
-		UnitExists = function(unitToken)
-			return unitsByToken[unitToken] ~= nil
-		end,
-		UnitFullName = function(unitToken)
-			local unit = unitsByToken[unitToken]
-			if not unit then
-				return nil, nil
-			end
-			return unit.name, unit.realm
-		end,
-		UnitClass = function(unitToken)
-			local unit = unitsByToken[unitToken]
-			if not unit then
-				return nil, nil
-			end
-			return unit.classFile, unit.classFile
-		end,
-		UnitName = function(unitToken)
-			local unit = unitsByToken[unitToken]
-			return unit and unit.name or nil
-		end,
-		GetRealmName = function()
-			return "Realm"
-		end,
-	})
-
-	local ok, err = pcall(fn)
-
-	QuestTogether.API = oldAPI
-
-	if not ok then
-		error(err, 0)
-	end
-end
-
-local function WithPatchedMethod(targetTable, methodName, replacement, fn)
-	local original = targetTable[methodName]
-	targetTable[methodName] = replacement
-
-	local ok, err = pcall(fn)
-
-	targetTable[methodName] = original
+	QuestTogether.nameplateBubbleByUnitFrame = originalNameplateBubbleByUnitFrame
+	QuestTogether.prototypeBubbleScreenHostFrame = originalPrototypeBubbleScreenHostFrame
+	QuestTogether.announcementChannelLocalID = originalAnnouncementChannelLocalID
 
 	if not ok then
 		error(err, 0)
@@ -231,614 +146,73 @@ function QuestTogether:RunTests()
 	return failed == 0
 end
 
--- ---
--- Test cases
--- ---
-
-QuestTogether:RegisterTest("default profile contains expected options", function()
-	AssertTrue(QuestTogether.DEFAULTS.profile.doEmotes ~= nil)
+QuestTogether:RegisterTest("default profile contains new announcement display options", function()
 	AssertTrue(QuestTogether.DEFAULTS.profile.announceAccepted ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.announceCompleted ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.announceRemoved ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.announceProgress ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.announceWorldQuestAreaEnter ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.announceWorldQuestAreaLeave ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.announceWorldQuestProgress ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.announceWorldQuestCompleted ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.primaryChannel ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestIconEnabled ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestIconStyle ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColorEnabled ~= nil)
-	AssertTrue(type(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor) == "table")
-	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor.r ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor.g ~= nil)
-	AssertTrue(QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor.b ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.showChatBubbles ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.hideMyOwnChatBubbles ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.showChatLogs ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.showProgressFor ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.chatBubbleSize ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.chatBubbleDuration ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.primaryChannel == nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel == nil)
 end)
 
-QuestTogether:RegisterTest("set/get option updates profile", function()
-	AssertTrue(QuestTogether:SetOption("doEmotes", false))
-	AssertFalse(QuestTogether:GetOption("doEmotes"))
-	AssertTrue(QuestTogether:SetOption("doEmotes", true))
-	AssertTrue(QuestTogether:GetOption("doEmotes"))
+QuestTogether:RegisterTest("chat bubble option validation rejects unknown values", function()
+	AssertTrue(QuestTogether:SetOption("chatBubbleSize", "large"))
+	AssertEquals(QuestTogether:GetOption("chatBubbleSize"), "large")
+	AssertFalse(QuestTogether:SetOption("chatBubbleSize", "gigantic"))
+	AssertEquals(QuestTogether:GetOption("chatBubbleSize"), "large")
+
+	AssertTrue(QuestTogether:SetOption("showProgressFor", "party_only"))
+	AssertEquals(QuestTogether:GetOption("showProgressFor"), "party_only")
+	AssertFalse(QuestTogether:SetOption("showProgressFor", "everyone"))
+	AssertEquals(QuestTogether:GetOption("showProgressFor"), "party_only")
 end)
 
-QuestTogether:RegisterTest("nameplate health color option is clamped and readable", function()
-	AssertTrue(QuestTogether:SetOption("nameplateQuestHealthColor", { r = 2, g = -1, b = 0.4 }))
-	local color = QuestTogether:GetNameplateQuestHealthColor()
-	AssertEquals(color.r, 1)
-	AssertEquals(color.g, 0)
-	AssertEquals(color.b, 0.4)
-end)
-
-QuestTogether:RegisterTest("nameplate icon style accepts known values only", function()
-	AssertTrue(QuestTogether:SetOption("nameplateQuestIconStyle", "left"))
-	AssertEquals(QuestTogether:GetNameplateQuestIconStyle(), "left")
-
-	AssertFalse(QuestTogether:SetOption("nameplateQuestIconStyle", "diagonal"))
-	AssertEquals(QuestTogether:GetNameplateQuestIconStyle(), "left")
-end)
-
-QuestTogether:RegisterTest("announce uses primary channel when available", function()
-	local sent = {}
-	QuestTogether.db.profile.primaryChannel = "party"
-	QuestTogether.db.profile.fallbackChannel = "console"
-
-	QuestTogether.API = CreateApiWithOverrides({
-		IsInParty = function()
-			return true
-		end,
-		SendChatMessage = function(message, channel)
-			sent[#sent + 1] = { message = message, channel = channel }
-		end,
-	})
-
-	local success = QuestTogether:Announce("hello party")
-	AssertTrue(success)
-	AssertEquals(#sent, 1)
-	AssertEquals(sent[1].channel, "PARTY")
-	AssertEquals(sent[1].message, "hello party")
-end)
-
-QuestTogether:RegisterTest("announce falls back when primary unavailable", function()
-	local sent = {}
-	QuestTogether.db.profile.primaryChannel = "guild"
-	QuestTogether.db.profile.fallbackChannel = "party"
-
-	QuestTogether.API = CreateApiWithOverrides({
-		IsInGuild = function()
-			return false
-		end,
-		IsInParty = function()
-			return true
-		end,
-		SendChatMessage = function(message, channel)
-			sent[#sent + 1] = { message = message, channel = channel }
-		end,
-	})
-
-	local success = QuestTogether:Announce("fallback test")
-	AssertTrue(success)
-	AssertEquals(#sent, 1)
-	AssertEquals(sent[1].channel, "PARTY")
-end)
-
-QuestTogether:RegisterTest("announce fails gracefully when no channel available", function()
-	local sent = {}
-	QuestTogether.db.profile.primaryChannel = "guild"
-	QuestTogether.db.profile.fallbackChannel = "raid"
-
-	QuestTogether.API = CreateApiWithOverrides({
-		IsInGuild = function()
-			return false
-		end,
-		IsInRaid = function()
-			return false
-		end,
-		SendChatMessage = function(message, channel)
-			sent[#sent + 1] = { message = message, channel = channel }
-		end,
-	})
-
-	local success = QuestTogether:Announce("no route")
-	AssertFalse(success)
-	AssertEquals(#sent, 0)
-end)
-
-QuestTogether:RegisterTest("fallback none suppresses announcements when primary unavailable", function()
-	local sent = {}
-	local printed = 0
-	QuestTogether.db.profile.primaryChannel = "guild"
-	QuestTogether.db.profile.fallbackChannel = "none"
-
-	QuestTogether.API = CreateApiWithOverrides({
-		IsInGuild = function()
-			return false
-		end,
-		SendChatMessage = function(message, channel)
-			sent[#sent + 1] = { message = message, channel = channel }
-		end,
-	})
-
-	QuestTogether.Print = function()
-		printed = printed + 1
-	end
-
-	local success = QuestTogether:Announce("quiet please")
-	AssertFalse(success)
-	AssertEquals(#sent, 0)
-	AssertEquals(printed, 0)
-end)
-
-QuestTogether:RegisterTest("doEmotes=false blocks incoming emote playback", function()
-	local emoteCount = 0
-	QuestTogether.db.profile.doEmotes = false
-
-	QuestTogether.API = CreateApiWithOverrides({
-		DoEmote = function()
-			emoteCount = emoteCount + 1
-		end,
-	})
-
-	QuestTogether:EMOTE("cheer", "Friend")
-	AssertEquals(emoteCount, 0)
-end)
-
-QuestTogether:RegisterTest("doEmotes=true allows incoming emote playback", function()
-	local emoteCount = 0
-	local lastToken
-	QuestTogether.db.profile.doEmotes = true
-
-	QuestTogether.API = CreateApiWithOverrides({
-		DoEmote = function(token)
-			emoteCount = emoteCount + 1
-			lastToken = token
-		end,
-	})
-
-	QuestTogether:EMOTE("cheer", "Friend")
-	AssertEquals(emoteCount, 1)
-	AssertEquals(lastToken, "cheer")
-end)
-
-QuestTogether:RegisterTest("quest tracker encode/decode roundtrip", function()
-	local tracker = {
-		[101] = {
-			title = "Collect 10 Apples",
-			objectives = {
-				"Apples: 6/10",
-				"Return to Farmer, then celebrate!",
-			},
-		},
-		[202] = {
-			title = "Defend the Town | Part 2",
-			objectives = {
-				"Wave 1/3",
-			},
-		},
-	}
-
-	local encoded = QuestTogether:EncodeQuestTracker(tracker)
-	local decoded = QuestTogether:DecodeQuestTracker(encoded)
-
-	AssertTrue(DeepEquals(decoded, tracker), "Decoded tracker did not match original")
-end)
-
-QuestTogether:RegisterTest("completion always broadcasts emote token", function()
-	local broadcastCount = 0
-	local localEmoteCount = 0
-
-	QuestTogether.db.profile.doEmotes = false
-
-	QuestTogether.API = CreateApiWithOverrides({
-		Random = function()
-			return 1
-		end,
-		DoEmote = function()
-			localEmoteCount = localEmoteCount + 1
-		end,
-	})
-
-	QuestTogether.Broadcast = function(_, command, payload)
-		if command == "EMOTE" and payload and payload ~= "" then
-			broadcastCount = broadcastCount + 1
-		end
-		return true
-	end
-
-	QuestTogether:HandleQuestCompleted("Any Quest")
-	AssertEquals(broadcastCount, 1)
-	AssertEquals(localEmoteCount, 0)
-end)
-
-QuestTogether:RegisterTest("world quest completion uses dedicated announce option", function()
-	local announcedMessages = {}
-	QuestTogether.db.profile.announceCompleted = false
-	QuestTogether.db.profile.announceWorldQuestCompleted = true
-
-	QuestTogether.Broadcast = function()
-		return true
-	end
-
-	QuestTogether.API = CreateApiWithOverrides({
-		Random = function()
-			return 1
-		end,
-		DoEmote = function() end,
-	})
-
-	WithPatchedMethod(QuestTogether, "Announce", function(_, message)
-		announcedMessages[#announcedMessages + 1] = message
-		return true
+QuestTogether:RegisterTest("personal bubble anchor persists per character and resets to defaults", function()
+	WithPatchedMethod(QuestTogether, "GetPlayerFullName", function()
+		return "MyPlayer-Realm"
 	end, function()
-		WithPatchedMethod(QuestTogether, "IsWorldQuest", function(_, questId)
-			return questId == 9001
-		end, function()
-			QuestTogether:HandleQuestCompleted("World Quest Name", 9001)
-			AssertEquals(#announcedMessages, 1)
-			AssertEquals(announcedMessages[1], "World Quest Completed: World Quest Name")
-		end)
+		local defaults = QuestTogether.DEFAULT_PERSONAL_BUBBLE_ANCHOR
+		local initialAnchor = QuestTogether:GetPersonalBubbleAnchor()
+		AssertEquals(initialAnchor.point, defaults.point)
+		AssertEquals(initialAnchor.relativePoint, defaults.relativePoint)
+		AssertEquals(initialAnchor.x, defaults.x)
+		AssertEquals(initialAnchor.y, defaults.y)
+
+		AssertTrue(QuestTogether:SetPersonalBubbleAnchor("TOP", "TOP", 10, -25))
+
+		local savedAnchor = QuestTogether:GetPersonalBubbleAnchor()
+		AssertEquals(savedAnchor.point, "TOP")
+		AssertEquals(savedAnchor.relativePoint, "TOP")
+		AssertEquals(savedAnchor.x, 10)
+		AssertEquals(savedAnchor.y, -25)
+
+		AssertTrue(QuestTogether:ResetPersonalBubbleAnchor())
+
+		local resetAnchor = QuestTogether:GetPersonalBubbleAnchor()
+		AssertEquals(resetAnchor.point, defaults.point)
+		AssertEquals(resetAnchor.relativePoint, defaults.relativePoint)
+		AssertEquals(resetAnchor.x, defaults.x)
+		AssertEquals(resetAnchor.y, defaults.y)
 	end)
 end)
 
-QuestTogether:RegisterTest("world quest progress uses dedicated option", function()
-	QuestTogether.db.profile.announceProgress = false
-	QuestTogether.db.profile.announceWorldQuestProgress = true
-
-	WithPatchedMethod(QuestTogether, "IsWorldQuest", function(_, questId)
-		return questId == 42
-	end, function()
-		AssertTrue(QuestTogether:ShouldAnnounceObjectiveProgress(42, 5))
-		AssertFalse(QuestTogether:ShouldAnnounceObjectiveProgress(7, 5))
-		AssertFalse(QuestTogether:ShouldAnnounceObjectiveProgress(42, 0))
-	end)
+QuestTogether:RegisterTest("console announcement message includes icon and player name", function()
+	local message = QuestTogether:BuildConsoleAnnouncementMessage("MyPlayer-Realm", "hello there", "MAGE")
+	AssertTrue(string.find(message, "|T" .. QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE, 1, true) ~= nil)
+	AssertTrue(string.find(message, "MyPlayer", 1, true) ~= nil)
+	AssertTrue(string.find(message, "|cffffd200: hello there|r", 1, true) ~= nil)
 end)
 
-QuestTogether:RegisterTest("objective announce ignores text-only rewrites with same progress", function()
-	QuestTogether.db.profile.announceProgress = true
-
-	local tracker = QuestTogether:GetPlayerTracker()
-	wipe(tracker)
-	tracker[7001] = {
-		title = "Gather Things",
-		objectives = { "8/8 Lightblooming Bulb" },
-		objectiveValues = { 8 },
-		isComplete = false,
-	}
-
-	local announcedMessages = {}
-	local oldGetNumQuestLeaderBoards = GetNumQuestLeaderBoards
-	local oldGetQuestObjectiveInfo = GetQuestObjectiveInfo
-	local oldCQuestLog = C_QuestLog
-
-	GetNumQuestLeaderBoards = function()
-		return 1
-	end
-	GetQuestObjectiveInfo = function()
-		return "8/8 Lightblooming Bulb (Optional)", "monster", false, 8
-	end
-	C_QuestLog = C_QuestLog or {}
-	C_QuestLog.GetLogIndexForQuestID = function()
-		return 1
-	end
-	C_QuestLog.IsComplete = function()
-		return false
-	end
-
-	local ok, err = pcall(function()
-		WithPatchedMethod(QuestTogether, "Announce", function(_, message)
-			announcedMessages[#announcedMessages + 1] = message
-			return true
-		end, function()
-			QuestTogether:UNIT_QUEST_LOG_CHANGED(nil, "player")
-			QuestTogether:QUEST_LOG_UPDATE()
-			AssertEquals(#announcedMessages, 0)
-		end)
-	end)
-
-	GetNumQuestLeaderBoards = oldGetNumQuestLeaderBoards
-	GetQuestObjectiveInfo = oldGetQuestObjectiveInfo
-	C_QuestLog = oldCQuestLog
-
-	if not ok then
-		error(err, 0)
-	end
-end)
-
-QuestTogether:RegisterTest("objective announce fires on forward numeric progress", function()
-	QuestTogether.db.profile.announceProgress = true
-
-	local tracker = QuestTogether:GetPlayerTracker()
-	wipe(tracker)
-	tracker[7002] = {
-		title = "Gather Things",
-		objectives = { "7/8 Lightblooming Bulb" },
-		objectiveValues = { 7 },
-		isComplete = false,
-	}
-
-	local announcedMessages = {}
-	local oldGetNumQuestLeaderBoards = GetNumQuestLeaderBoards
-	local oldGetQuestObjectiveInfo = GetQuestObjectiveInfo
-	local oldCQuestLog = C_QuestLog
-
-	GetNumQuestLeaderBoards = function()
-		return 1
-	end
-	GetQuestObjectiveInfo = function()
-		return "8/8 Lightblooming Bulb", "monster", false, 8
-	end
-	C_QuestLog = C_QuestLog or {}
-	C_QuestLog.GetLogIndexForQuestID = function()
-		return 1
-	end
-	C_QuestLog.IsComplete = function()
-		return false
-	end
-
-	local ok, err = pcall(function()
-		WithPatchedMethod(QuestTogether, "Announce", function(_, message)
-			announcedMessages[#announcedMessages + 1] = message
-			return true
-		end, function()
-			QuestTogether:UNIT_QUEST_LOG_CHANGED(nil, "player")
-			QuestTogether:QUEST_LOG_UPDATE()
-			AssertEquals(#announcedMessages, 1)
-			AssertEquals(announcedMessages[1], "8/8 Lightblooming Bulb")
-		end)
-	end)
-
-	GetNumQuestLeaderBoards = oldGetNumQuestLeaderBoards
-	GetQuestObjectiveInfo = oldGetQuestObjectiveInfo
-	C_QuestLog = oldCQuestLog
-
-	if not ok then
-		error(err, 0)
-	end
-end)
-
-QuestTogether:RegisterTest("world quest area enter/leave announcements use task snapshot", function()
-	local announcedMessages = {}
-	QuestTogether.db.profile.announceWorldQuestAreaEnter = true
-	QuestTogether.db.profile.announceWorldQuestAreaLeave = true
-
-	local snapshot = {
-		[101] = "The Big Dig",
-	}
-
-	WithPatchedMethod(QuestTogether, "Announce", function(_, message)
-		announcedMessages[#announcedMessages + 1] = message
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "GetActiveWorldQuestAreaSnapshot", function()
-			return snapshot
-		end, function()
-			QuestTogether:RefreshWorldQuestAreaState(true)
-			AssertEquals(#announcedMessages, 1)
-			AssertEquals(announcedMessages[1], "World Quest Entered: The Big Dig")
-
-			snapshot = {}
-			QuestTogether:RefreshWorldQuestAreaState(true)
-			AssertEquals(#announcedMessages, 2)
-			AssertEquals(announcedMessages[2], "Left World Quest: The Big Dig")
-		end)
-	end)
-end)
-
-QuestTogether:RegisterTest("world quest leave announcement is suppressed for completed quest", function()
-	local announcedMessages = {}
-	QuestTogether.db.profile.announceWorldQuestAreaEnter = true
-	QuestTogether.db.profile.announceWorldQuestAreaLeave = true
-
-	local snapshot = {
-		[202] = "A Completed World Quest",
-	}
-
-	WithPatchedMethod(QuestTogether, "Announce", function(_, message)
-		announcedMessages[#announcedMessages + 1] = message
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "GetActiveWorldQuestAreaSnapshot", function()
-			return snapshot
-		end, function()
-			QuestTogether:RefreshWorldQuestAreaState(true)
-			AssertEquals(#announcedMessages, 1)
-
-			QuestTogether.questsCompleted[202] = true
-			snapshot = {}
-			QuestTogether:RefreshWorldQuestAreaState(true)
-			AssertEquals(#announcedMessages, 1)
-		end)
-	end)
-end)
-
-QuestTogether:RegisterTest("world quest area snapshot uses local task table only", function()
-	local oldGetTasksTable = GetTasksTable
-	local oldGetTaskInfo = GetTaskInfo
-	local oldCQuestLog = C_QuestLog
-
-	GetTasksTable = function()
-		return {}
-	end
-	GetTaskInfo = function()
-		return true, true, 1, "Watched Quest"
-	end
-	C_QuestLog = {
-		GetNumWorldQuestWatches = function()
-			return 1
-		end,
-		GetQuestIDForWorldQuestWatchIndex = function()
-			return 303
-		end,
-	}
-
-	local ok, err = pcall(function()
-		WithPatchedMethod(QuestTogether, "IsWorldQuest", function(_, questId)
-			return questId == 303
-		end, function()
-			local snapshot = QuestTogether:GetActiveWorldQuestAreaSnapshot()
-			AssertTrue(next(snapshot) == nil)
-		end)
-	end)
-
-	GetTasksTable = oldGetTasksTable
-	GetTaskInfo = oldGetTaskInfo
-	C_QuestLog = oldCQuestLog
-
-	if not ok then
-		error(err, 0)
-	end
-end)
-
-QuestTogether:RegisterTest("world quest area state follows task snapshot transitions", function()
-	local announcedMessages = {}
-	QuestTogether.db.profile.announceWorldQuestAreaEnter = true
-	QuestTogether.db.profile.announceWorldQuestAreaLeave = true
-
-	local snapshot = {
-		[303] = "Flappy World Quest",
-	}
-
-	WithPatchedMethod(QuestTogether, "Announce", function(_, message)
-		announcedMessages[#announcedMessages + 1] = message
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "GetActiveWorldQuestAreaSnapshot", function()
-			return snapshot
-		end, function()
-			QuestTogether:RefreshWorldQuestAreaState(true)
-			AssertEquals(announcedMessages[1], "World Quest Entered: Flappy World Quest")
-
-			snapshot = {}
-			QuestTogether:RefreshWorldQuestAreaState(true)
-			AssertEquals(announcedMessages[2], "Left World Quest: Flappy World Quest")
-
-			-- Remaining out of area should not produce synthetic re-enter.
-			QuestTogether:RefreshWorldQuestAreaState(true)
-			AssertEquals(#announcedMessages, 2)
-
-			-- Re-enter only when the task snapshot has the quest again.
-			snapshot = {
-				[303] = "Flappy World Quest",
-			}
-			QuestTogether:RefreshWorldQuestAreaState(true)
-			AssertEquals(announcedMessages[3], "World Quest Entered: Flappy World Quest")
-		end)
-	end)
-end)
-
-QuestTogether:RegisterTest("slash set command updates doEmotes", function()
-	QuestTogether:HandleSlashCommand("set doEmotes off")
-	AssertFalse(QuestTogether:GetOption("doEmotes"))
-
-	QuestTogether:HandleSlashCommand("set doEmotes on")
-	AssertTrue(QuestTogether:GetOption("doEmotes"))
-end)
-
-QuestTogether:RegisterTest("slash fallback none is accepted", function()
-	QuestTogether:HandleSlashCommand("channel fallback none")
-	AssertEquals(QuestTogether:GetOption("fallbackChannel"), "none")
-end)
-
-QuestTogether:RegisterTest("slash primary none is rejected", function()
-	local before = QuestTogether:GetOption("primaryChannel")
-	QuestTogether:HandleSlashCommand("channel primary none")
-	AssertEquals(QuestTogether:GetOption("primaryChannel"), before)
-end)
-
-QuestTogether:RegisterTest("on-comm ignores self sender", function()
-	local triggered = false
-	local oldMethod = QuestTogether.IsSelfSender
-	local oldCMD = QuestTogether.CMD
-	QuestTogether.IsSelfSender = function()
-		return true
-	end
-
-	QuestTogether.CMD = function()
-		triggered = true
-	end
-
-	QuestTogether:OnCommReceived(QuestTogether.commPrefix, "CMD|anything", "PARTY", "Player-Realm")
-
-	QuestTogether.IsSelfSender = oldMethod
-	QuestTogether.CMD = oldCMD
-	AssertFalse(triggered)
-end)
-
-QuestTogether:RegisterTest("quest record encode/decode keeps completion and revision", function()
-	local record = QuestTogether:EncodeQuestRecord(777, {
-		title = "Test Quest",
-		objectives = { "One", "Two" },
-		isComplete = true,
-	}, 9)
-
-	local questId, questData, revision = QuestTogether:DecodeQuestRecord(record)
-	AssertEquals(questId, 777)
-	AssertEquals(revision, 9)
-	AssertEquals(questData.title, "Test Quest")
-	AssertTrue(questData.isComplete)
-	AssertEquals(questData.objectives[1], "One")
-	AssertEquals(questData.objectives[2], "Two")
-end)
-
-QuestTogether:RegisterTest("objective delta encode/decode roundtrip", function()
-	local payload = QuestTogether:EncodeObjectiveDelta(451, 12, {
-		[1] = "Collect 3/10",
-		[3] = "",
-	}, false)
-
-	local questId, revision, changedObjectives, isComplete = QuestTogether:DecodeObjectiveDelta(payload)
-	AssertEquals(questId, 451)
-	AssertEquals(revision, 12)
-	AssertEquals(changedObjectives[1], "Collect 3/10")
-	AssertEquals(changedObjectives[3], "")
-	AssertFalse(isComplete)
-end)
-
-QuestTogether:RegisterTest("objective delta coalescing merges rapid updates", function()
-	local delayedCallback
-	local sent = {}
-
-	QuestTogether.API = CreateApiWithOverrides({
-		Delay = function(_, callback)
-			delayedCallback = callback
-		end,
-	})
-
-	QuestTogether.SendQuestDelta = function(_, kind, questId, payload)
-		sent[#sent + 1] = {
-			kind = kind,
-			questId = questId,
-			payload = payload,
-		}
-		return true
-	end
-
-	QuestTogether:QueueQuestObjectiveDelta(91, { [1] = "A 1/2" }, nil)
-	QuestTogether:QueueQuestObjectiveDelta(91, { [1] = "A 2/2", [2] = "Bonus 1/1" }, true)
-
-	AssertEquals(#sent, 0)
-	AssertTrue(type(delayedCallback) == "function")
-	delayedCallback()
-
-	AssertEquals(#sent, 1)
-	AssertEquals(sent[1].kind, "Q_OBJ")
-	AssertEquals(sent[1].questId, 91)
-	AssertEquals(sent[1].payload.changedObjectives[1], "A 2/2")
-	AssertEquals(sent[1].payload.changedObjectives[2], "Bonus 1/1")
-	AssertTrue(sent[1].payload.isComplete)
-end)
-
-QuestTogether:RegisterTest("request party sync emits SYNC_REQ only", function()
+QuestTogether:RegisterTest("send announcement event uses shared channel target", function()
 	local sent = {}
 	QuestTogether.isEnabled = true
-
 	QuestTogether.API = CreateApiWithOverrides({
-		IsInParty = function()
-			return true
-		end,
-		IsInInstanceGroup = function()
-			return false
+		GetChannelName = function(channelName)
+			AssertEquals(channelName, QuestTogether.announcementChannelName)
+			return 7
 		end,
 		SendAddonMessage = function(prefix, message, channel, target)
 			sent[#sent + 1] = {
@@ -847,471 +221,220 @@ QuestTogether:RegisterTest("request party sync emits SYNC_REQ only", function()
 				channel = channel,
 				target = target,
 			}
+			return 0
+		end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "MyPlayer", "Realm"
+		end,
+		UnitClass = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Mage", "MAGE"
+		end,
+		UnitGUID = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Player-1-ABC"
 		end,
 	})
 
-	QuestTogether:RequestPartySync()
+	local success = QuestTogether:SendAnnouncementEvent("QUEST_PROGRESS", "8/8 Lightblooming Bulb")
+	AssertTrue(success)
 	AssertEquals(#sent, 1)
-	AssertTrue(string.find(sent[1].message, "^SYNC_REQ|") ~= nil)
-	AssertEquals(sent[1].channel, "PARTY")
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "CHANNEL")
+	AssertEquals(sent[1].target, 7)
+	AssertTrue(string.find(sent[1].message, "^ANN|", 1) ~= nil)
 end)
 
-QuestTogether:RegisterTest("sync request receives snapshot response", function()
-	local snapshotsSent = 0
+QuestTogether:RegisterTest("publish announcement sends even when local option is disabled", function()
+	local sent = {}
+	local printed = {}
 	QuestTogether.isEnabled = true
-
-	QuestTogether.SendSnapshotToMember = function(_, target)
-		if target == "Friend-Realm" then
-			snapshotsSent = snapshotsSent + 1
-		end
-	end
-
-	QuestTogether:SYNC_REQ("", "Friend-Realm")
-	AssertEquals(snapshotsSent, 1)
-end)
-
-QuestTogether:RegisterTest("stale remote revisions are ignored", function()
-	if QuestTogether.InitializePartyState then
-		QuestTogether:InitializePartyState()
-	end
-
-	local sender = "Friend-Realm"
-	local newer = QuestTogether:EncodeQuestRecord(303, {
-		title = "New",
-		objectives = { "step" },
-		isComplete = false,
-	}, 5)
-	local older = QuestTogether:EncodeQuestRecord(303, {
-		title = "Old",
-		objectives = { "oldstep" },
-		isComplete = true,
-	}, 4)
-
-	QuestTogether:ApplyRemoteQuestDelta(sender, "Q_ADD", newer)
-	QuestTogether:ApplyRemoteQuestDelta(sender, "Q_ADD", older)
-
-	local state = QuestTogether:GetRemoteQuestState(sender, 303)
-	AssertEquals(state.title, "New")
-	AssertFalse(state.isComplete)
-	AssertEquals(QuestTogether:GetRemoteQuestRevision(sender, 303), 5)
-end)
-
-QuestTogether:RegisterTest("snapshot chunks reassemble into remote state", function()
-	if QuestTogether.InitializePartyState then
-		QuestTogether:InitializePartyState()
-	end
-
-	local sender = "Ally-Realm"
-	local rec1 = QuestTogether:EncodeQuestRecord(801, {
-		title = "One",
-		objectives = { "A" },
-		isComplete = false,
-	}, 2)
-	local rec2 = QuestTogether:EncodeQuestRecord(802, {
-		title = "Two",
-		objectives = { "B" },
-		isComplete = true,
-	}, 7)
-
-	QuestTogether:SYNC_SNAP("1/2:" .. rec1, sender)
-	QuestTogether:SYNC_SNAP("2/2:" .. rec2, sender)
-
-	local one = QuestTogether:GetRemoteQuestState(sender, 801)
-	local two = QuestTogether:GetRemoteQuestState(sender, 802)
-	AssertEquals(one.title, "One")
-	AssertFalse(one.isComplete)
-	AssertEquals(two.title, "Two")
-	AssertTrue(two.isComplete)
-	AssertEquals(QuestTogether:GetRemoteQuestRevision(sender, 802), 7)
-end)
-
-QuestTogether:RegisterTest("debug mode fills mock roster to full party only when solo", function()
-	if QuestTogether.InitializePartyState then
-		QuestTogether:InitializePartyState()
-	end
-
-	QuestTogether.db.profile.debugMode = true
-
-	WithMockUnitApi({
-		player = { name = "Player", realm = "Realm", classFile = "PALADIN" },
-	}, function()
-		QuestTogether:RefreshPartyRoster()
-	end)
-
-	local ordered = QuestTogether:GetOrderedPartyMembers()
-	AssertEquals(#ordered, 5)
-
-	local debugCount = 0
-	for _, memberName in ipairs(ordered) do
-		local meta = QuestTogether:GetMemberMeta(memberName)
-		if meta.isDebugSimulated then
-			debugCount = debugCount + 1
-		end
-	end
-	AssertEquals(debugCount, 4)
-end)
-
-QuestTogether:RegisterTest("debug mode does not inject mock members while grouped", function()
-	if QuestTogether.InitializePartyState then
-		QuestTogether:InitializePartyState()
-	end
-
-	QuestTogether.db.profile.debugMode = true
-
-	WithMockUnitApi({
-		player = { name = "Player", realm = "Realm", classFile = "PALADIN" },
-		party1 = { name = "Friend", realm = "Realm", classFile = "MAGE" },
-	}, function()
-		QuestTogether:RefreshPartyRoster()
-	end)
-
-	local ordered = QuestTogether:GetOrderedPartyMembers()
-	AssertEquals(#ordered, 2)
-
-	for _, memberName in ipairs(ordered) do
-		local meta = QuestTogether:GetMemberMeta(memberName)
-		AssertFalse(meta.isDebugSimulated and true or false)
-	end
-end)
-
-QuestTogether:RegisterTest("debug solo simulation creates remote quest mock data", function()
-	if QuestTogether.InitializePartyState then
-		QuestTogether:InitializePartyState()
-	end
-
-	QuestTogether.db.profile.debugMode = true
-	WithMockUnitApi({
-		player = { name = "Player", realm = "Realm", classFile = "PALADIN" },
-	}, function()
-		local tracker = QuestTogether:GetPlayerTracker()
-		tracker[9001] = {
-			title = "Debug Quest",
-			objectives = { "Collect 1/3" },
-			isComplete = false,
-		}
-		QuestTogether:RefreshPartyRoster()
-	end)
-
-	local foundRemoteQuest = false
-	for memberName, memberQuests in pairs(QuestTogether.remoteQuestState or {}) do
-		local meta = QuestTogether:GetMemberMeta(memberName)
-		if meta.isDebugSimulated and memberQuests[9001] then
-			foundRemoteQuest = true
-			break
-		end
-	end
-
-	AssertTrue(foundRemoteQuest, "Expected at least one simulated member quest state.")
-end)
-
-QuestTogether:RegisterTest("quest objective resolver prefers nameplate frame flag", function()
-	local unitFrame = { namePlateIsQuestObjective = true }
-
-	WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function()
-		return false
-	end, function()
-		WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
-			return true
-		end, function()
-			local isQuestObjective = QuestTogether:IsQuestObjectiveUnit("nameplate1", unitFrame)
-			AssertTrue(isQuestObjective)
-		end)
-	end)
-end)
-
-QuestTogether:RegisterTest("quest objective resolver falls back to UnitIsQuestBoss", function()
-	local unitFrame = {}
-
-	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function()
-			return false
-		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitOnQuest", function()
-				return false
-			end, function()
-				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function()
-					return false
-				end, function()
-					WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function(_, unitToken)
-						return unitToken == "nameplate3"
-					end, function()
-						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate3", unitFrame))
-						AssertFalse(QuestTogether:IsQuestObjectiveUnit("nameplate4", unitFrame))
-					end)
-				end)
-			end)
-		end)
-	end)
-end)
-
-QuestTogether:RegisterTest("quest objective resolver uses UnitIsRelatedToActiveQuest", function()
-	local unitFrame = {}
-
-	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function(_, unitToken)
-			return unitToken == "nameplate2"
-		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitOnQuest", function()
-				return false
-			end, function()
-				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function()
-					return false
-				end, function()
-					WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function()
-						return false
-					end, function()
-						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate2", unitFrame))
-						AssertFalse(QuestTogether:IsQuestObjectiveUnit("nameplate9", unitFrame))
-					end)
-				end)
-			end)
-		end)
-	end)
-end)
-
-QuestTogether:RegisterTest("quest objective resolver uses tooltip scan fallback", function()
-	local unitFrame = {}
-
-	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function()
-			return false
-		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitOnQuest", function()
-				return false
-			end, function()
-				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function(_, unitToken)
-					return unitToken == "nameplate2"
-				end, function()
-					WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function()
-						return false
-					end, function()
-						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate2", unitFrame))
-						AssertFalse(QuestTogether:IsQuestObjectiveUnit("nameplate3", unitFrame))
-					end)
-				end)
-			end)
-		end)
-	end)
-end)
-
-QuestTogether:RegisterTest("quest health tint gate respects option and unit state", function()
-	QuestTogether.isEnabled = true
-	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
-
-	local frame = {
-		unit = "nameplate1",
-		healthBar = {},
-		namePlateIsQuestObjective = true,
-	}
-
-	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
-			return false
-		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitConnected", function()
-				return true
-			end, function()
-				WithPatchedMethod(QuestTogether, "IsNameplateUnitDead", function()
-					return false
-				end, function()
-					WithPatchedMethod(QuestTogether, "IsNameplateUnitTapDenied", function()
-						return false
-					end, function()
-						WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
-							return true
-						end, function()
-							WithPatchedMethod(QuestTogether, "IsQuestObjectiveUnit", function()
-								return true
-							end, function()
-								AssertTrue(QuestTogether:ShouldApplyQuestHealthTint(frame))
-
-								QuestTogether.db.profile.nameplateQuestHealthColorEnabled = false
-								AssertFalse(QuestTogether:ShouldApplyQuestHealthTint(frame))
-
-								QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
-								frame.unit = "target"
-								AssertFalse(QuestTogether:ShouldApplyQuestHealthTint(frame))
-							end)
-						end)
-					end)
-				end)
-			end)
-		end)
-	end)
-end)
-
-QuestTogether:RegisterTest("nameplate augmentation is blocked in instance contexts", function()
-	QuestTogether.isEnabled = true
+	QuestTogether.db.profile.announceRemoved = false
+	QuestTogether.db.profile.showChatBubbles = false
+	QuestTogether.db.profile.showChatLogs = true
 
 	QuestTogether.API = CreateApiWithOverrides({
-		IsInInstance = function()
-			return true
+		GetChannelName = function()
+			return 4
+		end,
+		SendAddonMessage = function(_, message)
+			sent[#sent + 1] = message
+			return 0
+		end,
+		UnitFullName = function()
+			return "MyPlayer", "Realm"
+		end,
+		UnitClass = function()
+			return "Mage", "MAGE"
+		end,
+		UnitGUID = function()
+			return "Player-1-ABC"
 		end,
 	})
+	QuestTogether.PrintRaw = function(_, message)
+		printed[#printed + 1] = message
+	end
 
-	local frame = {
-		unit = "nameplate1",
-		healthBar = {},
-		namePlateIsQuestObjective = true,
-	}
-
-	AssertTrue(QuestTogether:IsNameplateAugmentationBlockedInCurrentContext())
-	AssertFalse(QuestTogether:IsQuestObjectiveNameplate("nameplate1", frame))
-	AssertFalse(QuestTogether:ShouldApplyQuestHealthTint(frame))
+	local success = QuestTogether:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: Test Quest")
+	AssertTrue(success)
+	AssertEquals(#sent, 1)
+	AssertEquals(#printed, 0)
 end)
 
-QuestTogether:RegisterTest("nameplate add ignores secret guid cache indexing", function()
-	QuestTogether.isEnabled = true
-	QuestTogether.API = CreateApiWithOverrides({
-		IsInInstance = function()
-			return false
-		end,
-	})
+QuestTogether:RegisterTest("remote grouped sender prints chat log without nearby nameplate", function()
+	local printed = {}
+	QuestTogether.db.profile.showChatLogs = true
+	QuestTogether.db.profile.showChatBubbles = false
+	QuestTogether.db.profile.showProgressFor = "party_only"
+	QuestTogether.partyMembers = {
+		["Friend-Realm"] = {
+			fullName = "Friend-Realm",
+			classFile = "WARRIOR",
+		},
+	}
 
-	local secretGuid = {}
-	local oldUnitGUID = UnitGUID
-	local oldIsSecretValue = issecretvalue
-	local oldCNamePlate = C_NamePlate
+	QuestTogether.PrintRaw = function(_, message)
+		printed[#printed + 1] = message
+	end
 
-	UnitGUID = function(unitToken)
-		if unitToken == "nameplate1" then
-			return secretGuid
-		end
+	local handled = QuestTogether:HandleAnnouncementEvent({
+		eventType = "QUEST_PROGRESS",
+		senderGUID = "Player-2-DEF",
+		classFile = "WARRIOR",
+		senderName = "Friend-Realm",
+		text = "6/8 Things",
+	}, false)
+
+	AssertTrue(handled)
+	AssertEquals(#printed, 1)
+	AssertTrue(string.find(printed[1], "Friend", 1, true) ~= nil)
+	AssertTrue(string.find(printed[1], "|cffffd200: 6/8 Things|r", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("remote nearby nongroup sender is filtered by party only scope", function()
+	local printed = 0
+	QuestTogether.db.profile.showChatLogs = true
+	QuestTogether.db.profile.showChatBubbles = false
+	QuestTogether.db.profile.showProgressFor = "party_only"
+
+	QuestTogether.PrintRaw = function()
+		printed = printed + 1
+	end
+
+	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function()
+		return { UnitFrame = {} }
+	end, function()
+		local handled = QuestTogether:HandleAnnouncementEvent({
+			eventType = "QUEST_PROGRESS",
+			senderGUID = "Player-3-GHI",
+			classFile = "DRUID",
+			senderName = "Nearby-Realm",
+			text = "2/4 Crates",
+		}, false)
+
+		AssertFalse(handled)
+		AssertEquals(printed, 0)
+	end)
+end)
+
+QuestTogether:RegisterTest("remote nearby sender shows bubble and chat log for party & nearby scope", function()
+	local printed = {}
+	local bubbleText = nil
+	QuestTogether.db.profile.showChatLogs = true
+	QuestTogether.db.profile.showChatBubbles = true
+	QuestTogether.db.profile.showProgressFor = "party_nearby"
+
+	QuestTogether.PrintRaw = function(_, message)
+		printed[#printed + 1] = message
+	end
+
+	local nearbyFrame = { UnitFrame = {} }
+
+	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function(_, senderGUID, senderName)
+		AssertEquals(senderGUID, "Player-4-JKL")
+		AssertEquals(senderName, "Nearby-Realm")
+		return nearbyFrame
+	end, function()
+		WithPatchedMethod(QuestTogether, "ShowPrototypeBubbleOnNameplate", function(_, frame, text)
+			AssertTrue(frame == nearbyFrame)
+			bubbleText = text
+			return true
+		end, function()
+			local handled = QuestTogether:HandleAnnouncementEvent({
+				eventType = "QUEST_PROGRESS",
+				senderGUID = "Player-4-JKL",
+				classFile = "PRIEST",
+				senderName = "Nearby-Realm",
+				text = "4/4 Widgets",
+			}, false)
+
+			AssertTrue(handled)
+			AssertEquals(#printed, 1)
+			AssertEquals(bubbleText, "4/4 Widgets")
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("remote sender with matching target prints chat log without a nameplate", function()
+	local printed = {}
+	QuestTogether.db.profile.showChatLogs = true
+	QuestTogether.db.profile.showChatBubbles = false
+	QuestTogether.db.profile.showProgressFor = "party_nearby"
+
+	QuestTogether.PrintRaw = function(_, message)
+		printed[#printed + 1] = message
+	end
+
+	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function()
 		return nil
-	end
-	issecretvalue = function(value)
-		return value == secretGuid
-	end
-	C_NamePlate = {
-		GetNamePlateForUnit = function()
-			return nil
-		end,
-	}
-
-	local ok, err = pcall(function()
-		QuestTogether:OnNameplateAdded("nameplate1")
-	end)
-
-	UnitGUID = oldUnitGUID
-	issecretvalue = oldIsSecretValue
-	C_NamePlate = oldCNamePlate
-
-	if not ok then
-		error(err, 0)
-	end
-end)
-
-QuestTogether:RegisterTest("changing tint color updates quest health bar and restore keeps base", function()
-	QuestTogether.isEnabled = true
-	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
-	QuestTogether.db.profile.nameplateQuestHealthColor = {
-		r = 0.95,
-		g = 0.45,
-		b = 0.05,
-	}
-
-	local currentR, currentG, currentB = 0.2, 0.3, 0.4
-	local frame = {
-		healthBar = {
-			GetStatusBarColor = function()
-				return currentR, currentG, currentB
-			end,
-			SetStatusBarColor = function(_, r, g, b)
-				currentR, currentG, currentB = r, g, b
-			end,
-		},
-	}
-
-	QuestTogether:ApplyQuestTintToNameplate(frame)
-	AssertTrue(math.abs(currentR - 0.95) < 0.001)
-	AssertTrue(math.abs(currentG - 0.45) < 0.001)
-	AssertTrue(math.abs(currentB - 0.05) < 0.001)
-
-	QuestTogether.db.profile.nameplateQuestHealthColor = {
-		r = 0.1,
-		g = 0.8,
-		b = 0.2,
-	}
-	QuestTogether:ApplyQuestTintToNameplate(frame)
-	AssertTrue(math.abs(currentR - 0.1) < 0.001)
-	AssertTrue(math.abs(currentG - 0.8) < 0.001)
-	AssertTrue(math.abs(currentB - 0.2) < 0.001)
-
-	QuestTogether:RestoreNameplateHealthColor(frame)
-	AssertTrue(math.abs(currentR - 0.2) < 0.001)
-	AssertTrue(math.abs(currentG - 0.3) < 0.001)
-	AssertTrue(math.abs(currentB - 0.4) < 0.001)
-end)
-
-QuestTogether:RegisterTest("tint baseline is preserved when frame identity is unavailable", function()
-	QuestTogether.isEnabled = true
-	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
-	QuestTogether.db.profile.nameplateQuestHealthColor = { r = 0.95, g = 0.45, b = 0.05 }
-
-	local currentR, currentG, currentB = 0.2, 0.3, 0.4
-	local frame = {
-		healthBar = {
-			GetStatusBarColor = function()
-				return currentR, currentG, currentB
-			end,
-			SetStatusBarColor = function(_, r, g, b)
-				currentR, currentG, currentB = r, g, b
-			end,
-		},
-	}
-
-	QuestTogether:ApplyQuestTintToNameplate(frame)
-	QuestTogether.db.profile.nameplateQuestHealthColor = { r = 0.1, g = 0.8, b = 0.2 }
-	QuestTogether:ApplyQuestTintToNameplate(frame)
-	QuestTogether:RestoreNameplateHealthColor(frame)
-
-	AssertTrue(math.abs(currentR - 0.2) < 0.001)
-	AssertTrue(math.abs(currentG - 0.3) < 0.001)
-	AssertTrue(math.abs(currentB - 0.4) < 0.001)
-end)
-
-QuestTogether:RegisterTest("restore ignores stale cached base color after nameplate frame reuse", function()
-	QuestTogether.isEnabled = true
-	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
-
-	local currentR, currentG, currentB = 0.9, 0.05, 0.05
-	local frame = {
-		unit = "nameplate1",
-		healthBar = {
-			GetStatusBarColor = function()
-				return currentR, currentG, currentB
-			end,
-			SetStatusBarColor = function(_, r, g, b)
-				currentR, currentG, currentB = r, g, b
-			end,
-		},
-	}
-
-	local guidByToken = {
-		nameplate1 = "Creature-0-OLD",
-	}
-
-	WithPatchedMethod(QuestTogether, "GetNameplateUnitGuid", function(_, unitToken)
-		return guidByToken[unitToken]
 	end, function()
-		QuestTogether:ApplyQuestTintToNameplate(frame)
+		WithPatchedMethod(QuestTogether, "FindNearbyPlayerUnitTokenForSender", function(_, senderGUID, senderName)
+			AssertEquals(senderGUID, "Player-9-ZZZ")
+			AssertEquals(senderName, "Targeted-Realm")
+			return "target"
+		end, function()
+			local handled = QuestTogether:HandleAnnouncementEvent({
+				eventType = "QUEST_PROGRESS",
+				senderGUID = "Player-9-ZZZ",
+				classFile = "DRUID",
+				senderName = "Targeted-Realm",
+				text = "7/7 Notes",
+			}, false)
 
-		-- Simulate frame reuse: Blizzard has already set this new neutral unit to yellow.
-		currentR, currentG, currentB = 1.0, 1.0, 0.0
-		guidByToken.nameplate1 = "Creature-0-NEW"
+			AssertTrue(handled)
+			AssertEquals(#printed, 1)
+			AssertTrue(string.find(printed[1], "Targeted", 1, true) ~= nil)
+			AssertTrue(string.find(printed[1], "|cffffd200: 7/7 Notes|r", 1, true) ~= nil)
+		end)
+	end)
+end)
 
-		QuestTogether:RestoreNameplateHealthColor(frame)
-		AssertTrue(math.abs(currentR - 1.0) < 0.001)
-		AssertTrue(math.abs(currentG - 1.0) < 0.001)
-		AssertTrue(math.abs(currentB - 0.0) < 0.001)
-		AssertTrue(QuestTogether.nameplateBaseHealthColorByUnitFrame[frame] == nil)
+QuestTogether:RegisterTest("local announcement hides own bubble when configured", function()
+	local printed = {}
+	local bubbleCalls = 0
+	QuestTogether.db.profile.showChatLogs = true
+	QuestTogether.db.profile.showChatBubbles = true
+	QuestTogether.db.profile.hideMyOwnChatBubbles = true
+
+	QuestTogether.PrintRaw = function(_, message)
+		printed[#printed + 1] = message
+	end
+
+	WithPatchedMethod(QuestTogether, "ShowPrototypeBubbleOnUnitNameplate", function()
+		bubbleCalls = bubbleCalls + 1
+		return true
+	end, function()
+		local handled = QuestTogether:HandleAnnouncementEvent({
+			eventType = "QUEST_ACCEPTED",
+			senderGUID = "Player-1-ABC",
+			classFile = "MAGE",
+			senderName = "MyPlayer-Realm",
+			text = "Quest Accepted: Test Quest",
+		}, true)
+
+		AssertTrue(handled)
+		AssertEquals(#printed, 1)
+		AssertEquals(bubbleCalls, 0)
 	end)
 end)

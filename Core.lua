@@ -20,6 +20,7 @@ _G.QuestTogether = QuestTogether
 
 QuestTogether.addonName = addonName or "QuestTogether"
 QuestTogether.commPrefix = "QuestTogether"
+QuestTogether.announcementChannelName = "QuestTogetherAnnounce1"
 
 -- Runtime state flags.
 QuestTogether.isInitialized = QuestTogether.isInitialized or false
@@ -44,10 +45,14 @@ QuestTogether.DEFAULTS = {
 		announceWorldQuestAreaLeave = true,
 		announceWorldQuestProgress = true,
 		announceWorldQuestCompleted = true,
+		showChatBubbles = true,
+		hideMyOwnChatBubbles = false,
+		showChatLogs = true,
+		showProgressFor = "party_nearby",
+		chatBubbleSize = "medium",
+		chatBubbleDuration = 3,
 		debugMode = false,
 		doEmotes = true,
-		fallbackChannel = "console",
-		primaryChannel = "party",
 		nameplateQuestIconEnabled = true,
 		nameplateQuestIconStyle = "prefix",
 		nameplateQuestHealthColorEnabled = true,
@@ -59,25 +64,8 @@ QuestTogether.DEFAULTS = {
 	},
 	global = {
 		questTrackers = {},
+		personalBubbleAnchors = {},
 	},
-}
-
--- Channels users can pick from in settings.
-QuestTogether.channelLabels = {
-	none = "None",
-	console = "Console",
-	guild = "Guild",
-	instance = "Instance",
-	party = "Party",
-	raid = "Raid",
-}
-
-QuestTogether.channelOrder = {
-	"console",
-	"guild",
-	"instance",
-	"party",
-	"raid",
 }
 
 QuestTogether.nameplateQuestIconStyleLabels = {
@@ -94,9 +82,71 @@ QuestTogether.nameplateQuestIconStyleOrder = {
 	"prefix",
 }
 
-function QuestTogether:IsPrimaryChannel(channelKey)
-	for _, candidate in ipairs(self.channelOrder) do
-		if candidate == channelKey then
+QuestTogether.showProgressForLabels = {
+	party_nearby = "Party & Nearby Players",
+	party_only = "Party Only",
+}
+
+QuestTogether.showProgressForOrder = {
+	"party_nearby",
+	"party_only",
+}
+
+QuestTogether.chatBubbleSizeLabels = {
+	large = "Large",
+	medium = "Medium",
+	small = "Small",
+}
+
+QuestTogether.chatBubbleSizeOrder = {
+	"large",
+	"medium",
+	"small",
+}
+
+QuestTogether.chatBubbleDurationLabels = {
+	[2] = "2 Seconds",
+	[3] = "3 Seconds",
+	[4] = "4 Seconds",
+	[5] = "5 Seconds",
+}
+
+QuestTogether.chatBubbleDurationOrder = {
+	2,
+	3,
+	4,
+	5,
+}
+
+QuestTogether.DEFAULT_PERSONAL_BUBBLE_ANCHOR = {
+	point = "CENTER",
+	relativePoint = "CENTER",
+	x = 0,
+	y = 120,
+}
+
+function QuestTogether:IsShowProgressFor(value)
+	for _, candidate in ipairs(self.showProgressForOrder) do
+		if candidate == value then
+			return true
+		end
+	end
+	return false
+end
+
+function QuestTogether:IsChatBubbleSize(sizeKey)
+	for _, candidate in ipairs(self.chatBubbleSizeOrder) do
+		if candidate == sizeKey then
+			return true
+		end
+	end
+	return false
+end
+
+function QuestTogether:IsChatBubbleDuration(durationValue)
+	local numericValue = tonumber(durationValue)
+	for _, candidate in ipairs(self.chatBubbleDurationOrder) do
+		if candidate == numericValue then
 			return true
 		end
 	end
@@ -122,6 +172,118 @@ function QuestTogether:GetNameplateQuestIconStyle()
 		return configured
 	end
 	return self.DEFAULTS.profile.nameplateQuestIconStyle
+end
+
+function QuestTogether:GetShowProgressForLabel(value)
+	return self.showProgressForLabels[value] or tostring(value)
+end
+
+function QuestTogether:GetChatBubbleSizeLabel(sizeKey)
+	return self.chatBubbleSizeLabels[sizeKey] or tostring(sizeKey)
+end
+
+function QuestTogether:GetChatBubbleDurationLabel(durationValue)
+	local numericValue = tonumber(durationValue)
+	return self.chatBubbleDurationLabels[numericValue] or tostring(durationValue)
+end
+
+function QuestTogether:GetPersonalBubbleAnchorKey()
+	if self.GetPlayerFullName then
+		local fullName = self:GetPlayerFullName()
+		if fullName and fullName ~= "" then
+			return fullName
+		end
+	end
+
+	local playerName = self:GetPlayerName()
+	if playerName and playerName ~= "" then
+		return playerName
+	end
+
+	return "player"
+end
+
+function QuestTogether:GetPersonalBubbleAnchorStore()
+	if not self.db or not self.db.global then
+		return nil
+	end
+
+	if type(self.db.global.personalBubbleAnchors) ~= "table" then
+		self.db.global.personalBubbleAnchors = {}
+	end
+
+	return self.db.global.personalBubbleAnchors
+end
+
+function QuestTogether:GetPersonalBubbleAnchor()
+	local defaults = self.DEFAULT_PERSONAL_BUBBLE_ANCHOR
+	local anchor = {
+		point = defaults.point,
+		relativePoint = defaults.relativePoint,
+		x = defaults.x,
+		y = defaults.y,
+	}
+
+	local store = self:GetPersonalBubbleAnchorStore()
+	local key = self:GetPersonalBubbleAnchorKey()
+	local saved = store and store[key] or nil
+	if type(saved) ~= "table" then
+		return anchor
+	end
+
+	if type(saved.point) == "string" and saved.point ~= "" then
+		anchor.point = saved.point
+	end
+	if type(saved.relativePoint) == "string" and saved.relativePoint ~= "" then
+		anchor.relativePoint = saved.relativePoint
+	end
+	if tonumber(saved.x) then
+		anchor.x = tonumber(saved.x)
+	end
+	if tonumber(saved.y) then
+		anchor.y = tonumber(saved.y)
+	end
+
+	return anchor
+end
+
+function QuestTogether:SetPersonalBubbleAnchor(point, relativePoint, offsetX, offsetY)
+	local store = self:GetPersonalBubbleAnchorStore()
+	if not store then
+		return false
+	end
+
+	local defaults = self.DEFAULT_PERSONAL_BUBBLE_ANCHOR
+	store[self:GetPersonalBubbleAnchorKey()] = {
+		point = type(point) == "string" and point ~= "" and point or defaults.point,
+		relativePoint = type(relativePoint) == "string" and relativePoint ~= "" and relativePoint or defaults.relativePoint,
+		x = tonumber(offsetX) or defaults.x,
+		y = tonumber(offsetY) or defaults.y,
+	}
+
+	if self.ApplySavedPersonalBubbleAnchor then
+		self:ApplySavedPersonalBubbleAnchor()
+	end
+	if self.RefreshPersonalBubbleAnchorVisualState then
+		self:RefreshPersonalBubbleAnchorVisualState()
+	end
+	return true
+end
+
+function QuestTogether:ResetPersonalBubbleAnchor()
+	local store = self:GetPersonalBubbleAnchorStore()
+	if not store then
+		return false
+	end
+
+	store[self:GetPersonalBubbleAnchorKey()] = nil
+	if self.ApplySavedPersonalBubbleAnchor then
+		self:ApplySavedPersonalBubbleAnchor()
+	end
+	if self.RefreshPersonalBubbleAnchorVisualState then
+		self:RefreshPersonalBubbleAnchorVisualState()
+	end
+	return true
 end
 
 -- Emotes used when celebrating completed quests.
@@ -178,17 +340,20 @@ QuestTogether.API = QuestTogether.API or {
 	Delay = function(seconds, callback)
 		C_Timer.After(seconds, callback)
 	end,
+	JoinPermanentChannel = function(name, password, chatFrameId, hasVoice)
+		return JoinPermanentChannel(name, password, chatFrameId, hasVoice)
+	end,
+	LeaveChannelByName = function(name)
+		return LeaveChannelByName(name)
+	end,
+	GetChannelName = function(name)
+		return GetChannelName(name)
+	end,
 	RegisterAddonPrefix = function(prefix)
 		return C_ChatInfo.RegisterAddonMessagePrefix(prefix)
 	end,
 	SendAddonMessage = function(prefix, message, channel, target)
-		C_ChatInfo.SendAddonMessage(prefix, message, channel, target)
-	end,
-	SendChatMessage = function(message, channel)
-		SendChatMessage(message, channel)
-	end,
-	IsInGuild = function()
-		return IsInGuild()
+		return C_ChatInfo.SendAddonMessage(prefix, message, channel, target)
 	end,
 	IsInInstanceGroup = function()
 		return IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
@@ -222,6 +387,9 @@ QuestTogether.API = QuestTogether.API or {
 	UnitExists = function(unitToken)
 		return UnitExists(unitToken)
 	end,
+	UnitGUID = function(unitToken)
+		return UnitGUID(unitToken)
+	end,
 	UnitFullName = function(unitToken)
 		return UnitFullName(unitToken)
 	end,
@@ -230,6 +398,15 @@ QuestTogether.API = QuestTogether.API or {
 	end,
 	UnitName = function(unitToken)
 		return UnitName(unitToken)
+	end,
+	UnitInParty = function(unitToken)
+		return UnitInParty(unitToken)
+	end,
+	UnitInRaid = function(unitToken)
+		return UnitInRaid(unitToken)
+	end,
+	Ambiguate = function(name, context)
+		return Ambiguate(name, context)
 	end,
 	GetRealmName = function()
 		return GetRealmName()
@@ -269,6 +446,86 @@ function QuestTogether:Print(message)
 	end
 end
 
+function QuestTogether:PrintRaw(message)
+	local text = tostring(message)
+	if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+		DEFAULT_CHAT_FRAME:AddMessage(text)
+	else
+		print(text)
+	end
+end
+
+function QuestTogether:GetQuestIconChatTag(size)
+	local texturePath = self.NAMEPLATE_QUEST_ICON_TEXTURE
+	if type(texturePath) ~= "string" or texturePath == "" then
+		return ""
+	end
+
+	local iconSize = math.max(1, math.floor(tonumber(size) or 14))
+	return string.format("|T%s:%d:%d:0:0|t", texturePath, iconSize, iconSize)
+end
+
+function QuestTogether:GetClassColorCode(classFile)
+	local colorTable = nil
+	if CUSTOM_CLASS_COLORS and classFile and CUSTOM_CLASS_COLORS[classFile] then
+		colorTable = CUSTOM_CLASS_COLORS[classFile]
+	elseif RAID_CLASS_COLORS and classFile and RAID_CLASS_COLORS[classFile] then
+		colorTable = RAID_CLASS_COLORS[classFile]
+	end
+
+	if not colorTable or not colorTable.colorStr then
+		return "|cffffffff"
+	end
+
+	return "|c" .. tostring(colorTable.colorStr)
+end
+
+function QuestTogether:GetPlayerClassFile()
+	local _, classFile = self.API.UnitClass("player")
+	return classFile or "PRIEST"
+end
+
+function QuestTogether:GetShortDisplayName(name)
+	if not name or name == "" then
+		return "Unknown"
+	end
+
+	local ambiguate = self.API.Ambiguate or Ambiguate
+	if type(ambiguate) == "function" then
+		return ambiguate(name, "short")
+	end
+
+	return tostring(name)
+end
+
+function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile)
+	local iconTag = self:GetQuestIconChatTag(14)
+	local trimmedTargetName = self:GetShortDisplayName(targetName)
+	local trimmedMessage = tostring(message or "")
+	local body = trimmedMessage
+	local speakerLabel = trimmedTargetName ~= "" and trimmedTargetName or "QT"
+	local speakerColor = self:GetClassColorCode(classFile)
+	local speakerText = speakerColor .. speakerLabel .. "|r"
+
+	if iconTag ~= "" then
+		return iconTag .. " " .. speakerText .. "|cffffd200: " .. body .. "|r"
+	end
+
+	return speakerText .. "|cffffd200: " .. body .. "|r"
+end
+
+function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile)
+	local speakerName = targetName
+	if speakerName == nil or speakerName == "" then
+		speakerName = self:GetPlayerName()
+	end
+	local resolvedClassFile = classFile
+	if not resolvedClassFile or resolvedClassFile == "" then
+		resolvedClassFile = self:GetPlayerClassFile()
+	end
+	self:PrintRaw(self:BuildConsoleAnnouncementMessage(speakerName, message, resolvedClassFile))
+end
+
 function QuestTogether:Debug(message)
 	if self.db and self.db.profile and self.db.profile.debugMode then
 		self:Print("Debug: " .. tostring(message))
@@ -286,8 +543,27 @@ function QuestTogether:IsSelfSender(sender)
 	return Ambiguate(sender, "short") == self:GetPlayerName()
 end
 
-function QuestTogether:GetChannelDisplayName(channelKey)
-	return self.channelLabels[channelKey] or tostring(channelKey)
+function QuestTogether:GetAnnouncementOptionKey(eventType)
+	local keysByType = {
+		QUEST_ACCEPTED = "announceAccepted",
+		QUEST_COMPLETED = "announceCompleted",
+		QUEST_REMOVED = "announceRemoved",
+		QUEST_PROGRESS = "announceProgress",
+		WORLD_QUEST_ENTERED = "announceWorldQuestAreaEnter",
+		WORLD_QUEST_LEFT = "announceWorldQuestAreaLeave",
+		WORLD_QUEST_PROGRESS = "announceWorldQuestProgress",
+		WORLD_QUEST_COMPLETED = "announceWorldQuestCompleted",
+	}
+
+	return keysByType[eventType]
+end
+
+function QuestTogether:ShouldDisplayAnnouncementType(eventType)
+	local optionKey = self:GetAnnouncementOptionKey(eventType)
+	if not optionKey then
+		return true
+	end
+	return self:GetOption(optionKey) and true or false
 end
 
 function QuestTogether:IsWorldQuest(questId)
@@ -321,37 +597,23 @@ function QuestTogether:GetQuestTitle(questId, questInfo)
 	return "Quest " .. tostring(questId)
 end
 
-function QuestTogether:GetAllowedFallbackChannels(primaryChannel)
-	local allowed = {}
-	for _, channelKey in ipairs(self.channelOrder) do
-		if channelKey ~= primaryChannel then
-			allowed[#allowed + 1] = channelKey
-		end
-	end
-	allowed[#allowed + 1] = "none"
-	return allowed
-end
-
-function QuestTogether:NormalizeChannels()
-	local profile = self.db.profile
-	if not self:IsPrimaryChannel(profile.primaryChannel) then
-		profile.primaryChannel = self.DEFAULTS.profile.primaryChannel
-	end
-	if not self.channelLabels[profile.fallbackChannel] then
-		profile.fallbackChannel = self.DEFAULTS.profile.fallbackChannel
-	end
-
-	-- Fallback channel should never equal the primary channel.
-	if profile.fallbackChannel == profile.primaryChannel then
-		local fallbacks = self:GetAllowedFallbackChannels(profile.primaryChannel)
-		profile.fallbackChannel = fallbacks[1] or "console"
-	end
-end
-
 function QuestTogether:NormalizeNameplateOptions()
 	local profile = self.db.profile
 	if not self:IsNameplateQuestIconStyle(profile.nameplateQuestIconStyle) then
 		profile.nameplateQuestIconStyle = self.DEFAULTS.profile.nameplateQuestIconStyle
+	end
+end
+
+function QuestTogether:NormalizeAnnouncementDisplayOptions()
+	local profile = self.db.profile
+	if not self:IsShowProgressFor(profile.showProgressFor) then
+		profile.showProgressFor = self.DEFAULTS.profile.showProgressFor
+	end
+	if not self:IsChatBubbleSize(profile.chatBubbleSize) then
+		profile.chatBubbleSize = self.DEFAULTS.profile.chatBubbleSize
+	end
+	if not self:IsChatBubbleDuration(profile.chatBubbleDuration) then
+		profile.chatBubbleDuration = self.DEFAULTS.profile.chatBubbleDuration
 	end
 end
 
@@ -366,25 +628,37 @@ function QuestTogether:SetOption(key, value)
 	if not self.db or not self.db.profile then
 		return false
 	end
-	if key == "primaryChannel" and not self:IsPrimaryChannel(value) then
+	if key == "showProgressFor" and not self:IsShowProgressFor(value) then
+		return false
+	end
+	if key == "chatBubbleSize" and not self:IsChatBubbleSize(value) then
+		return false
+	end
+	if key == "chatBubbleDuration" and not self:IsChatBubbleDuration(value) then
 		return false
 	end
 	if key == "nameplateQuestIconStyle" and not self:IsNameplateQuestIconStyle(value) then
 		return false
 	end
 	self.db.profile[key] = value
-	if key == "primaryChannel" or key == "fallbackChannel" then
-		self:NormalizeChannels()
-	end
 	if key == "nameplateQuestIconStyle" then
 		self:NormalizeNameplateOptions()
+	end
+	if key == "showProgressFor" or key == "chatBubbleSize" or key == "chatBubbleDuration" then
+		self:NormalizeAnnouncementDisplayOptions()
 	end
 	if key == "debugMode" then
 		if self.RefreshPartyRoster then
 			self:RefreshPartyRoster()
 		end
-		if self.UpdateDebugPartySimulationData then
-			self:UpdateDebugPartySimulationData()
+	end
+	if
+		key == "showChatBubbles"
+		or key == "chatBubbleSize"
+		or key == "chatBubbleDuration"
+	then
+		if self.RefreshPersonalBubbleAnchorVisualState then
+			self:RefreshPersonalBubbleAnchorVisualState()
 		end
 	end
 	if
@@ -438,84 +712,8 @@ function QuestTogether:InitializeDatabase()
 	end
 	self.db = _G.QuestTogetherDB
 	self:ApplyDefaults(self.db, self.DEFAULTS)
-	self:NormalizeChannels()
+	self:NormalizeAnnouncementDisplayOptions()
 	self:NormalizeNameplateOptions()
-end
-
-function QuestTogether:CanUseChatChannel(channelKey)
-	if channelKey == "console" then
-		return true
-	elseif channelKey == "none" then
-		return false
-	elseif channelKey == "guild" then
-		return self.API.IsInGuild()
-	elseif channelKey == "instance" then
-		return self.API.IsInInstanceGroup()
-	elseif channelKey == "party" then
-		return self.API.IsInParty()
-	elseif channelKey == "raid" then
-		return self.API.IsInRaid()
-	end
-	return false
-end
-
-function QuestTogether:SendToChannel(channelKey, message)
-	if channelKey == "console" then
-		self:Print(message)
-		return true
-	end
-
-	if not self:CanUseChatChannel(channelKey) then
-		return false
-	end
-
-	if channelKey == "guild" then
-		self.API.SendChatMessage(message, "GUILD")
-		return true
-	elseif channelKey == "instance" then
-		self.API.SendChatMessage(message, "INSTANCE_CHAT")
-		return true
-	elseif channelKey == "party" then
-		self.API.SendChatMessage(message, "PARTY")
-		return true
-	elseif channelKey == "raid" then
-		self.API.SendChatMessage(message, "RAID")
-		return true
-	end
-
-	return false
-end
-
-function QuestTogether:Announce(message)
-	self:Debug("Announce(" .. tostring(message) .. ")")
-
-	local primaryChannel = self:GetOption("primaryChannel")
-	local fallbackChannel = self:GetOption("fallbackChannel")
-
-	if self:SendToChannel(primaryChannel, message) then
-		return true
-	end
-	if self:SendToChannel(fallbackChannel, message) then
-		return true
-	end
-
-	self:Debug(
-		"Unable to send message to primary or fallback channel: "
-			.. tostring(primaryChannel)
-			.. "|"
-			.. tostring(fallbackChannel)
-	)
-	return false
-end
-
-function QuestTogether:GetBestAddonChannel()
-	if self.API.IsInInstanceGroup() then
-		return "INSTANCE_CHAT"
-	end
-	if self.API.IsInParty() then
-		return "PARTY"
-	end
-	return nil
 end
 
 function QuestTogether:RegisterRuntimeEvents()
@@ -557,6 +755,9 @@ function QuestTogether:Enable()
 	self.API.RegisterAddonPrefix(self.commPrefix)
 	self.isEnabled = true
 	self.worldQuestAreaStateByQuestID = {}
+	if self.EnsureAnnouncementChannelJoined then
+		self:EnsureAnnouncementChannelJoined()
+	end
 	if self.RefreshWorldQuestAreaState then
 		self:RefreshWorldQuestAreaState(false)
 	end
@@ -564,14 +765,17 @@ function QuestTogether:Enable()
 	if self.EnableNameplateAugmentation then
 		self:EnableNameplateAugmentation()
 	end
+	if self.TryInstallPersonalBubbleEditModeHooks then
+		self:TryInstallPersonalBubbleEditModeHooks()
+	end
+	if self.RefreshPersonalBubbleAnchorVisualState then
+		self:RefreshPersonalBubbleAnchorVisualState()
+	end
 
 	self:Debug("Addon enabled.")
 
 	if self.RefreshPartyRoster then
 		self:RefreshPartyRoster()
-	end
-	if self.ScheduleSyncRequest then
-		self:ScheduleSyncRequest()
 	end
 
 	-- Delay initial scan briefly so quest log APIs are stable right after login/reload.
@@ -594,9 +798,15 @@ function QuestTogether:Disable()
 	self:UnregisterRuntimeEvents()
 	self.isEnabled = false
 	self.worldQuestAreaStateByQuestID = {}
+	if self.LeaveAnnouncementChannel then
+		self:LeaveAnnouncementChannel()
+	end
 
 	if self.DisableNameplateAugmentation then
 		self:DisableNameplateAugmentation()
+	end
+	if self.RefreshPersonalBubbleAnchorVisualState then
+		self:RefreshPersonalBubbleAnchorVisualState()
 	end
 
 	self:Debug("Addon disabled.")
@@ -634,9 +844,6 @@ function QuestTogether:PrintHelp()
 	self:Print("/qt debug on|off|toggle - Control debug mode")
 	self:Print("/qt set <option> <value> - Set a boolean option (e.g. doEmotes off)")
 	self:Print("/qt get <option> - Read an option value")
-	self:Print("/qt channel primary <console|guild|instance|party|raid>")
-	self:Print("/qt channel fallback <console|guild|instance|party|raid|none>")
-	self:Print("/qt cmd <chat command> - Send a remote command to group members running this addon")
 	self:Print("/qt scan - Rescan your quest log now")
 	self:Print("/qt test - Run in-game unit tests")
 end
@@ -716,48 +923,6 @@ function QuestTogether:HandleSlashCommand(input)
 		return
 	end
 
-	if command == "channel" then
-		local which, value = string.match(rest, "^(%S+)%s+(%S+)$")
-		which = string.lower(which or "")
-		value = string.lower(value or "")
-
-		if which ~= "primary" and which ~= "fallback" then
-			self:Print("Usage: /qt channel primary <console|guild|instance|party|raid>")
-			self:Print("Usage: /qt channel fallback <console|guild|instance|party|raid|none>")
-			return
-		end
-		if not self.channelLabels[value] then
-			self:Print("Unknown channel: " .. tostring(value))
-			return
-		end
-		if which == "primary" and value == "none" then
-			self:Print("Primary channel cannot be 'none'.")
-			return
-		end
-
-		if which == "primary" then
-			self:SetOption("primaryChannel", value)
-			self:Print("primaryChannel = " .. tostring(self:GetOption("primaryChannel")))
-		else
-			self:SetOption("fallbackChannel", value)
-			self:Print("fallbackChannel = " .. tostring(self:GetOption("fallbackChannel")))
-		end
-
-		if self.RefreshOptionsWindow then
-			self:RefreshOptionsWindow()
-		end
-		return
-	end
-
-	if command == "cmd" then
-		if rest == "" then
-			self:Print("Usage: /qt cmd <chat command>")
-			return
-		end
-		self:Broadcast("CMD", rest)
-		return
-	end
-
 	if command == "scan" then
 		self:ScanQuestLog()
 		return
@@ -799,7 +964,7 @@ function QuestTogether:ScanQuestLog()
 	end
 
 	-- World quests in the current area can exist outside normal quest-log rows.
-	-- Add them explicitly so progress/sync logic can still operate on them.
+	-- Add them explicitly so progress announcements can still operate on them.
 	if self.GetActiveWorldQuestAreaSnapshot then
 		for questId, questTitle in pairs(self:GetActiveWorldQuestAreaSnapshot()) do
 			if not tracker[questId] then
@@ -815,14 +980,7 @@ function QuestTogether:ScanQuestLog()
 		self:RefreshWorldQuestAreaState(false)
 	end
 
-	self:Print(questsTracked .. " quests are being monitored.")
-
-	if self.RebuildLocalQuestRevisionIndex then
-		self:RebuildLocalQuestRevisionIndex()
-	end
-	if self.UpdateDebugPartySimulationData then
-		self:UpdateDebugPartySimulationData()
-	end
+	self:PrintConsoleAnnouncement(questsTracked .. " quests are being monitored by QuestTogether.")
 end
 
 -- Store the current objective text state for one quest.
@@ -871,6 +1029,9 @@ function QuestTogether:OnInitialize()
 	if self.TryInstallNameplateHooks then
 		self:TryInstallNameplateHooks()
 	end
+	if self.TryInstallPersonalBubbleEditModeHooks then
+		self:TryInstallPersonalBubbleEditModeHooks()
+	end
 	self:InitializeSlashCommands()
 	if self.InitializeOptionsWindow then
 		self:InitializeOptionsWindow()
@@ -890,6 +1051,9 @@ end
 function QuestTogether:ADDON_LOADED(_, loadedAddonName)
 	if self.TryInstallNameplateHooks and self.isInitialized then
 		self:TryInstallNameplateHooks()
+	end
+	if loadedAddonName == "Blizzard_EditMode" and self.TryInstallPersonalBubbleEditModeHooks then
+		self:TryInstallPersonalBubbleEditModeHooks()
 	end
 
 	if loadedAddonName ~= self.addonName then

@@ -3,9 +3,8 @@ QuestTogether Event Handlers
 
 Responsibilities in this file:
 - Detect local quest changes.
-- Announce and emote locally according to options.
-- Emit compact quest deltas instead of full tracker snapshots.
-- Trigger sync bootstrap requests when roster state changes.
+- Publish lightweight announcement events.
+- Display local announcements according to local options.
 ]]
 
 local QuestTogether = _G.QuestTogether
@@ -77,53 +76,20 @@ end
 
 function QuestTogether:HandleQuestCompleted(questTitle, questId)
 	if questId and self:IsWorldQuest(questId) then
-		if self:GetOption("announceWorldQuestCompleted") then
-			self:Announce("World Quest Completed: " .. tostring(questTitle))
-		end
-	elseif self:GetOption("announceCompleted") then
-		self:Announce("Quest Completed: " .. tostring(questTitle))
+		self:PublishAnnouncementEvent("WORLD_QUEST_COMPLETED", "World Quest Completed: " .. tostring(questTitle))
+	else
+		self:PublishAnnouncementEvent("QUEST_COMPLETED", "Quest Completed: " .. tostring(questTitle))
 	end
 
-	-- Always send the token. Receivers decide locally via their own doEmotes option.
-	local emoteToken = self:PickRandomCompletionEmote()
-	self:Broadcast("EMOTE", emoteToken)
-	self:PlayLocalCompletionEmote(emoteToken)
+	self:PlayLocalCompletionEmote(self:PickRandomCompletionEmote())
 end
 
 function QuestTogether:HandleQuestRemoved(questTitle)
-	if self:GetOption("announceRemoved") then
-		self:Announce("Quest Removed: " .. tostring(questTitle))
-	end
+	self:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: " .. tostring(questTitle))
 end
 
-function QuestTogether:ShouldAnnounceObjectiveProgress(questId, currentValue)
-	if not currentValue or currentValue <= 0 then
-		return false
-	end
-
-	if self:IsWorldQuest(questId) then
-		return self:GetOption("announceWorldQuestProgress")
-	end
-
-	return self:GetOption("announceProgress")
-end
-
-function QuestTogether:ScheduleSyncRequest()
-	if not self.isEnabled then
-		return
-	end
-	if self.syncRequestScheduled then
-		return
-	end
-
-	self.syncRequestScheduled = true
-	local jitterSeconds = (self.API.Random(200, 600) or 300) / 1000
-	self.API.Delay(jitterSeconds, function()
-		self.syncRequestScheduled = false
-		if self.isEnabled and self.RequestPartySync then
-			self:RequestPartySync()
-		end
-	end)
+function QuestTogether:ShouldPublishObjectiveProgress(currentValue)
+	return currentValue and currentValue > 0
 end
 
 function QuestTogether:HandleGroupRosterChanged(reason)
@@ -132,10 +98,7 @@ function QuestTogether:HandleGroupRosterChanged(reason)
 		self:RefreshPartyRoster()
 	end
 	local newFingerprint = self:GetPartyRosterFingerprint()
-
-	if reason == "GROUP_JOINED" or previousFingerprint ~= newFingerprint then
-		self:ScheduleSyncRequest()
-	end
+	self:Debug("HandleGroupRosterChanged(" .. tostring(reason) .. ") " .. tostring(previousFingerprint ~= newFingerprint))
 end
 
 -- Snapshot world quests from the current area task table.
@@ -179,17 +142,17 @@ function QuestTogether:RefreshWorldQuestAreaState(shouldAnnounce)
 	)
 
 	for questId, questTitle in pairs(currentState) do
-		if not previousState[questId] and shouldAnnounce and self:GetOption("announceWorldQuestAreaEnter") then
-			self:Announce("World Quest Entered: " .. tostring(questTitle))
+		if not previousState[questId] and shouldAnnounce then
+			self:PublishAnnouncementEvent("WORLD_QUEST_ENTERED", "World Quest Entered: " .. tostring(questTitle))
 		end
 	end
 
 	for questId, previousTitle in pairs(previousState) do
 		if not currentState[questId] then
 			local wasCompleted = self.questsCompleted[questId] == true
-			if shouldAnnounce and not wasCompleted and self:GetOption("announceWorldQuestAreaLeave") then
+			if shouldAnnounce and not wasCompleted then
 				local questTitle = previousTitle or self:GetQuestTitle(questId)
-				self:Announce("Left World Quest: " .. tostring(questTitle))
+				self:PublishAnnouncementEvent("WORLD_QUEST_LEFT", "Left World Quest: " .. tostring(questTitle))
 			end
 		end
 	end
@@ -214,12 +177,6 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 				local worldQuestTitle = self:GetQuestTitle(questId)
 				self:WatchQuest(questId, { title = worldQuestTitle })
 				self:RefreshWorldQuestAreaState(true)
-				if self.UpdateDebugPartySimulationData then
-					self:UpdateDebugPartySimulationData()
-				end
-				if self.SendQuestDelta then
-					self:SendQuestDelta("Q_ADD", questId, tracker[questId])
-				end
 			else
 				self:Debug("Quest " .. tostring(questId) .. " not found in quest log.")
 			end
@@ -235,19 +192,13 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 			return
 		end
 
-		if not isWorldQuest and self:GetOption("announceAccepted") then
-			self:Announce("Quest Accepted: " .. tostring(questInfo.title))
+		if not isWorldQuest then
+			self:PublishAnnouncementEvent("QUEST_ACCEPTED", "Quest Accepted: " .. tostring(questInfo.title))
 		end
 
 		self:WatchQuest(questId, questInfo)
 		if isWorldQuest then
 			self:RefreshWorldQuestAreaState(true)
-		end
-		if self.UpdateDebugPartySimulationData then
-			self:UpdateDebugPartySimulationData()
-		end
-		if self.SendQuestDelta then
-			self:SendQuestDelta("Q_ADD", questId, tracker[questId])
 		end
 	end)
 end
@@ -280,12 +231,6 @@ function QuestTogether:QUEST_REMOVED(_, questId)
 
 			self.worldQuestAreaStateByQuestID[questId] = nil
 			tracker[questId] = nil
-			if self.UpdateDebugPartySimulationData then
-				self:UpdateDebugPartySimulationData()
-			end
-			if self.SendQuestDelta then
-				self:SendQuestDelta("Q_REM", questId)
-			end
 			self:RefreshWorldQuestAreaState(true)
 			if questWasCompleted then
 				self.questsCompleted[questId] = nil
@@ -299,7 +244,7 @@ function QuestTogether:SUPER_TRACKING_CHANGED()
 end
 
 -- UNIT_QUEST_LOG_CHANGED indicates objective and completion changes.
--- Emit compact objective deltas only for changed indices.
+-- Emit local progress announcements only when numeric progress increases.
 function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 	self:Debug("UNIT_QUEST_LOG_CHANGED(" .. tostring(unit) .. ")")
 
@@ -336,12 +281,11 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 						local hasForwardProgress =
 							DidObjectiveProgressIncrease(oldObjectiveText, oldObjectiveValue, objectiveText, currentValue)
 						local resolvedProgressValue = ResolveObjectiveProgressValue(objectiveText, currentValue)
-						if
-							(not isInitialObjectiveBaseline)
-							and hasForwardProgress
-							and self:ShouldAnnounceObjectiveProgress(questId, resolvedProgressValue)
-						then
-							self:Announce(objectiveText)
+						if (not isInitialObjectiveBaseline) and hasForwardProgress and self:ShouldPublishObjectiveProgress(
+							resolvedProgressValue
+						) then
+							local eventType = self:IsWorldQuest(questId) and "WORLD_QUEST_PROGRESS" or "QUEST_PROGRESS"
+							self:PublishAnnouncementEvent(eventType, objectiveText)
 						end
 						questData.objectives[objectiveIndex] = objectiveText
 						questData.objectiveValues[objectiveIndex] = resolvedProgressValue
@@ -375,19 +319,7 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 					hasObjectiveChanges = true
 					break
 				end
-
-				if hasObjectiveChanges or completionChanged then
-					self:QueueQuestObjectiveDelta(
-						questId,
-						changedObjectives,
-						completionChanged and currentIsComplete or nil
-					)
-				end
 			end
-		end
-
-		if self.UpdateDebugPartySimulationData then
-			self:UpdateDebugPartySimulationData()
 		end
 	end)
 end
@@ -432,6 +364,9 @@ end
 function QuestTogether:PLAYER_ENTERING_WORLD()
 	-- Refresh state after loading screens without emitting synthetic enter/leave lines.
 	self:RefreshWorldQuestAreaState(false)
+	if self.EnsureAnnouncementChannelJoined and self.isEnabled then
+		self:EnsureAnnouncementChannelJoined()
+	end
 end
 
 function QuestTogether:GROUP_JOINED()

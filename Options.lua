@@ -1,17 +1,9 @@
 --[[
 QuestTogether Options Panel (Esc > Options > AddOns)
-
-This file builds a native settings panel that is registered with Blizzard's
-addon settings system. There is no standalone options window.
-
-Open it with:
-- /qt
-- /qt options
 ]]
 
 local QuestTogether = _G.QuestTogether
 
--- Holds references to created controls so we can refresh their values from SavedVariables.
 QuestTogether.optionControls = QuestTogether.optionControls or {}
 
 local function CreateSectionLabel(parent, text, x, y)
@@ -21,16 +13,6 @@ local function CreateSectionLabel(parent, text, x, y)
 	return label
 end
 
-local function CreateDescriptionText(parent, text, x, y, width)
-	local description = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	description:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
-	description:SetWidth(width or 620)
-	description:SetJustifyH("LEFT")
-	description:SetJustifyV("TOP")
-	description:SetText(text)
-	return description
-end
-
 local function CreateCheckbox(parent, optionKey, labelText, tooltipText, x, y)
 	local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
 	checkbox:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
@@ -38,6 +20,7 @@ local function CreateCheckbox(parent, optionKey, labelText, tooltipText, x, y)
 	local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	label:SetPoint("LEFT", checkbox, "RIGHT", 6, 0)
 	label:SetText(labelText)
+	checkbox.Label = label
 
 	if tooltipText and tooltipText ~= "" then
 		checkbox.tooltipText = tooltipText
@@ -45,6 +28,7 @@ local function CreateCheckbox(parent, optionKey, labelText, tooltipText, x, y)
 
 	checkbox:SetScript("OnClick", function(self)
 		QuestTogether:SetOption(optionKey, self:GetChecked() == true)
+		QuestTogether:RefreshOptionsWindow()
 	end)
 
 	return checkbox
@@ -121,12 +105,7 @@ local function CreateColorSwatch(parent, optionKey, labelText, tooltipText, fall
 			g = ClampColorComponent(g, fallbackColor.g),
 			b = ClampColorComponent(b, fallbackColor.b),
 		})
-		if QuestTogether.RefreshOptionsWindow then
-			QuestTogether:RefreshOptionsWindow()
-		else
-			local nextColor = GetColorOption(optionKey, fallbackColor)
-			swatchButton.ColorTexture:SetColorTexture(nextColor.r, nextColor.g, nextColor.b, 1)
-		end
+		QuestTogether:RefreshOptionsWindow()
 	end
 
 	swatchButton:SetScript("OnClick", function()
@@ -163,78 +142,119 @@ local function CreateColorSwatch(parent, optionKey, labelText, tooltipText, fall
 	return swatchButton
 end
 
-local function GetChannelOptions(optionKey)
-	if optionKey == "primaryChannel" then
-		return QuestTogether.channelOrder
-	end
-	return QuestTogether:GetAllowedFallbackChannels(QuestTogether:GetOption("primaryChannel"))
-end
-
-local function CreateChannelDropdown(parent, optionKey, titleText, tooltipText, x, y)
+local function CreateDropdown(parent, titleText, tooltipText, x, y, width, initializeMenu)
 	local title = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	title:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
 	title:SetText(titleText)
 
 	local dropdown = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
 	dropdown:SetPoint("TOPLEFT", title, "BOTTOMLEFT", -16, -2)
+	dropdown.initializeMenu = initializeMenu
+	dropdown.title = title
 
 	if tooltipText and tooltipText ~= "" then
 		dropdown.tooltipText = tooltipText
 	end
 
-	UIDropDownMenu_SetWidth(dropdown, 180)
-
-	local function InitializeDropdown(_, level)
-		local options = GetChannelOptions(optionKey)
-		for _, channelKey in ipairs(options) do
-			local info = UIDropDownMenu_CreateInfo()
-			info.text = QuestTogether:GetChannelDisplayName(channelKey)
-			info.func = function()
-				QuestTogether:SetOption(optionKey, channelKey)
-				QuestTogether:RefreshOptionsWindow()
-				CloseDropDownMenus()
-			end
-			info.checked = QuestTogether:GetOption(optionKey) == channelKey
-			UIDropDownMenu_AddButton(info, level)
-		end
-	end
-
-	dropdown.initializeMenu = InitializeDropdown
-	UIDropDownMenu_Initialize(dropdown, InitializeDropdown)
+	UIDropDownMenu_SetWidth(dropdown, width or 180)
+	UIDropDownMenu_Initialize(dropdown, initializeMenu)
 	return dropdown
 end
 
-local function CreateNameplateIconStyleDropdown(parent, optionKey, titleText, tooltipText, x, y)
-	local title = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	title:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
-	title:SetText(titleText)
-
-	local dropdown = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
-	dropdown:SetPoint("TOPLEFT", title, "BOTTOMLEFT", -16, -2)
-
-	if tooltipText and tooltipText ~= "" then
-		dropdown.tooltipText = tooltipText
-	end
-
-	UIDropDownMenu_SetWidth(dropdown, 140)
-
-	local function InitializeDropdown(_, level)
-		for _, styleKey in ipairs(QuestTogether.nameplateQuestIconStyleOrder) do
-			local info = UIDropDownMenu_CreateInfo()
-			info.text = QuestTogether:GetNameplateQuestIconStyleLabel(styleKey)
-			info.func = function()
-				QuestTogether:SetOption(optionKey, styleKey)
-				QuestTogether:RefreshOptionsWindow()
-				CloseDropDownMenus()
+local function CreateShowProgressForDropdown(parent, x, y)
+	return CreateDropdown(
+		parent,
+		"Show Progress For",
+		"Choose whether to display grouped players only, or grouped plus nearby players with visible nameplates.",
+		x,
+		y,
+		200,
+		function(_, level)
+			for _, value in ipairs(QuestTogether.showProgressForOrder) do
+				local info = UIDropDownMenu_CreateInfo()
+				info.text = QuestTogether:GetShowProgressForLabel(value)
+				info.func = function()
+					QuestTogether:SetOption("showProgressFor", value)
+					QuestTogether:RefreshOptionsWindow()
+					CloseDropDownMenus()
+				end
+				info.checked = QuestTogether:GetOption("showProgressFor") == value
+				UIDropDownMenu_AddButton(info, level)
 			end
-			info.checked = QuestTogether:GetNameplateQuestIconStyle() == styleKey
-			UIDropDownMenu_AddButton(info, level)
 		end
-	end
+	)
+end
 
-	dropdown.initializeMenu = InitializeDropdown
-	UIDropDownMenu_Initialize(dropdown, InitializeDropdown)
-	return dropdown
+local function CreateBubbleSizeDropdown(parent, x, y)
+	return CreateDropdown(
+		parent,
+		"Chat Bubble Size",
+		"Adjust the font size used in QuestTogether chat bubbles.",
+		x,
+		y,
+		150,
+		function(_, level)
+			for _, value in ipairs(QuestTogether.chatBubbleSizeOrder) do
+				local info = UIDropDownMenu_CreateInfo()
+				info.text = QuestTogether:GetChatBubbleSizeLabel(value)
+				info.func = function()
+					QuestTogether:SetOption("chatBubbleSize", value)
+					QuestTogether:RefreshOptionsWindow()
+					CloseDropDownMenus()
+				end
+				info.checked = QuestTogether:GetOption("chatBubbleSize") == value
+				UIDropDownMenu_AddButton(info, level)
+			end
+		end
+	)
+end
+
+local function CreateBubbleDurationDropdown(parent, x, y)
+	return CreateDropdown(
+		parent,
+		"Chat Bubble Duration",
+		"How long QuestTogether bubbles stay visible before fading out.",
+		x,
+		y,
+		150,
+		function(_, level)
+			for _, value in ipairs(QuestTogether.chatBubbleDurationOrder) do
+				local info = UIDropDownMenu_CreateInfo()
+				info.text = QuestTogether:GetChatBubbleDurationLabel(value)
+				info.func = function()
+					QuestTogether:SetOption("chatBubbleDuration", value)
+					QuestTogether:RefreshOptionsWindow()
+					CloseDropDownMenus()
+				end
+				info.checked = tonumber(QuestTogether:GetOption("chatBubbleDuration")) == value
+				UIDropDownMenu_AddButton(info, level)
+			end
+		end
+	)
+end
+
+local function CreateNameplateIconStyleDropdown(parent, x, y)
+	return CreateDropdown(
+		parent,
+		"Quest Icon Style",
+		"Choose where to place the quest icon on the nameplate.",
+		x,
+		y,
+		140,
+		function(_, level)
+			for _, styleKey in ipairs(QuestTogether.nameplateQuestIconStyleOrder) do
+				local info = UIDropDownMenu_CreateInfo()
+				info.text = QuestTogether:GetNameplateQuestIconStyleLabel(styleKey)
+				info.func = function()
+					QuestTogether:SetOption("nameplateQuestIconStyle", styleKey)
+					QuestTogether:RefreshOptionsWindow()
+					CloseDropDownMenus()
+				end
+				info.checked = QuestTogether:GetNameplateQuestIconStyle() == styleKey
+				UIDropDownMenu_AddButton(info, level)
+			end
+		end
+	)
 end
 
 function QuestTogether:RefreshOptionsWindow()
@@ -243,66 +263,67 @@ function QuestTogether:RefreshOptionsWindow()
 	end
 
 	local controls = self.optionControls
-	if controls.announceAccepted then
-		controls.announceAccepted:SetChecked(self:GetOption("announceAccepted"))
-		controls.announceCompleted:SetChecked(self:GetOption("announceCompleted"))
-		controls.announceRemoved:SetChecked(self:GetOption("announceRemoved"))
-		controls.announceProgress:SetChecked(self:GetOption("announceProgress"))
-		if controls.announceWorldQuestAreaEnter then
-			controls.announceWorldQuestAreaEnter:SetChecked(self:GetOption("announceWorldQuestAreaEnter"))
-		end
-		if controls.announceWorldQuestAreaLeave then
-			controls.announceWorldQuestAreaLeave:SetChecked(self:GetOption("announceWorldQuestAreaLeave"))
-		end
-		if controls.announceWorldQuestProgress then
-			controls.announceWorldQuestProgress:SetChecked(self:GetOption("announceWorldQuestProgress"))
-		end
-		if controls.announceWorldQuestCompleted then
-			controls.announceWorldQuestCompleted:SetChecked(self:GetOption("announceWorldQuestCompleted"))
-		end
-		controls.doEmotes:SetChecked(self:GetOption("doEmotes"))
-		controls.debugMode:SetChecked(self:GetOption("debugMode"))
-		if controls.nameplateQuestIconEnabled then
-			controls.nameplateQuestIconEnabled:SetChecked(self:GetOption("nameplateQuestIconEnabled"))
-		end
-		if controls.nameplateQuestIconStyleDropdown then
-			UIDropDownMenu_Initialize(
-				controls.nameplateQuestIconStyleDropdown,
-				controls.nameplateQuestIconStyleDropdown.initializeMenu
-			)
-			UIDropDownMenu_SetText(
-				controls.nameplateQuestIconStyleDropdown,
-				self:GetNameplateQuestIconStyleLabel(self:GetNameplateQuestIconStyle())
-			)
-		end
-		if controls.nameplateQuestHealthColorEnabled then
-			controls.nameplateQuestHealthColorEnabled:SetChecked(self:GetOption("nameplateQuestHealthColorEnabled"))
-		end
-		if controls.nameplateQuestHealthColor then
-			local color = GetColorOption("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR)
-			controls.nameplateQuestHealthColor.ColorTexture:SetColorTexture(color.r, color.g, color.b, 1)
-		end
-		if controls.resetNameplateQuestHealthColor then
-			if IsColorOptionAtDefault("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR) then
-				controls.resetNameplateQuestHealthColor:Hide()
-			else
-				controls.resetNameplateQuestHealthColor:Show()
-			end
-		end
+	controls.announceAccepted:SetChecked(self:GetOption("announceAccepted"))
+	controls.announceCompleted:SetChecked(self:GetOption("announceCompleted"))
+	controls.announceRemoved:SetChecked(self:GetOption("announceRemoved"))
+	controls.announceProgress:SetChecked(self:GetOption("announceProgress"))
+	controls.announceWorldQuestAreaEnter:SetChecked(self:GetOption("announceWorldQuestAreaEnter"))
+	controls.announceWorldQuestAreaLeave:SetChecked(self:GetOption("announceWorldQuestAreaLeave"))
+	controls.announceWorldQuestProgress:SetChecked(self:GetOption("announceWorldQuestProgress"))
+	controls.announceWorldQuestCompleted:SetChecked(self:GetOption("announceWorldQuestCompleted"))
+	controls.showChatBubbles:SetChecked(self:GetOption("showChatBubbles"))
+	controls.hideMyOwnChatBubbles:SetChecked(self:GetOption("hideMyOwnChatBubbles"))
+	controls.showChatLogs:SetChecked(self:GetOption("showChatLogs"))
+	controls.nameplateQuestIconEnabled:SetChecked(self:GetOption("nameplateQuestIconEnabled"))
+	controls.nameplateQuestHealthColorEnabled:SetChecked(self:GetOption("nameplateQuestHealthColorEnabled"))
+	controls.doEmotes:SetChecked(self:GetOption("doEmotes"))
+	controls.debugMode:SetChecked(self:GetOption("debugMode"))
+
+	UIDropDownMenu_Initialize(controls.showProgressForDropdown, controls.showProgressForDropdown.initializeMenu)
+	UIDropDownMenu_SetText(
+		controls.showProgressForDropdown,
+		self:GetShowProgressForLabel(self:GetOption("showProgressFor"))
+	)
+
+	UIDropDownMenu_Initialize(controls.chatBubbleSizeDropdown, controls.chatBubbleSizeDropdown.initializeMenu)
+	UIDropDownMenu_SetText(
+		controls.chatBubbleSizeDropdown,
+		self:GetChatBubbleSizeLabel(self:GetOption("chatBubbleSize"))
+	)
+
+	UIDropDownMenu_Initialize(controls.chatBubbleDurationDropdown, controls.chatBubbleDurationDropdown.initializeMenu)
+	UIDropDownMenu_SetText(
+		controls.chatBubbleDurationDropdown,
+		self:GetChatBubbleDurationLabel(self:GetOption("chatBubbleDuration"))
+	)
+
+	UIDropDownMenu_Initialize(
+		controls.nameplateQuestIconStyleDropdown,
+		controls.nameplateQuestIconStyleDropdown.initializeMenu
+	)
+	UIDropDownMenu_SetText(
+		controls.nameplateQuestIconStyleDropdown,
+		self:GetNameplateQuestIconStyleLabel(self:GetNameplateQuestIconStyle())
+	)
+
+	local color = GetColorOption("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR)
+	controls.nameplateQuestHealthColor.ColorTexture:SetColorTexture(color.r, color.g, color.b, 1)
+
+	if IsColorOptionAtDefault("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR) then
+		controls.resetNameplateQuestHealthColor:Hide()
+	else
+		controls.resetNameplateQuestHealthColor:Show()
 	end
 
-	if controls.primaryChannelDropdown then
-		UIDropDownMenu_Initialize(controls.primaryChannelDropdown, controls.primaryChannelDropdown.initializeMenu)
-		UIDropDownMenu_SetText(
-			controls.primaryChannelDropdown,
-			self:GetChannelDisplayName(self:GetOption("primaryChannel"))
-		)
-		UIDropDownMenu_Initialize(controls.fallbackChannelDropdown, controls.fallbackChannelDropdown.initializeMenu)
-		UIDropDownMenu_SetText(
-			controls.fallbackChannelDropdown,
-			self:GetChannelDisplayName(self:GetOption("fallbackChannel"))
-		)
-	end
+	local showBubbleControls = self:GetOption("showChatBubbles")
+	controls.hideMyOwnChatBubbles:SetShown(showBubbleControls)
+	controls.hideMyOwnChatBubbles.Label:SetShown(showBubbleControls)
+	controls.chatBubbleSizeDropdown:SetShown(showBubbleControls)
+	controls.chatBubbleDurationDropdown:SetShown(showBubbleControls)
+	controls.chatBubbleSizeDropdown.title:SetShown(showBubbleControls)
+	controls.chatBubbleDurationDropdown.title:SetShown(showBubbleControls)
+	controls.personalBubbleEditHint:SetShown(showBubbleControls)
+	controls.resetPersonalBubbleAnchor:SetShown(showBubbleControls)
 end
 
 function QuestTogether:OpenOptionsWindow()
@@ -310,7 +331,6 @@ function QuestTogether:OpenOptionsWindow()
 		self:InitializeOptionsWindow()
 	end
 
-	-- Modern Retail settings API (Dragonflight+ / The War Within).
 	if not (Settings and Settings.OpenToCategory and self.optionsCategory and self.optionsCategory.GetID) then
 		self:Print("Settings API is unavailable; unable to open options.")
 		return
@@ -324,123 +344,82 @@ function QuestTogether:InitializeOptionsWindow()
 		return
 	end
 
-	-- This frame is embedded as a panel in Blizzard's Options > AddOns UI.
 	local frame = CreateFrame("Frame", "QuestTogetherOptionsPanel")
 	frame.name = "QuestTogether"
 
-	-- Title + description.
 	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16)
 	title:SetText("QuestTogether Options")
 
-	CreateSectionLabel(frame, "Where To Announce", 16, -82)
-	local primaryDropdown = CreateChannelDropdown(
-		frame,
-		"primaryChannel",
-		"Primary Chat Channel",
-		"Main channel for quest updates.",
-		16,
-		-106
-	)
-	local fallbackDropdown = CreateChannelDropdown(
-		frame,
-		"fallbackChannel",
-		"Fallback Chat Channel",
-		"Used if primary channel is unavailable.",
-		250,
-		-106
-	)
+	CreateSectionLabel(frame, "What To Announce", 16, -58)
+	local announceAccepted = CreateCheckbox(frame, "announceAccepted", "Announce Quest Acceptance", "", 16, -82)
+	local announceCompleted = CreateCheckbox(frame, "announceCompleted", "Announce Quest Completion", "", 16, -110)
+	local announceRemoved = CreateCheckbox(frame, "announceRemoved", "Announce Quest Removal", "", 16, -138)
+	local announceProgress = CreateCheckbox(frame, "announceProgress", "Announce Quest Progress", "", 16, -166)
+	local announceWorldQuestAreaEnter = CreateCheckbox(frame, "announceWorldQuestAreaEnter", "Announce World Quest Area Enter", "", 330, -82)
+	local announceWorldQuestAreaLeave = CreateCheckbox(frame, "announceWorldQuestAreaLeave", "Announce World Quest Area Leave", "", 330, -110)
+	local announceWorldQuestProgress = CreateCheckbox(frame, "announceWorldQuestProgress", "Announce World Quest Progress", "", 330, -138)
+	local announceWorldQuestCompleted = CreateCheckbox(frame, "announceWorldQuestCompleted", "Announce World Quest Completed", "", 330, -166)
 
-	CreateSectionLabel(frame, "What To Announce", 16, -186)
-	local announceAccepted = CreateCheckbox(
+	CreateSectionLabel(frame, "Display", 16, -212)
+	local showChatBubbles = CreateCheckbox(
 		frame,
-		"announceAccepted",
-		"Announce Quest Acceptance",
-		"Announce when you accept a quest.",
+		"showChatBubbles",
+		"Show Chat Bubbles",
+		"Display QuestTogether bubbles over nearby players and on your personal bubble anchor.",
 		16,
-		-210
+		-236
 	)
-	local announceCompleted = CreateCheckbox(
+	local hideMyOwnChatBubbles = CreateCheckbox(
 		frame,
-		"announceCompleted",
-		"Announce Quest Completion",
-		"Announce when you complete a quest.",
+		"hideMyOwnChatBubbles",
+		"Hide My Own Chat Bubbles",
+		"If enabled, your client still sends local progress to others but does not show your own QuestTogether bubbles.",
+		36,
+		-264
+	)
+	local showChatLogs = CreateCheckbox(
+		frame,
+		"showChatLogs",
+		"Show Chat Logs",
+		"Print QuestTogether announcements in chat when the sender is grouped or nearby.",
 		16,
-		-238
+		-320
 	)
-	local announceRemoved = CreateCheckbox(
-		frame,
-		"announceRemoved",
-		"Announce Quest Removal",
-		"Announce when you remove/abandon a quest.",
-		16,
-		-266
-	)
-	local announceProgress = CreateCheckbox(
-		frame,
-		"announceProgress",
-		"Announce Quest Progress",
-		"Announce objective text changes.",
-		16,
-		-294
-	)
-	local announceWorldQuestAreaEnter = CreateCheckbox(
-		frame,
-		"announceWorldQuestAreaEnter",
-		"Announce World Quest Area Enter",
-		"Announce when a world quest becomes active in your current area.",
-		330,
-		-210
-	)
-	local announceWorldQuestAreaLeave = CreateCheckbox(
-		frame,
-		"announceWorldQuestAreaLeave",
-		"Announce World Quest Area Leave",
-		"Announce when a world quest is no longer active in your current area.",
-		330,
-		-238
-	)
-	local announceWorldQuestProgress = CreateCheckbox(
-		frame,
-		"announceWorldQuestProgress",
-		"Announce World Quest Progress",
-		"Announce objective progress updates for world quests.",
-		330,
-		-266
-	)
-	local announceWorldQuestCompleted = CreateCheckbox(
-		frame,
-		"announceWorldQuestCompleted",
-		"Announce World Quest Completed",
-		"Announce world quest completion separately from normal quests.",
-		330,
-		-294
-	)
+	local showProgressForDropdown = CreateShowProgressForDropdown(frame, 330, -236)
+	local chatBubbleSizeDropdown = CreateBubbleSizeDropdown(frame, 36, -292)
+	local chatBubbleDurationDropdown = CreateBubbleDurationDropdown(frame, 220, -292)
+	local personalBubbleEditHint = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	personalBubbleEditHint:SetPoint("TOPLEFT", frame, "TOPLEFT", 36, -346)
+	personalBubbleEditHint:SetJustifyH("LEFT")
+	personalBubbleEditHint:SetWidth(360)
+	personalBubbleEditHint:SetText("Open Blizzard Edit Mode and drag the QuestTogether Bubble anchor to move your personal bubble.")
 
-	CreateSectionLabel(frame, "Nameplates", 16, -338)
+	local resetPersonalBubbleAnchor = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	resetPersonalBubbleAnchor:SetSize(160, 22)
+	resetPersonalBubbleAnchor:SetPoint("TOPLEFT", frame, "TOPLEFT", 410, -342)
+	resetPersonalBubbleAnchor:SetText("Reset Bubble Position")
+	resetPersonalBubbleAnchor:SetScript("OnClick", function()
+		QuestTogether:ResetPersonalBubbleAnchor()
+	end)
+
+	CreateSectionLabel(frame, "Nameplates", 16, -410)
 	local nameplateQuestIconEnabled = CreateCheckbox(
 		frame,
 		"nameplateQuestIconEnabled",
 		"Quest Objective Icon",
 		"Show a quest icon on default Blizzard nameplates when a unit is a quest objective.",
 		16,
-		-362
+		-434
 	)
-	local nameplateQuestIconStyleDropdown = CreateNameplateIconStyleDropdown(
-		frame,
-		"nameplateQuestIconStyle",
-		"Quest Icon Style",
-		"Choose where to place the quest icon on the nameplate.",
-		36,
-		-388
-	)
+	local nameplateQuestIconStyleDropdown = CreateNameplateIconStyleDropdown(frame, 36, -460)
 	local nameplateQuestHealthColorEnabled = CreateCheckbox(
 		frame,
 		"nameplateQuestHealthColorEnabled",
 		"Quest Objective Health Color",
 		"Tint quest-objective nameplate health bars with your selected quest color.",
 		16,
-		-430
+		-502
 	)
 	local nameplateQuestHealthColor = CreateColorSwatch(
 		frame,
@@ -449,7 +428,7 @@ function QuestTogether:InitializeOptionsWindow()
 		"Choose the color used to tint quest-objective nameplate health bars.",
 		QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR,
 		36,
-		-457
+		-529
 	)
 	local resetNameplateQuestHealthColor = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	resetNameplateQuestHealthColor:SetSize(70, 20)
@@ -466,27 +445,20 @@ function QuestTogether:InitializeOptionsWindow()
 		QuestTogether:RefreshOptionsWindow()
 	end)
 
-	CreateSectionLabel(frame, "Miscellaneous", 16, -508)
+	CreateSectionLabel(frame, "Miscellaneous", 16, -580)
 	local doEmotes = CreateCheckbox(
 		frame,
 		"doEmotes",
 		"Quest Completion Emotes",
-		"If disabled, this character never performs emotes (local completions or incoming emote events).",
+		"If disabled, this character never performs local completion emotes.",
 		16,
-		-532
+		-604
 	)
-	local debugMode = CreateCheckbox(
-		frame,
-		"debugMode",
-		"Debug Mode",
-		"Print debug output in chat.",
-		16,
-		-560
-	)
+	local debugMode = CreateCheckbox(frame, "debugMode", "Debug Mode", "Print debug output in chat.", 16, -632)
 
 	local testButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	testButton:SetSize(180, 24)
-	testButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -602)
+	testButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -674)
 	testButton:SetText("Run In-Game Tests")
 	testButton:SetScript("OnClick", function()
 		QuestTogether:RunTests()
@@ -501,8 +473,6 @@ function QuestTogether:InitializeOptionsWindow()
 	end)
 
 	self.optionControls = {
-		primaryChannelDropdown = primaryDropdown,
-		fallbackChannelDropdown = fallbackDropdown,
 		announceAccepted = announceAccepted,
 		announceCompleted = announceCompleted,
 		announceRemoved = announceRemoved,
@@ -511,13 +481,21 @@ function QuestTogether:InitializeOptionsWindow()
 		announceWorldQuestAreaLeave = announceWorldQuestAreaLeave,
 		announceWorldQuestProgress = announceWorldQuestProgress,
 		announceWorldQuestCompleted = announceWorldQuestCompleted,
-		doEmotes = doEmotes,
-		debugMode = debugMode,
+		showChatBubbles = showChatBubbles,
+		hideMyOwnChatBubbles = hideMyOwnChatBubbles,
+		showChatLogs = showChatLogs,
+		showProgressForDropdown = showProgressForDropdown,
+		chatBubbleSizeDropdown = chatBubbleSizeDropdown,
+		chatBubbleDurationDropdown = chatBubbleDurationDropdown,
+		personalBubbleEditHint = personalBubbleEditHint,
+		resetPersonalBubbleAnchor = resetPersonalBubbleAnchor,
 		nameplateQuestIconEnabled = nameplateQuestIconEnabled,
 		nameplateQuestIconStyleDropdown = nameplateQuestIconStyleDropdown,
 		nameplateQuestHealthColorEnabled = nameplateQuestHealthColorEnabled,
 		nameplateQuestHealthColor = nameplateQuestHealthColor,
 		resetNameplateQuestHealthColor = resetNameplateQuestHealthColor,
+		doEmotes = doEmotes,
+		debugMode = debugMode,
 	}
 
 	frame:SetScript("OnShow", function()
@@ -526,7 +504,6 @@ function QuestTogether:InitializeOptionsWindow()
 
 	self.optionsFrame = frame
 
-	-- Register in Esc > Options > AddOns (modern Settings API only).
 	if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then
 		self:Print("Settings API is unavailable; addon options could not be registered.")
 		self.optionsCategory = nil
