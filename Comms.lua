@@ -231,6 +231,8 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId)
 	local sanitizedText = self:SanitizeAnnouncementText(text)
 	local iconAsset, iconKind = self:GetAnnouncementIconInfo(eventType, questId)
 	local locationInfo = self.GetPlayerAnnouncementLocationInfo and self:GetPlayerAnnouncementLocationInfo() or nil
+	local numericCoordX = locationInfo and self.SafeToNumber and self:SafeToNumber(locationInfo.coordX) or nil
+	local numericCoordY = locationInfo and self.SafeToNumber and self:SafeToNumber(locationInfo.coordY) or nil
 	if sanitizedText == "" then
 		return nil
 	end
@@ -246,8 +248,8 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId)
 		iconAsset = tostring(iconAsset or ""),
 		iconKind = tostring(iconKind or ""),
 		zoneName = locationInfo and tostring(locationInfo.zoneName or "") or "",
-		coordX = locationInfo and locationInfo.coordX and string.format("%.1f", tonumber(locationInfo.coordX) or 0) or "",
-		coordY = locationInfo and locationInfo.coordY and string.format("%.1f", tonumber(locationInfo.coordY) or 0) or "",
+		coordX = numericCoordX and string.format("%.1f", numericCoordX) or "",
+		coordY = numericCoordY and string.format("%.1f", numericCoordY) or "",
 		warMode = locationInfo and tostring(locationInfo.warMode and "1" or "0") or "",
 	}
 end
@@ -415,6 +417,7 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 	local nearbyNameplate = nil
 	local hasNearbyNameplate = false
 	local nearbyUnitToken = nil
+	local nearbyByLocation = false
 	local hasNearbySignal = false
 	if not isLocal and self.FindVisiblePlayerNameplateForSender then
 		nearbyNameplate = self:FindVisiblePlayerNameplateForSender(eventData.senderGUID, senderName)
@@ -423,7 +426,10 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 	if not isLocal and not hasNearbyNameplate and self.FindNearbyPlayerUnitTokenForSender then
 		nearbyUnitToken = self:FindNearbyPlayerUnitTokenForSender(eventData.senderGUID, senderName)
 	end
-	hasNearbySignal = hasNearbyNameplate or nearbyUnitToken ~= nil
+	if not isLocal and not hasNearbyNameplate and nearbyUnitToken == nil and self.IsAnnouncementSenderNearbyByLocation then
+		nearbyByLocation = self:IsAnnouncementSenderNearbyByLocation(eventData)
+	end
+	hasNearbySignal = hasNearbyNameplate or nearbyUnitToken ~= nil or nearbyByLocation
 	isGrouped = self:IsGroupedSender(senderName)
 	local forceAllChatLogs = not isLocal
 		and self:GetOption("showChatLogs")
@@ -431,13 +437,14 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 	local allowRemoteDisplay = isLocal or self:ShouldShowAnnouncementsForRemoteSender(senderName, hasNearbySignal)
 	self:Debugf(
 		"comms",
-		"HandleAnnouncement eventType=%s sender=%s isLocal=%s grouped=%s nearbyNameplate=%s nearbyUnit=%s forceLogs=%s",
+		"HandleAnnouncement eventType=%s sender=%s isLocal=%s grouped=%s nearbyNameplate=%s nearbyUnit=%s nearbyLocation=%s forceLogs=%s",
 		tostring(eventData.eventType),
 		tostring(senderName),
 		tostring(isLocal),
 		tostring(isGrouped),
 		tostring(hasNearbyNameplate),
 		tostring(nearbyUnitToken),
+		tostring(nearbyByLocation),
 		tostring(forceAllChatLogs)
 	)
 

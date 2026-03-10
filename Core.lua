@@ -28,6 +28,7 @@ QuestTogether.CHAT_BUBBLE_SIZE_STEP = 5
 QuestTogether.CHAT_BUBBLE_DURATION_MIN = 1
 QuestTogether.CHAT_BUBBLE_DURATION_MAX = 8
 QuestTogether.CHAT_BUBBLE_DURATION_STEP = 0.5
+QuestTogether.ANNOUNCEMENT_NEARBY_RADIUS = 5
 
 -- Runtime state flags.
 QuestTogether.isInitialized = QuestTogether.isInitialized or false
@@ -524,6 +525,23 @@ QuestTogether.API = QuestTogether.API or {
 	end,
 }
 
+function QuestTogether:IsSecretValue(value)
+	if type(issecretvalue) ~= "function" then
+		return false
+	end
+
+	local ok, result = pcall(issecretvalue, value)
+	return ok and result and true or false
+end
+
+function QuestTogether:SafeToNumber(value)
+	if self:IsSecretValue(value) then
+		return nil
+	end
+
+	return tonumber(value)
+end
+
 -- Deep copy helper used for defaults merging and tests.
 function QuestTogether:DeepCopy(value)
 	if type(value) ~= "table" then
@@ -938,6 +956,22 @@ function QuestTogether:GetShortDisplayName(name)
 	return tostring(name)
 end
 
+function QuestTogether:NormalizeAnnouncementWarModeValue(warMode)
+	if type(warMode) == "boolean" then
+		return warMode
+	end
+	if type(warMode) == "string" then
+		local normalized = string.lower(warMode)
+		if warMode == "1" or normalized == "true" then
+			return true
+		end
+		if warMode == "0" or normalized == "false" then
+			return false
+		end
+	end
+	return nil
+end
+
 function QuestTogether:GetQuestTagInfo(questId)
 	local numericQuestId = tonumber(questId)
 	if not numericQuestId or not C_QuestLog or not C_QuestLog.GetQuestTagInfo then
@@ -1122,20 +1156,67 @@ function QuestTogether:GetPlayerAnnouncementLocationInfo()
 		if position then
 			local rawX = position.x or (position.GetXY and select(1, position:GetXY())) or nil
 			local rawY = position.y or (position.GetXY and select(2, position:GetXY())) or nil
-			if tonumber(rawX) and tonumber(rawY) then
-				coordX = tonumber(rawX) * 100
-				coordY = tonumber(rawY) * 100
+			local numericX = self:SafeToNumber(rawX)
+			local numericY = self:SafeToNumber(rawY)
+			if numericX and numericY then
+				coordX = numericX * 100
+				coordY = numericY * 100
 			end
 		end
 	end
 
 	local warModeActive = self.API.IsWarModeActive and self.API.IsWarModeActive() and true or false
 	return {
+		mapID = mapID,
 		zoneName = zoneName or "",
 		coordX = coordX,
 		coordY = coordY,
 		warMode = warModeActive,
 	}
+end
+
+function QuestTogether:IsAnnouncementSenderNearbyByLocation(locationInfo)
+	if type(locationInfo) ~= "table" then
+		return false
+	end
+
+	local localInfo = self.GetPlayerAnnouncementLocationInfo and self:GetPlayerAnnouncementLocationInfo() or nil
+	if type(localInfo) ~= "table" then
+		return false
+	end
+
+	local localMapID = self:SafeToNumber(localInfo.mapID)
+	local remoteMapID = self:SafeToNumber(locationInfo.mapID)
+	if localMapID and remoteMapID then
+		if localMapID ~= remoteMapID then
+			return false
+		end
+	else
+		local localZoneName = type(localInfo.zoneName) == "string" and localInfo.zoneName or ""
+		local remoteZoneName = type(locationInfo.zoneName) == "string" and locationInfo.zoneName or ""
+		if localZoneName == "" or remoteZoneName == "" or localZoneName ~= remoteZoneName then
+			return false
+		end
+	end
+
+	local localWarMode = self:NormalizeAnnouncementWarModeValue(localInfo.warMode)
+	local remoteWarMode = self:NormalizeAnnouncementWarModeValue(locationInfo.warMode)
+	if localWarMode == nil or remoteWarMode == nil or localWarMode ~= remoteWarMode then
+		return false
+	end
+
+	local localCoordX = self:SafeToNumber(localInfo.coordX)
+	local localCoordY = self:SafeToNumber(localInfo.coordY)
+	local remoteCoordX = self:SafeToNumber(locationInfo.coordX)
+	local remoteCoordY = self:SafeToNumber(locationInfo.coordY)
+	if not localCoordX or not localCoordY or not remoteCoordX or not remoteCoordY then
+		return false
+	end
+
+	local deltaX = localCoordX - remoteCoordX
+	local deltaY = localCoordY - remoteCoordY
+	local radius = self.ANNOUNCEMENT_NEARBY_RADIUS or 5
+	return (deltaX * deltaX + deltaY * deltaY) <= (radius * radius)
 end
 
 function QuestTogether:BuildAnnouncementLocationSuffix(locationInfo)
@@ -1149,24 +1230,13 @@ function QuestTogether:BuildAnnouncementLocationSuffix(locationInfo)
 		parts[#parts + 1] = zoneName
 	end
 
-	local coordX = tonumber(locationInfo.coordX)
-	local coordY = tonumber(locationInfo.coordY)
+	local coordX = self:SafeToNumber(locationInfo.coordX)
+	local coordY = self:SafeToNumber(locationInfo.coordY)
 	if coordX and coordY then
 		parts[#parts + 1] = string.format("%.1f, %.1f", coordX, coordY)
 	end
 
-	local warMode = locationInfo.warMode
-	if type(warMode) == "string" then
-		if warMode == "1" or string.lower(warMode) == "true" then
-			warMode = true
-		elseif warMode == "0" or string.lower(warMode) == "false" then
-			warMode = false
-		elseif warMode == "" then
-			warMode = nil
-		else
-			warMode = nil
-		end
-	end
+	local warMode = self:NormalizeAnnouncementWarModeValue(locationInfo.warMode)
 	if warMode ~= nil then
 		parts[#parts + 1] = warMode and "WM On" or "WM Off"
 	end

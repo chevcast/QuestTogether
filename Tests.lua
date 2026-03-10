@@ -982,6 +982,88 @@ QuestTogether:RegisterTest("remote sender with matching target prints chat log w
 	end)
 end)
 
+QuestTogether:RegisterTest("remote sender nearby by location prints chat log without nameplate", function()
+	local printed = {}
+	QuestTogether.db.profile.showChatLogs = true
+	QuestTogether.db.profile.showChatBubbles = false
+	QuestTogether.db.profile.showProgressFor = "party_nearby"
+
+	QuestTogether.PrintChatLogRaw = function(_, message)
+		printed[#printed + 1] = message
+	end
+
+	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function()
+		return nil
+	end, function()
+		WithPatchedMethod(QuestTogether, "FindNearbyPlayerUnitTokenForSender", function()
+			return nil
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsAnnouncementSenderNearbyByLocation", function(_, locationInfo)
+				AssertEquals(locationInfo.zoneName, "Eversong Woods")
+				AssertEquals(locationInfo.coordX, "41.0")
+				AssertEquals(locationInfo.coordY, "52.0")
+				AssertEquals(locationInfo.warMode, "1")
+				return true
+			end, function()
+				local handled = QuestTogether:HandleAnnouncementEvent({
+					eventType = "QUEST_PROGRESS",
+					senderGUID = "Player-8-LOC",
+					classFile = "PALADIN",
+					senderName = "NearbyCoords-Realm",
+					text = "3/3 Crystals",
+					zoneName = "Eversong Woods",
+					coordX = "41.0",
+					coordY = "52.0",
+					warMode = "1",
+				}, false)
+
+				AssertTrue(handled)
+				AssertEquals(#printed, 1)
+				AssertTrue(string.find(printed[1], "NearbyCoords", 1, true) ~= nil)
+				AssertTrue(string.find(printed[1], "|cffffd200: 3/3 Crystals|r", 1, true) ~= nil)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("remote sender with mismatched location signal stays filtered", function()
+	local printed = 0
+	QuestTogether.db.profile.showChatLogs = true
+	QuestTogether.db.profile.showChatBubbles = false
+	QuestTogether.db.profile.showProgressFor = "party_nearby"
+
+	QuestTogether.PrintChatLogRaw = function()
+		printed = printed + 1
+	end
+
+	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function()
+		return nil
+	end, function()
+		WithPatchedMethod(QuestTogether, "FindNearbyPlayerUnitTokenForSender", function()
+			return nil
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsAnnouncementSenderNearbyByLocation", function()
+				return false
+			end, function()
+				local handled = QuestTogether:HandleAnnouncementEvent({
+					eventType = "QUEST_PROGRESS",
+					senderGUID = "Player-8-FAR",
+					classFile = "PALADIN",
+					senderName = "FarCoords-Realm",
+					text = "3/3 Crystals",
+					zoneName = "Eversong Woods",
+					coordX = "41.0",
+					coordY = "52.0",
+					warMode = "0",
+				}, false)
+
+				AssertFalse(handled)
+				AssertEquals(printed, 0)
+			end)
+		end)
+	end)
+end)
+
 QuestTogether:RegisterTest("dev log all announcements prints remote sender without nearby signal", function()
 	local printed = {}
 	local bubbleCalls = 0
