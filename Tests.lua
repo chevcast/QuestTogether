@@ -326,6 +326,40 @@ QuestTogether:RegisterTest("console announcement message includes icon and playe
 	AssertTrue(string.find(message, "|cffffd200: hello there|r", 1, true) ~= nil)
 end)
 
+QuestTogether:RegisterTest("console announcement message wraps speaker in clickable link", function()
+	WithPatchedMethod(LinkUtil, "FormatLink", function(linkType, linkDisplayText, speakerName)
+		AssertEquals(linkType, QuestTogether.chatLogLinkType)
+		AssertEquals(linkDisplayText, "[MyPlayer]")
+		AssertEquals(speakerName, "MyPlayer-Realm")
+		return "|Hquesttogetherlog:MyPlayer-Realm|h[MyPlayer]|h"
+	end, function()
+		local message = QuestTogether:BuildConsoleAnnouncementMessage("MyPlayer-Realm", "hello there", "MAGE")
+		AssertTrue(string.find(message, "|Hquesttogetherlog:MyPlayer%-Realm|h%[MyPlayer%]|h") ~= nil)
+	end)
+end)
+
+QuestTogether:RegisterTest("chat log speaker link handler opens QuestTogether menu", function()
+	local capturedOwner = nil
+	local capturedSpeaker = nil
+
+	WithPatchedMethod(QuestTogether, "ShowChatLogSpeakerMenu", function(_, ownerFrame, speakerName)
+		capturedOwner = ownerFrame
+		capturedSpeaker = speakerName
+		return true
+	end, function()
+		local response = QuestTogether:HandleChatLogSpeakerLink(
+			nil,
+			nil,
+			{ options = "MyPlayer-Realm" },
+			{ frame = "ChatFrame1" }
+		)
+		AssertEquals(response, LinkProcessorResponse.Handled)
+	end)
+
+	AssertEquals(capturedOwner, "ChatFrame1")
+	AssertEquals(capturedSpeaker, "MyPlayer-Realm")
+end)
+
 QuestTogether:RegisterTest("world quest console announcement uses world quest icon", function()
 	local message =
 		QuestTogether:BuildConsoleAnnouncementMessage("MyPlayer-Realm", "entered the area", "MAGE", "WORLD_QUEST_ENTERED")

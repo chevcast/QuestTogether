@@ -118,6 +118,7 @@ QuestTogether.chatLogDestinationOrder = {
 	"main",
 	"separate",
 }
+QuestTogether.chatLogLinkType = "questtogetherlog"
 
 QuestTogether.DEFAULT_PERSONAL_BUBBLE_ANCHOR = {
 	point = "CENTER",
@@ -1311,14 +1312,25 @@ function QuestTogether:BuildAnnouncementLocationSuffix(locationInfo)
 	return " |cff999999[" .. table.concat(parts, " | ") .. "]|r"
 end
 
-function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType, iconAsset, iconKind, locationInfo)
-	local iconTag = self:GetAnnouncementIconChatTag(eventType, 14, iconAsset, iconKind)
+function QuestTogether:BuildChatLogSpeakerLabel(targetName, classFile)
 	local trimmedTargetName = self:GetShortDisplayName(targetName)
-	local trimmedMessage = tostring(message or "")
-	local body = trimmedMessage
 	local speakerLabel = trimmedTargetName ~= "" and trimmedTargetName or "QT"
 	local speakerColor = self:GetClassColorCode(classFile)
-	local speakerText = speakerColor .. speakerLabel .. "|r"
+
+	if LinkUtil and LinkUtil.FormatLink then
+		local linkDisplayText = "[" .. speakerLabel .. "]"
+		local linkText = LinkUtil.FormatLink(self.chatLogLinkType or "questtogetherlog", linkDisplayText, tostring(targetName or ""))
+		return speakerColor .. linkText .. "|r"
+	end
+
+	return speakerColor .. speakerLabel .. "|r"
+end
+
+function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType, iconAsset, iconKind, locationInfo)
+	local iconTag = self:GetAnnouncementIconChatTag(eventType, 14, iconAsset, iconKind)
+	local trimmedMessage = tostring(message or "")
+	local body = trimmedMessage
+	local speakerText = self:BuildChatLogSpeakerLabel(targetName, classFile)
 
 	if iconTag ~= "" then
 		return iconTag .. speakerText .. "|cffffd200: " .. body .. "|r"
@@ -1401,6 +1413,57 @@ function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, 
 			locationInfo
 		)
 	)
+end
+
+function QuestTogether:ShowChatLogSpeakerMenu(ownerFrame, speakerName)
+	if not MenuUtil or not MenuUtil.CreateContextMenu then
+		return false
+	end
+
+	local shortName = self:GetShortDisplayName(speakerName)
+	local isSeparate = self:GetOption("chatLogDestination") == "separate"
+	MenuUtil.CreateContextMenu(ownerFrame, function(_, rootDescription)
+		rootDescription:CreateTitle(shortName ~= "" and shortName or "QuestTogether")
+
+		local buttonText = isSeparate and "Move QuestTogether Logs to Main Window" or "Move QuestTogether Logs to Separate Window"
+		rootDescription:CreateButton(buttonText, function()
+			self:SetOption("chatLogDestination", isSeparate and "main" or "separate")
+			if self.RefreshOptionsWindow then
+				self:RefreshOptionsWindow()
+			end
+		end)
+	end)
+	return true
+end
+
+function QuestTogether:HandleChatLogSpeakerLink(link, text, linkData, contextData)
+	local speakerName = linkData and linkData.options
+	if not speakerName or speakerName == "" then
+		return LinkProcessorResponse.Handled
+	end
+	if IsModifiedClick and IsModifiedClick() then
+		return LinkProcessorResponse.Handled
+	end
+	return self:ShowChatLogSpeakerMenu(contextData and contextData.frame or UIParent, speakerName) and LinkProcessorResponse.Handled
+		or LinkProcessorResponse.Handled
+end
+
+function QuestTogether:TryInstallChatLogLinkHandler()
+	if self.chatLogLinkHandlerInstalled then
+		return
+	end
+	if not LinkUtil or not LinkUtil.RegisterLinkHandler then
+		return
+	end
+	if LinkUtil.IsLinkHandlerRegistered and LinkUtil.IsLinkHandlerRegistered(self.chatLogLinkType) then
+		self.chatLogLinkHandlerInstalled = true
+		return
+	end
+
+	LinkUtil.RegisterLinkHandler(self.chatLogLinkType, function(link, text, linkData, contextData)
+		return QuestTogether:HandleChatLogSpeakerLink(link, text, linkData, contextData)
+	end)
+	self.chatLogLinkHandlerInstalled = true
 end
 
 function QuestTogether:PrintChatLogDestinationMessage()
@@ -2163,6 +2226,7 @@ function QuestTogether:OnInitialize()
 	if self.TryInstallPersonalBubbleEditModeHooks then
 		self:TryInstallPersonalBubbleEditModeHooks()
 	end
+	self:TryInstallChatLogLinkHandler()
 	self:TryInstallChatWindowHooks()
 	self:InitializeSlashCommands()
 	if self.InitializeOptionsWindow then
