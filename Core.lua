@@ -1159,8 +1159,10 @@ function QuestTogether:BuildAnnouncementLocationSuffix(locationInfo)
 	if type(warMode) == "string" then
 		if warMode == "1" or string.lower(warMode) == "true" then
 			warMode = true
-		elseif warMode == "0" or string.lower(warMode) == "false" or warMode == "" then
+		elseif warMode == "0" or string.lower(warMode) == "false" then
 			warMode = false
+		elseif warMode == "" then
+			warMode = nil
 		else
 			warMode = nil
 		end

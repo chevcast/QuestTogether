@@ -421,6 +421,28 @@ QuestTogether:RegisterTest("dev log all announcements appends location metadata 
 	AssertTrue(string.find(message, "WM On", 1, true) ~= nil)
 end)
 
+QuestTogether:RegisterTest("dev log all announcements omits missing war mode metadata", function()
+	QuestTogether.db.profile.devLogAllAnnouncements = true
+
+	local message = QuestTogether:BuildConsoleAnnouncementMessage(
+		"MyPlayer-Realm",
+		"hello there",
+		"MAGE",
+		"QUEST_PROGRESS",
+		nil,
+		nil,
+		{
+			zoneName = "",
+			coordX = "",
+			coordY = "",
+			warMode = "",
+		}
+	)
+
+	AssertFalse(string.find(message, "WM Off", 1, true) ~= nil)
+	AssertFalse(string.find(message, "[", 1, true) ~= nil)
+end)
+
 QuestTogether:RegisterTest("local announcement event includes resolved icon metadata", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		UnitGUID = function(unitToken)
