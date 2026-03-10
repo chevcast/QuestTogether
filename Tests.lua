@@ -623,6 +623,9 @@ QuestTogether:RegisterTest("closing QuestTogether chat window reverts chat log d
 	QuestTogether.db.profile.chatLogDestination = "separate"
 	QuestTogether.db.global.questLogChatFrameID = 3
 	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(_, callback)
+			callback()
+		end,
 		GetChatWindowInfo = function(chatFrameID)
 			if chatFrameID == 3 then
 				return "QuestTogether", 18
@@ -640,6 +643,77 @@ QuestTogether:RegisterTest("closing QuestTogether chat window reverts chat log d
 	AssertEquals(QuestTogether.db.profile.chatLogDestination, "main")
 	AssertEquals(QuestTogether.db.global.questLogChatFrameID, nil)
 	AssertEquals(refreshed, 1)
+end)
+
+QuestTogether:RegisterTest("closing QuestTogether chat window keeps separate destination when a visible replacement exists", function()
+	local refreshed = 0
+	local closedFrame = {
+		GetID = function()
+			return 3
+		end,
+		GetName = function()
+			return "ChatFrame3"
+		end,
+		IsShown = function()
+			return false
+		end,
+	}
+	local replacementFrame = {
+		GetID = function()
+			return 4
+		end,
+		GetName = function()
+			return "ChatFrame4"
+		end,
+		IsShown = function()
+			return true
+		end,
+	}
+
+	QuestTogether.db.profile.chatLogDestination = "separate"
+	QuestTogether.db.global.questLogChatFrameID = 3
+	_G.ChatFrame4Tab = {
+		IsShown = function()
+			return true
+		end,
+	}
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(_, callback)
+			callback()
+		end,
+		GetChatWindowInfo = function(chatFrameID)
+			if chatFrameID == 3 then
+				return "QuestTogether", 18
+			end
+			if chatFrameID == 4 then
+				return "QuestTogether", 18
+			end
+			return nil
+		end,
+		GetChatFrameByID = function(chatFrameID)
+			if chatFrameID == 3 then
+				return closedFrame
+			end
+			if chatFrameID == 4 then
+				return replacementFrame
+			end
+			return nil
+		end,
+		GetNumChatWindows = function()
+			return 4
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshOptionsWindow", function()
+		refreshed = refreshed + 1
+	end, function()
+		AssertTrue(QuestTogether:HandleQuestLogChatFrameClosed(closedFrame))
+	end)
+
+	AssertEquals(QuestTogether.db.profile.chatLogDestination, "separate")
+	AssertEquals(QuestTogether.db.global.questLogChatFrameID, 4)
+	AssertEquals(refreshed, 0)
+	_G.ChatFrame4Tab = nil
 end)
 
 QuestTogether:RegisterTest("bubble test announcement uses target player when available", function()

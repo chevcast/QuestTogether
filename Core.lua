@@ -749,6 +749,25 @@ function QuestTogether:IsQuestLogChatFrame(chatFrame)
 	return false
 end
 
+function QuestTogether:IsQuestLogChatFrameVisible(chatFrame)
+	if not self:IsQuestLogChatFrame(chatFrame) then
+		return false
+	end
+
+	local frameShown = chatFrame.IsShown and chatFrame:IsShown()
+	if frameShown then
+		return true
+	end
+
+	local frameName = chatFrame.GetName and chatFrame:GetName()
+	if not frameName or frameName == "" then
+		return false
+	end
+
+	local chatTab = _G[frameName .. "Tab"]
+	return chatTab and chatTab.IsShown and chatTab:IsShown() or false
+end
+
 function QuestTogether:HandleQuestLogChatFrameClosed(chatFrame)
 	if self.suppressQuestLogChatCloseHook then
 		return false
@@ -762,13 +781,39 @@ function QuestTogether:HandleQuestLogChatFrameClosed(chatFrame)
 
 	self:SetConfiguredQuestLogChatFrameID(nil)
 	if self.db and self.db.profile and self.db.profile.chatLogDestination == "separate" then
-		self.db.profile.chatLogDestination = "main"
-		self:Debug("QuestTogether chat window was closed; reverting chat log destination to main chat window", "chat")
-		if self.RefreshOptionsWindow then
-			self:RefreshOptionsWindow()
+		local evaluateClose = function()
+			if self.isLoggingOut then
+				return
+			end
+			if not self.db or not self.db.profile or self.db.profile.chatLogDestination ~= "separate" then
+				return
+			end
+
+			local existingFrame, existingID = self:FindQuestLogChatFrame()
+			if existingFrame and self:IsQuestLogChatFrameVisible(existingFrame) then
+				self:SetConfiguredQuestLogChatFrameID(existingID)
+				self:Debugf(
+					"chat",
+					"Ignoring QuestTogether chat window close because a visible replacement exists id=%s",
+					tostring(existingID)
+				)
+				return
+			end
+
+			self.db.profile.chatLogDestination = "main"
+			self:Debug("QuestTogether chat window was closed; reverting chat log destination to main chat window", "chat")
+			if self.RefreshOptionsWindow then
+				self:RefreshOptionsWindow()
+			end
+			if self.isEnabled and self.hasLoggedIn then
+				self:PrintChatLogDestinationMessage()
+			end
 		end
-		if self.isEnabled and self.hasLoggedIn then
-			self:PrintChatLogDestinationMessage()
+
+		if self.API and self.API.Delay then
+			self.API.Delay(0, evaluateClose)
+		else
+			evaluateClose()
 		end
 	end
 
