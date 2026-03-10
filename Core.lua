@@ -417,6 +417,25 @@ QuestTogether.API = QuestTogether.API or {
 	GetChatFrameByID = function(chatFrameID)
 		return FCF_GetChatFrameByID(chatFrameID)
 	end,
+	RemoveChatWindowChannel = function(chatFrame, channelName)
+		if chatFrame and chatFrame.RemoveChannel then
+			return chatFrame:RemoveChannel(channelName)
+		end
+		if type(ChatFrame_RemoveChannel) == "function" and chatFrame then
+			return ChatFrame_RemoveChannel(chatFrame, channelName)
+		end
+		return nil
+	end,
+	AddMessageEventFilter = function(eventName, filterFunc)
+		if type(ChatFrame_AddMessageEventFilter) == "function" then
+			ChatFrame_AddMessageEventFilter(eventName, filterFunc)
+		end
+	end,
+	RemoveMessageEventFilter = function(eventName, filterFunc)
+		if type(ChatFrame_RemoveMessageEventFilter) == "function" then
+			ChatFrame_RemoveMessageEventFilter(eventName, filterFunc)
+		end
+	end,
 	OpenChatWindow = function(name, noDefaultChannels)
 		return FCF_OpenNewWindow(name, noDefaultChannels)
 	end,

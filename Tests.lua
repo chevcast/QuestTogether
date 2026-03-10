@@ -718,6 +718,59 @@ QuestTogether:RegisterTest("publish announcement sends even when local option is
 	AssertEquals(#printed, 0)
 end)
 
+QuestTogether:RegisterTest("announcement channel chat filter hides QuestTogether channel messages", function()
+	AssertTrue(
+		QuestTogether:AnnouncementChannelChatFilter(
+			nil,
+			"CHAT_MSG_CHANNEL_NOTICE_USER",
+			"JOINED",
+			"Azethmis",
+			"",
+			QuestTogether.announcementChannelName,
+			"",
+			"",
+			"",
+			"1. " .. QuestTogether.announcementChannelName
+		)
+	)
+	AssertFalse(QuestTogether:AnnouncementChannelChatFilter(nil, "CHAT_MSG_CHANNEL_NOTICE_USER", "JOINED", "Azethmis", "", "General"))
+end)
+
+QuestTogether:RegisterTest("joining announcement channel removes it from chat windows", function()
+	local removed = {}
+
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		GetChannelName = function(name)
+			AssertEquals(name, QuestTogether.announcementChannelName)
+			return 7
+		end,
+		JoinPermanentChannel = function() end,
+		GetNumChatWindows = function()
+			return 2
+		end,
+		GetChatFrameByID = function(chatFrameID)
+			return {
+				GetID = function()
+					return chatFrameID
+				end,
+				RemoveChannel = function(_, channelName)
+					removed[#removed + 1] = tostring(chatFrameID) .. ":" .. tostring(channelName)
+				end,
+			}
+		end,
+		RemoveChatWindowChannel = function(chatFrame, channelName)
+			chatFrame:RemoveChannel(channelName)
+		end,
+		AddMessageEventFilter = function() end,
+	})
+
+	AssertTrue(QuestTogether:EnsureAnnouncementChannelJoined())
+	AssertEquals(#removed, 2)
+	AssertEquals(removed[1], "1:" .. QuestTogether.announcementChannelName)
+	AssertEquals(removed[2], "2:" .. QuestTogether.announcementChannelName)
+end)
+
 QuestTogether:RegisterTest("scan quest log prints locally and broadcasts scan status", function()
 	local sent = {}
 	local printed = {}

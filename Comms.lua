@@ -16,6 +16,11 @@ local PING_RESPONSE_VERSION = 1
 local PING_RESPONSE_COMMAND = "PONG"
 local ANNOUNCEMENT_MAX_TEXT_LENGTH = 220
 local PING_REQUEST_TIMEOUT_SECONDS = 10
+local ANNOUNCEMENT_CHANNEL_FILTER_EVENTS = {
+	"CHAT_MSG_CHANNEL",
+	"CHAT_MSG_CHANNEL_NOTICE",
+	"CHAT_MSG_CHANNEL_NOTICE_USER",
+}
 
 local function IsSecretValue(value)
 	if type(issecretvalue) ~= "function" then
@@ -32,6 +37,23 @@ local function SafeDebugString(value)
 	end
 
 	return tostring(value)
+end
+
+local function MatchesAnnouncementChannelName(addon, value)
+	if type(value) ~= "string" or value == "" then
+		return false
+	end
+
+	local channelName = tostring(addon.announcementChannelName or "")
+	if channelName == "" then
+		return false
+	end
+
+	if value == channelName then
+		return true
+	end
+
+	return string.find(value, channelName, 1, true) ~= nil
 end
 
 local function SplitByDelimiter(text, delimiter)
@@ -280,6 +302,64 @@ function QuestTogether:GetAnnouncementChannelTarget()
 	return self.announcementChannelName
 end
 
+function QuestTogether:AnnouncementChannelChatFilter(_, _, ...)
+	for argumentIndex = 1, select("#", ...) do
+		if MatchesAnnouncementChannelName(self, select(argumentIndex, ...)) then
+			return true
+		end
+	end
+
+	return false
+end
+
+function QuestTogether:RegisterAnnouncementChannelChatFilters()
+	if self.announcementChannelChatFiltersRegistered then
+		return
+	end
+	if not self.API or not self.API.AddMessageEventFilter then
+		return
+	end
+
+	self.announcementChannelChatFilterFunc = self.announcementChannelChatFilterFunc
+		or function(...)
+			return QuestTogether:AnnouncementChannelChatFilter(...)
+		end
+
+	for _, eventName in ipairs(ANNOUNCEMENT_CHANNEL_FILTER_EVENTS) do
+		self.API.AddMessageEventFilter(eventName, self.announcementChannelChatFilterFunc)
+	end
+	self.announcementChannelChatFiltersRegistered = true
+end
+
+function QuestTogether:UnregisterAnnouncementChannelChatFilters()
+	if not self.announcementChannelChatFiltersRegistered then
+		return
+	end
+	if not self.API or not self.API.RemoveMessageEventFilter or not self.announcementChannelChatFilterFunc then
+		self.announcementChannelChatFiltersRegistered = nil
+		return
+	end
+
+	for _, eventName in ipairs(ANNOUNCEMENT_CHANNEL_FILTER_EVENTS) do
+		self.API.RemoveMessageEventFilter(eventName, self.announcementChannelChatFilterFunc)
+	end
+	self.announcementChannelChatFiltersRegistered = nil
+end
+
+function QuestTogether:HideAnnouncementChannelFromChatWindows()
+	if not self.API or not self.API.GetNumChatWindows or not self.API.GetChatFrameByID or not self.API.RemoveChatWindowChannel then
+		return
+	end
+
+	local maxWindows = tonumber(self.API.GetNumChatWindows()) or 0
+	for chatFrameID = 1, maxWindows do
+		local chatFrame = self.API.GetChatFrameByID(chatFrameID)
+		if chatFrame then
+			pcall(self.API.RemoveChatWindowChannel, chatFrame, self.announcementChannelName)
+		end
+	end
+end
+
 function QuestTogether:EnsureAnnouncementChannelJoined()
 	if not self.isEnabled then
 		self:Debug("Skipping channel join because addon is disabled", "comms")
@@ -289,12 +369,19 @@ function QuestTogether:EnsureAnnouncementChannelJoined()
 	local currentLocalID = self:GetAnnouncementChannelLocalID()
 	if currentLocalID then
 		self.announcementChannelLocalID = currentLocalID
+		if self.HideAnnouncementChannelFromChatWindows then
+			self:HideAnnouncementChannelFromChatWindows()
+		end
 		return true
 	end
 
 	if not self.API or not self.API.JoinPermanentChannel then
 		self:Debug("JoinPermanentChannel API unavailable", "comms")
 		return false
+	end
+
+	if self.RegisterAnnouncementChannelChatFilters then
+		self:RegisterAnnouncementChannelChatFilters()
 	end
 
 	local chatFrameId = (DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.GetID and DEFAULT_CHAT_FRAME:GetID()) or 1
@@ -309,6 +396,9 @@ function QuestTogether:EnsureAnnouncementChannelJoined()
 	currentLocalID = self:GetAnnouncementChannelLocalID()
 	if currentLocalID then
 		self.announcementChannelLocalID = currentLocalID
+		if self.HideAnnouncementChannelFromChatWindows then
+			self:HideAnnouncementChannelFromChatWindows()
+		end
 		self:Debugf("comms", "Joined announcement channel localID=%s", tostring(currentLocalID))
 		return true
 	end
@@ -323,6 +413,9 @@ function QuestTogether:LeaveAnnouncementChannel()
 		pcall(self.API.LeaveChannelByName, self.announcementChannelName)
 	end
 	self.announcementChannelLocalID = nil
+	if self.UnregisterAnnouncementChannelChatFilters then
+		self:UnregisterAnnouncementChannelChatFilters()
+	end
 end
 
 function QuestTogether:GetPlayerPingMetadata()
