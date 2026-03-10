@@ -8,9 +8,14 @@ display preferences when deciding whether to render bubbles or print chat logs.
 
 local QuestTogether = _G.QuestTogether
 
-local ANNOUNCEMENT_WIRE_VERSION = 3
+local ANNOUNCEMENT_WIRE_VERSION = 2
 local ANNOUNCEMENT_COMMAND = "ANN"
+local PING_REQUEST_VERSION = 1
+local PING_REQUEST_COMMAND = "PING"
+local PING_RESPONSE_VERSION = 1
+local PING_RESPONSE_COMMAND = "PONG"
 local ANNOUNCEMENT_MAX_TEXT_LENGTH = 220
+local PING_REQUEST_TIMEOUT_SECONDS = 10
 
 local function IsSecretValue(value)
 	if type(issecretvalue) ~= "function" then
@@ -90,6 +95,101 @@ function QuestTogether:SanitizeAnnouncementText(text)
 	return sanitized
 end
 
+function QuestTogether:EncodePingRequestPayload(requestData)
+	local fields = {
+		tostring(PING_REQUEST_VERSION),
+		self:EscapePayload(requestData.requestId or ""),
+		self:EscapePayload(requestData.requesterName or ""),
+	}
+
+	return table.concat(fields, ",")
+end
+
+function QuestTogether:DecodePingRequestPayload(payload)
+	if not payload or payload == "" then
+		return nil
+	end
+
+	local fields = SplitByDelimiter(payload, ",")
+	local version = tonumber(fields[1] or "")
+	if version ~= PING_REQUEST_VERSION then
+		return nil
+	end
+
+	local requestId = self:UnescapePayload(fields[2] or "")
+	local requesterName = self:UnescapePayload(fields[3] or "")
+	if requestId == "" then
+		return nil
+	end
+
+	return {
+		version = version,
+		requestId = requestId,
+		requesterName = requesterName,
+	}
+end
+
+function QuestTogether:EncodePingResponsePayload(responseData)
+	local fields = {
+		tostring(PING_RESPONSE_VERSION),
+		self:EscapePayload(responseData.requestId or ""),
+		self:EscapePayload(responseData.senderName or ""),
+		self:EscapePayload(responseData.realmName or ""),
+		self:EscapePayload(responseData.raceName or ""),
+		self:EscapePayload(responseData.classFile or ""),
+		self:EscapePayload(responseData.className or ""),
+		self:EscapePayload(responseData.level or ""),
+		self:EscapePayload(responseData.zoneName or ""),
+		self:EscapePayload(responseData.coordX or ""),
+		self:EscapePayload(responseData.coordY or ""),
+		self:EscapePayload(responseData.warMode or ""),
+	}
+
+	return table.concat(fields, ",")
+end
+
+function QuestTogether:DecodePingResponsePayload(payload)
+	if not payload or payload == "" then
+		return nil
+	end
+
+	local fields = SplitByDelimiter(payload, ",")
+	local version = tonumber(fields[1] or "")
+	if version ~= PING_RESPONSE_VERSION then
+		return nil
+	end
+
+	local requestId = self:UnescapePayload(fields[2] or "")
+	local senderName = self:UnescapePayload(fields[3] or "")
+	local realmName = self:UnescapePayload(fields[4] or "")
+	local raceName = self:UnescapePayload(fields[5] or "")
+	local classFile = self:UnescapePayload(fields[6] or "")
+	local className = self:UnescapePayload(fields[7] or "")
+	local level = self:UnescapePayload(fields[8] or "")
+	local zoneName = self:UnescapePayload(fields[9] or "")
+	local coordX = self:UnescapePayload(fields[10] or "")
+	local coordY = self:UnescapePayload(fields[11] or "")
+	local warMode = self:UnescapePayload(fields[12] or "")
+	if requestId == "" or senderName == "" then
+		return nil
+	end
+
+	return {
+		version = version,
+		requestId = requestId,
+		senderName = senderName,
+		realmName = realmName,
+		raceName = raceName,
+		classFile = classFile,
+		className = className,
+		level = level,
+		zoneName = zoneName,
+		coordX = coordX,
+		coordY = coordY,
+		warMode = warMode,
+	}
+end
+
 function QuestTogether:EncodeAnnouncementPayload(eventData)
 	local fields = {
 		tostring(ANNOUNCEMENT_WIRE_VERSION),
@@ -117,7 +217,7 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 
 	local fields = SplitByDelimiter(payload, ",")
 	local version = tonumber(fields[1] or "")
-	if version ~= 1 and version ~= 2 and version ~= ANNOUNCEMENT_WIRE_VERSION then
+	if version ~= 1 and version ~= ANNOUNCEMENT_WIRE_VERSION then
 		return nil
 	end
 
@@ -225,6 +325,34 @@ function QuestTogether:LeaveAnnouncementChannel()
 	self.announcementChannelLocalID = nil
 end
 
+function QuestTogether:GetPlayerPingMetadata()
+	local fullName = self:GetPlayerFullName() or self:GetPlayerName() or "Unknown"
+	local unitName, unitRealm = self.API.UnitFullName and self.API.UnitFullName("player")
+	local realmName = unitRealm or (self.API.GetRealmName and self.API.GetRealmName()) or ""
+	local className, classFile = self.API.UnitClass and self.API.UnitClass("player")
+	local raceName = nil
+	if self.API.UnitRace then
+		raceName = self.API.UnitRace("player")
+	end
+	local level = self.API.UnitLevel and self.API.UnitLevel("player") or ""
+	local locationInfo = self.GetPlayerAnnouncementLocationInfo and self:GetPlayerAnnouncementLocationInfo() or {}
+	local numericCoordX = locationInfo and self.SafeToNumber and self:SafeToNumber(locationInfo.coordX) or nil
+	local numericCoordY = locationInfo and self.SafeToNumber and self:SafeToNumber(locationInfo.coordY) or nil
+
+	return {
+		senderName = tostring(fullName or ""),
+		realmName = tostring(realmName or ""),
+		raceName = tostring(raceName or ""),
+		classFile = tostring(classFile or ""),
+		className = tostring(className or ""),
+		level = level and tostring(level) or "",
+		zoneName = locationInfo and tostring(locationInfo.zoneName or "") or "",
+		coordX = numericCoordX and string.format("%.1f", numericCoordX) or "",
+		coordY = numericCoordY and string.format("%.1f", numericCoordY) or "",
+		warMode = locationInfo and tostring(locationInfo.warMode and "1" or "0") or "",
+	}
+end
+
 function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId)
 	local senderName = self:GetPlayerFullName() or self:GetPlayerName()
 	local senderGUID = self.API.UnitGUID and self.API.UnitGUID("player") or ""
@@ -290,6 +418,16 @@ function QuestTogether:BuildAnnouncementEventForUnit(unitToken, eventType, text)
 	}
 end
 
+function QuestTogether:BuildPingResponse(requestId)
+	if type(requestId) ~= "string" or requestId == "" then
+		return nil
+	end
+
+	local payload = self:GetPlayerPingMetadata()
+	payload.requestId = requestId
+	return payload
+end
+
 function QuestTogether:IsAnnouncementChannelEvent(channel, localID, name)
 	if channel ~= "CHANNEL" then
 		return false
@@ -335,6 +473,83 @@ function QuestTogether:SendAnnouncementWireEvent(eventData)
 		#wireMessage
 	)
 	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
+	return true
+end
+
+function QuestTogether:SendPingRequest()
+	if not self.isEnabled then
+		return false, "QuestTogether is disabled."
+	end
+	if not self:EnsureAnnouncementChannelJoined() then
+		return false, "Unable to join the QuestTogether announcement channel."
+	end
+
+	local requestId = string.format(
+		"%s-%d-%d",
+		tostring(self:GetPlayerName() or "player"),
+		math.floor((self.API.GetTime and self.API.GetTime() or 0) * 1000),
+		self.API.Random and self.API.Random(1000, 9999) or 1000
+	)
+	local requesterName = self:GetPlayerFullName() or self:GetPlayerName() or ""
+	self.pendingPingRequests = self.pendingPingRequests or {}
+	self.pendingPingRequests[requestId] = true
+	self.API.Delay(PING_REQUEST_TIMEOUT_SECONDS, function()
+		if QuestTogether.pendingPingRequests then
+			QuestTogether.pendingPingRequests[requestId] = nil
+		end
+	end)
+
+	local requestData = {
+		requestId = requestId,
+		requesterName = requesterName,
+	}
+	local wireMessage = self:SerializeWireMessage(PING_REQUEST_COMMAND, self:EncodePingRequestPayload(requestData))
+	self:Debugf("comms", "Sending ping request id=%s", tostring(requestId))
+	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
+
+	local localResponse = self:BuildPingResponse(requestId)
+	if localResponse and self.HandlePingResponse then
+		self:HandlePingResponse(localResponse)
+	end
+
+	return true, requestId
+end
+
+function QuestTogether:SendPingResponse(requestId)
+	local responseData = self:BuildPingResponse(requestId)
+	if not responseData then
+		return false
+	end
+
+	local wireMessage = self:SerializeWireMessage(PING_RESPONSE_COMMAND, self:EncodePingResponsePayload(responseData))
+	self:Debugf("comms", "Sending ping response id=%s sender=%s", tostring(requestId), tostring(responseData.senderName))
+	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
+	return true
+end
+
+function QuestTogether:HandlePingRequest(requestData)
+	if type(requestData) ~= "table" or type(requestData.requestId) ~= "string" or requestData.requestId == "" then
+		return false
+	end
+	if not self:EnsureAnnouncementChannelJoined() then
+		return false
+	end
+	return self:SendPingResponse(requestData.requestId)
+end
+
+function QuestTogether:HandlePingResponse(responseData)
+	if type(responseData) ~= "table" or type(responseData.requestId) ~= "string" or responseData.requestId == "" then
+		return false
+	end
+
+	self.pendingPingRequests = self.pendingPingRequests or {}
+	if not self.pendingPingRequests[responseData.requestId] then
+		return false
+	end
+
+	if self.PrintPingResponse then
+		self:PrintPingResponse(responseData)
+	end
 	return true
 end
 
@@ -545,21 +760,41 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 	end
 
 	local command, payload = self:DeserializeWireMessage(message)
-	if command ~= ANNOUNCEMENT_COMMAND then
-		self:Debugf("comms", "Ignoring addon command=%s", tostring(command))
+	if command == ANNOUNCEMENT_COMMAND then
+		local eventData = self:DecodeAnnouncementPayload(payload)
+		if not eventData then
+			self:Debug("Failed to decode announcement payload", "comms")
+			return
+		end
+
+		if not eventData.senderName or eventData.senderName == "" then
+			eventData.senderName = self:NormalizeMemberName(sender) or sender
+		end
+
+		self:DebugState("comms", "receivedAnnouncement", eventData)
+		self:HandleAnnouncementEvent(eventData, false)
 		return
 	end
 
-	local eventData = self:DecodeAnnouncementPayload(payload)
-	if not eventData then
-		self:Debug("Failed to decode announcement payload", "comms")
+	if command == PING_REQUEST_COMMAND then
+		local requestData = self:DecodePingRequestPayload(payload)
+		if not requestData then
+			self:Debug("Failed to decode ping request payload", "comms")
+			return
+		end
+		self:HandlePingRequest(requestData)
 		return
 	end
 
-	if not eventData.senderName or eventData.senderName == "" then
-		eventData.senderName = self:NormalizeMemberName(sender) or sender
+	if command == PING_RESPONSE_COMMAND then
+		local responseData = self:DecodePingResponsePayload(payload)
+		if not responseData then
+			self:Debug("Failed to decode ping response payload", "comms")
+			return
+		end
+		self:HandlePingResponse(responseData)
+		return
 	end
 
-	self:DebugState("comms", "receivedAnnouncement", eventData)
-	self:HandleAnnouncementEvent(eventData, false)
+	self:Debugf("comms", "Ignoring addon command=%s", tostring(command))
 end

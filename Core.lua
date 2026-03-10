@@ -34,6 +34,7 @@ QuestTogether.ANNOUNCEMENT_NEARBY_RADIUS = 5
 QuestTogether.isInitialized = QuestTogether.isInitialized or false
 QuestTogether.hasLoggedIn = QuestTogether.hasLoggedIn or false
 QuestTogether.isEnabled = QuestTogether.isEnabled or false
+QuestTogether.pendingPingRequests = QuestTogether.pendingPingRequests or {}
 
 -- Work queues / state tables used by event handlers.
 QuestTogether.onQuestLogUpdate = QuestTogether.onQuestLogUpdate or {}
@@ -471,6 +472,12 @@ QuestTogether.API = QuestTogether.API or {
 	end,
 	UnitClass = function(unitToken)
 		return UnitClass(unitToken)
+	end,
+	UnitRace = function(unitToken)
+		return UnitRace(unitToken)
+	end,
+	UnitLevel = function(unitToken)
+		return UnitLevel(unitToken)
 	end,
 	UnitName = function(unitToken)
 		return UnitName(unitToken)
@@ -1185,18 +1192,10 @@ function QuestTogether:IsAnnouncementSenderNearbyByLocation(locationInfo)
 		return false
 	end
 
-	local localMapID = self:SafeToNumber(localInfo.mapID)
-	local remoteMapID = self:SafeToNumber(locationInfo.mapID)
-	if localMapID and remoteMapID then
-		if localMapID ~= remoteMapID then
-			return false
-		end
-	else
-		local localZoneName = type(localInfo.zoneName) == "string" and localInfo.zoneName or ""
-		local remoteZoneName = type(locationInfo.zoneName) == "string" and locationInfo.zoneName or ""
-		if localZoneName == "" or remoteZoneName == "" or localZoneName ~= remoteZoneName then
-			return false
-		end
+	local localZoneName = type(localInfo.zoneName) == "string" and localInfo.zoneName or ""
+	local remoteZoneName = type(locationInfo.zoneName) == "string" and locationInfo.zoneName or ""
+	if localZoneName == "" or remoteZoneName == "" or localZoneName ~= remoteZoneName then
+		return false
 	end
 
 	local localWarMode = self:NormalizeAnnouncementWarModeValue(localInfo.warMode)
@@ -1256,16 +1255,66 @@ function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, clas
 	local speakerLabel = trimmedTargetName ~= "" and trimmedTargetName or "QT"
 	local speakerColor = self:GetClassColorCode(classFile)
 	local speakerText = speakerColor .. speakerLabel .. "|r"
-	local locationSuffix = ""
-	if self:GetOption("devLogAllAnnouncements") then
-		locationSuffix = self:BuildAnnouncementLocationSuffix(locationInfo)
-	end
 
 	if iconTag ~= "" then
-		return iconTag .. speakerText .. "|cffffd200: " .. body .. "|r" .. locationSuffix
+		return iconTag .. speakerText .. "|cffffd200: " .. body .. "|r"
 	end
 
-	return speakerText .. "|cffffd200: " .. body .. "|r" .. locationSuffix
+	return speakerText .. "|cffffd200: " .. body .. "|r"
+end
+
+function QuestTogether:BuildPingResponseMessage(pongData)
+	if type(pongData) ~= "table" then
+		return "|cff33ff99QuestTogether|r: Pong: <invalid payload>"
+	end
+
+	local senderName = pongData.senderName or "Unknown"
+	local speakerLabel = self:GetShortDisplayName(senderName)
+	local speakerColor = self:GetClassColorCode(pongData.classFile)
+	local coloredName = speakerColor .. tostring(speakerLabel or "Unknown") .. "|r"
+	local realmName = tostring(pongData.realmName or "")
+	local raceName = tostring(pongData.raceName or "")
+	local className = tostring(pongData.className or pongData.classFile or "")
+	local level = self:SafeToNumber(pongData.level)
+
+	local parts = {}
+	parts[#parts + 1] = coloredName
+	if realmName ~= "" then
+		parts[#parts + 1] = "(" .. realmName .. ")"
+	end
+	if level then
+		parts[#parts + 1] = "Lvl " .. tostring(math.floor(level))
+	end
+	if raceName ~= "" then
+		parts[#parts + 1] = raceName
+	end
+	if className ~= "" then
+		parts[#parts + 1] = className
+	end
+
+	local locationBits = {}
+	local zoneName = tostring(pongData.zoneName or "")
+	if zoneName ~= "" then
+		locationBits[#locationBits + 1] = zoneName
+	end
+	local coordX = self:SafeToNumber(pongData.coordX)
+	local coordY = self:SafeToNumber(pongData.coordY)
+	if coordX and coordY then
+		locationBits[#locationBits + 1] = string.format("%.1f, %.1f", coordX, coordY)
+	end
+	local warMode = self:NormalizeAnnouncementWarModeValue(pongData.warMode)
+	if warMode ~= nil then
+		locationBits[#locationBits + 1] = warMode and "WM On" or "WM Off"
+	end
+	if #locationBits > 0 then
+		parts[#parts + 1] = "- " .. table.concat(locationBits, " | ")
+	end
+
+	return "|cff33ff99QuestTogether|r: Pong: " .. table.concat(parts, " ")
+end
+
+function QuestTogether:PrintPingResponse(pongData)
+	self:PrintRaw(self:BuildPingResponseMessage(pongData))
 end
 
 function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, eventType, iconAsset, iconKind, locationInfo)
@@ -1758,10 +1807,12 @@ function QuestTogether:PrintHelp()
 	self:Print("Commands:")
 	self:Print("/qt options - Open the QuestTogether options window")
 	self:Print("/qt enable | disable - Enable or disable runtime behavior")
-	self:Print("/qt debug on|off|toggle - Control debug mode")
+	self:Print("/qt debug [on|off|toggle] - Show or control debug mode")
+	self:Print("/qt devlogall [on|off|toggle] - Show or control dev all-announcements logging")
 	self:Print("/qt set <option> <value> - Set a boolean option (e.g. doEmotes off)")
 	self:Print("/qt get <option> - Read an option value")
 	self:Print("/qt scan - Rescan your quest log now")
+	self:Print("/qt ping - Request pong metadata from all QuestTogether clients in the shared channel")
 	self:Print("/qt bubbletest <text> - Send a QUEST_PROGRESS test event as your current target")
 	self:Print("/qt bubbletest <player> <text> - Send a QUEST_PROGRESS test event as a nearby visible player")
 	self:Print("/qt test - Run in-game unit tests")
@@ -1796,7 +1847,11 @@ function QuestTogether:HandleSlashCommand(input)
 
 	if command == "debug" then
 		local flag = string.lower(rest or "")
-		if flag == "toggle" or flag == "" then
+		if flag == "" then
+			self:Print("debugMode = " .. tostring(self:GetOption("debugMode")))
+			return
+		end
+		if flag == "toggle" then
 			self:SetOption("debugMode", not self:GetOption("debugMode"))
 		else
 			local boolValue = self:ParseBoolean(flag)
@@ -1812,7 +1867,11 @@ function QuestTogether:HandleSlashCommand(input)
 
 	if command == "devlogall" then
 		local flag = string.lower(rest or "")
-		if flag == "toggle" or flag == "" then
+		if flag == "" then
+			self:Print("devLogAllAnnouncements = " .. tostring(self:GetOption("devLogAllAnnouncements")))
+			return
+		end
+		if flag == "toggle" then
 			self:SetOption("devLogAllAnnouncements", not self:GetOption("devLogAllAnnouncements"))
 		else
 			local boolValue = self:ParseBoolean(flag)
@@ -1861,6 +1920,22 @@ function QuestTogether:HandleSlashCommand(input)
 
 	if command == "scan" then
 		self:ScanQuestLog()
+		return
+	end
+
+	if command == "ping" then
+		if not self.SendPingRequest then
+			self:Print("Ping is unavailable.")
+			return
+		end
+
+		local ok, requestIdOrError = self:SendPingRequest()
+		if not ok then
+			self:Print(tostring(requestIdOrError))
+			return
+		end
+
+		self:Print("Ping sent.")
 		return
 	end
 
@@ -1962,7 +2037,14 @@ function QuestTogether:ScanQuestLog()
 	end
 
 	self:Debugf("quest", "Scan complete questsTracked=%d", questsTracked)
-	self:PrintConsoleAnnouncement(questsTracked .. " quests are being monitored by QuestTogether.")
+	local scanMessage = questsTracked .. " quests are being monitored by QuestTogether."
+	self:PrintConsoleAnnouncement(scanMessage)
+	if self.BuildLocalAnnouncementEvent and self.SendAnnouncementWireEvent then
+		local eventData = self:BuildLocalAnnouncementEvent("SCAN_STATUS", scanMessage)
+		if eventData then
+			self:SendAnnouncementWireEvent(eventData)
+		end
+	end
 end
 
 -- Store the current objective text state for one quest.

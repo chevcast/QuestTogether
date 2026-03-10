@@ -90,6 +90,8 @@ local function WithIsolatedState(testFn)
 		QuestTogether.nameplateHealthTintRefreshPendingByUnitToken
 	local originalPrototypeBubbleScreenHostFrame = QuestTogether.prototypeBubbleScreenHostFrame
 	local originalAnnouncementChannelLocalID = QuestTogether.announcementChannelLocalID
+	local originalPendingPingRequests = QuestTogether.pendingPingRequests
+	local originalIsLoggingOut = QuestTogether.isLoggingOut
 	local originalQuestLogChatFrameID = QuestTogether.db.global.questLogChatFrameID
 
 	if QuestTogether.UnregisterRuntimeEvents then
@@ -99,6 +101,8 @@ local function WithIsolatedState(testFn)
 		QuestTogether:DisableNameplateAugmentation()
 	end
 
+	QuestTogether.db.profile = QuestTogether:DeepCopy(QuestTogether.DEFAULTS.profile)
+	QuestTogether.db.global = QuestTogether:DeepCopy(QuestTogether.DEFAULTS.global)
 	QuestTogether.db.profile.debugMode = false
 	QuestTogether.db.profile.enabled = false
 	QuestTogether.isEnabled = false
@@ -116,6 +120,8 @@ local function WithIsolatedState(testFn)
 	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken = {}
 	QuestTogether.prototypeBubbleScreenHostFrame = nil
 	QuestTogether.announcementChannelLocalID = nil
+	QuestTogether.pendingPingRequests = {}
+	QuestTogether.isLoggingOut = false
 
 	local ok, err = pcall(testFn)
 
@@ -153,6 +159,8 @@ local function WithIsolatedState(testFn)
 		originalNameplateHealthTintRefreshPendingByUnitToken
 	QuestTogether.prototypeBubbleScreenHostFrame = originalPrototypeBubbleScreenHostFrame
 	QuestTogether.announcementChannelLocalID = originalAnnouncementChannelLocalID
+	QuestTogether.pendingPingRequests = originalPendingPingRequests
+	QuestTogether.isLoggingOut = originalIsLoggingOut
 
 	if originalIsEnabled then
 		if QuestTogether.RegisterRuntimeEvents then
@@ -398,7 +406,7 @@ QuestTogether:RegisterTest("console announcement uses sender provided quest icon
 	AssertTrue(string.find(message, "MyPlayer", 1, true) ~= nil)
 end)
 
-QuestTogether:RegisterTest("dev log all announcements appends location metadata to chat logs", function()
+QuestTogether:RegisterTest("dev log all announcements does not append location metadata to chat logs", function()
 	QuestTogether.db.profile.devLogAllAnnouncements = true
 
 	local message = QuestTogether:BuildConsoleAnnouncementMessage(
@@ -416,9 +424,9 @@ QuestTogether:RegisterTest("dev log all announcements appends location metadata 
 		}
 	)
 
-	AssertTrue(string.find(message, "Silvermoon City", 1, true) ~= nil)
-	AssertTrue(string.find(message, "45.2, 31.8", 1, true) ~= nil)
-	AssertTrue(string.find(message, "WM On", 1, true) ~= nil)
+	AssertFalse(string.find(message, "Silvermoon City", 1, true) ~= nil)
+	AssertFalse(string.find(message, "45.2, 31.8", 1, true) ~= nil)
+	AssertFalse(string.find(message, "WM On", 1, true) ~= nil)
 end)
 
 QuestTogether:RegisterTest("dev log all announcements omits missing war mode metadata", function()
@@ -710,6 +718,57 @@ QuestTogether:RegisterTest("publish announcement sends even when local option is
 	AssertEquals(#printed, 0)
 end)
 
+QuestTogether:RegisterTest("scan quest log prints locally and broadcasts scan status", function()
+	local sent = {}
+	local printed = {}
+
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		GetChannelName = function()
+			return 4
+		end,
+		SendAddonMessage = function(_, message)
+			sent[#sent + 1] = message
+			return 0
+		end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "MyPlayer", "Realm"
+		end,
+		UnitClass = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Mage", "MAGE"
+		end,
+		UnitGUID = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Player-1-ABC"
+		end,
+	})
+	QuestTogether.PrintChatLogRaw = function(_, message)
+		printed[#printed + 1] = message
+	end
+
+	WithPatchedMethod(QuestTogether, "GetPlayerTracker", function()
+		return {}
+	end, function()
+		WithPatchedMethod(QuestTogether, "RefreshWorldQuestAreaState", function() end, function()
+			WithPatchedMethod(QuestTogether, "RefreshBonusObjectiveAreaState", function() end, function()
+				WithPatchedMethod(C_QuestLog, "GetNumQuestLogEntries", function()
+					return 0
+				end, function()
+					QuestTogether:ScanQuestLog()
+
+					AssertEquals(#printed, 1)
+					AssertTrue(string.find(printed[1], "quests are being monitored by QuestTogether.", 1, true) ~= nil)
+					AssertEquals(#sent, 1)
+					AssertTrue(string.find(sent[1], "^ANN|", 1) ~= nil)
+					AssertTrue(string.find(sent[1], "SCAN_STATUS", 1, true) ~= nil)
+				end)
+			end)
+		end)
+	end)
+end)
+
 QuestTogether:RegisterTest("target test announcement sends target payload and handles locally as remote", function()
 	local sent = {}
 	local handledEvent = nil
@@ -779,7 +838,7 @@ QuestTogether:RegisterTest("target test announcement sends target payload and ha
 end)
 
 QuestTogether:RegisterTest("bubble test announcement uses explicit visible player name without target", function()
-	local sent = {}
+	local sentEvent = nil
 	local handledEvent = nil
 	local nearbyFrame = {
 		GetUnit = function()
@@ -805,18 +864,6 @@ QuestTogether:RegisterTest("bubble test announcement uses explicit visible playe
 			AssertEquals(unitToken, "nameplate7")
 			return "Player-2-XYZ"
 		end,
-		GetChannelName = function()
-			return 8
-		end,
-		SendAddonMessage = function(prefix, message, channel, target)
-			sent[#sent + 1] = {
-				prefix = prefix,
-				message = message,
-				channel = channel,
-				target = target,
-			}
-			return 0
-		end,
 	})
 
 	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function(_, senderGUID, senderName)
@@ -824,28 +871,40 @@ QuestTogether:RegisterTest("bubble test announcement uses explicit visible playe
 		AssertEquals(senderName, "Nearby")
 		return nearbyFrame
 	end, function()
-		WithPatchedMethod(QuestTogether, "HandleAnnouncementEvent", function(_, eventData, isLocal)
-			handledEvent = {
+		WithPatchedMethod(QuestTogether, "SendAnnouncementWireEvent", function(_, eventData)
+			sentEvent = {
 				eventType = eventData.eventType,
 				senderGUID = eventData.senderGUID,
 				classFile = eventData.classFile,
 				senderName = eventData.senderName,
 				text = eventData.text,
-				isLocal = isLocal,
 			}
 			return true
 		end, function()
-			local ok, senderName = QuestTogether:SendBubbleAnnouncementTest("Testing nearby player bubble", "Nearby")
-			AssertTrue(ok)
-			AssertEquals(senderName, "Nearby-Realm")
+			WithPatchedMethod(QuestTogether, "HandleAnnouncementEvent", function(_, eventData, isLocal)
+				handledEvent = {
+					eventType = eventData.eventType,
+					senderGUID = eventData.senderGUID,
+					classFile = eventData.classFile,
+					senderName = eventData.senderName,
+					text = eventData.text,
+					isLocal = isLocal,
+				}
+				return true
+			end, function()
+				local ok, senderName = QuestTogether:SendBubbleAnnouncementTest("Testing nearby player bubble", "Nearby")
+				AssertTrue(ok)
+				AssertEquals(senderName, "Nearby-Realm")
+			end)
 		end)
 	end)
 
-	AssertEquals(#sent, 1)
-	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
-	AssertEquals(sent[1].channel, "CHANNEL")
-	AssertEquals(sent[1].target, 8)
-	AssertTrue(string.find(sent[1].message, "^ANN|", 1) ~= nil)
+	AssertTrue(sentEvent ~= nil)
+	AssertEquals(sentEvent.eventType, "QUEST_PROGRESS")
+	AssertEquals(sentEvent.senderGUID, "Player-2-XYZ")
+	AssertEquals(sentEvent.classFile, "MAGE")
+	AssertEquals(sentEvent.senderName, "Nearby-Realm")
+	AssertEquals(sentEvent.text, "Testing nearby player bubble")
 	AssertEquals(handledEvent.eventType, "QUEST_PROGRESS")
 	AssertEquals(handledEvent.senderGUID, "Player-2-XYZ")
 	AssertEquals(handledEvent.classFile, "MAGE")
