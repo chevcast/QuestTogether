@@ -62,6 +62,7 @@ QuestTogether.DEFAULTS = {
 		showChatLogs = true,
 		chatLogDestination = "main",
 		showProgressFor = "party_nearby",
+		devLogAllAnnouncements = false,
 		chatBubbleSize = 100,
 		chatBubbleDuration = 3,
 		debugMode = false,
@@ -493,6 +494,33 @@ QuestTogether.API = QuestTogether.API or {
 	end,
 	GetRealmName = function()
 		return GetRealmName()
+	end,
+	GetBestMapForUnit = function(unitToken)
+		if C_Map and C_Map.GetBestMapForUnit then
+			return C_Map.GetBestMapForUnit(unitToken)
+		end
+		return nil
+	end,
+	GetMapInfo = function(mapID)
+		if C_Map and C_Map.GetMapInfo then
+			return C_Map.GetMapInfo(mapID)
+		end
+		return nil
+	end,
+	GetPlayerMapPosition = function(mapID, unitToken)
+		if C_Map and C_Map.GetPlayerMapPosition then
+			return C_Map.GetPlayerMapPosition(mapID, unitToken)
+		end
+		return nil
+	end,
+	IsWarModeActive = function()
+		if C_PvP and C_PvP.IsWarModeActive then
+			return C_PvP.IsWarModeActive()
+		end
+		if C_PvP and C_PvP.IsWarModeDesired then
+			return C_PvP.IsWarModeDesired()
+		end
+		return false
 	end,
 }
 
@@ -1077,7 +1105,78 @@ function QuestTogether:GetAnnouncementIconChatTag(eventType, size, iconAsset, ic
 	return self:GetQuestIconChatTag(size)
 end
 
-function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType, iconAsset, iconKind)
+function QuestTogether:GetPlayerAnnouncementLocationInfo()
+	local mapID = self.API.GetBestMapForUnit and self.API.GetBestMapForUnit("player") or nil
+	local zoneName = nil
+	if mapID and self.API.GetMapInfo then
+		local mapInfo = self.API.GetMapInfo(mapID)
+		if type(mapInfo) == "table" and type(mapInfo.name) == "string" and mapInfo.name ~= "" then
+			zoneName = mapInfo.name
+		end
+	end
+
+	local coordX = nil
+	local coordY = nil
+	if mapID and self.API.GetPlayerMapPosition then
+		local position = self.API.GetPlayerMapPosition(mapID, "player")
+		if position then
+			local rawX = position.x or (position.GetXY and select(1, position:GetXY())) or nil
+			local rawY = position.y or (position.GetXY and select(2, position:GetXY())) or nil
+			if tonumber(rawX) and tonumber(rawY) then
+				coordX = tonumber(rawX) * 100
+				coordY = tonumber(rawY) * 100
+			end
+		end
+	end
+
+	local warModeActive = self.API.IsWarModeActive and self.API.IsWarModeActive() and true or false
+	return {
+		zoneName = zoneName or "",
+		coordX = coordX,
+		coordY = coordY,
+		warMode = warModeActive,
+	}
+end
+
+function QuestTogether:BuildAnnouncementLocationSuffix(locationInfo)
+	if type(locationInfo) ~= "table" then
+		return ""
+	end
+
+	local parts = {}
+	local zoneName = type(locationInfo.zoneName) == "string" and locationInfo.zoneName or ""
+	if zoneName ~= "" then
+		parts[#parts + 1] = zoneName
+	end
+
+	local coordX = tonumber(locationInfo.coordX)
+	local coordY = tonumber(locationInfo.coordY)
+	if coordX and coordY then
+		parts[#parts + 1] = string.format("%.1f, %.1f", coordX, coordY)
+	end
+
+	local warMode = locationInfo.warMode
+	if type(warMode) == "string" then
+		if warMode == "1" or string.lower(warMode) == "true" then
+			warMode = true
+		elseif warMode == "0" or string.lower(warMode) == "false" or warMode == "" then
+			warMode = false
+		else
+			warMode = nil
+		end
+	end
+	if warMode ~= nil then
+		parts[#parts + 1] = warMode and "WM On" or "WM Off"
+	end
+
+	if #parts == 0 then
+		return ""
+	end
+
+	return " |cff999999[" .. table.concat(parts, " | ") .. "]|r"
+end
+
+function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType, iconAsset, iconKind, locationInfo)
 	local iconTag = self:GetAnnouncementIconChatTag(eventType, 14, iconAsset, iconKind)
 	local trimmedTargetName = self:GetShortDisplayName(targetName)
 	local trimmedMessage = tostring(message or "")
@@ -1085,15 +1184,19 @@ function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, clas
 	local speakerLabel = trimmedTargetName ~= "" and trimmedTargetName or "QT"
 	local speakerColor = self:GetClassColorCode(classFile)
 	local speakerText = speakerColor .. speakerLabel .. "|r"
-
-	if iconTag ~= "" then
-		return iconTag .. speakerText .. "|cffffd200: " .. body .. "|r"
+	local locationSuffix = ""
+	if self:GetOption("devLogAllAnnouncements") then
+		locationSuffix = self:BuildAnnouncementLocationSuffix(locationInfo)
 	end
 
-	return speakerText .. "|cffffd200: " .. body .. "|r"
+	if iconTag ~= "" then
+		return iconTag .. speakerText .. "|cffffd200: " .. body .. "|r" .. locationSuffix
+	end
+
+	return speakerText .. "|cffffd200: " .. body .. "|r" .. locationSuffix
 end
 
-function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, eventType, iconAsset, iconKind)
+function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, eventType, iconAsset, iconKind, locationInfo)
 	local speakerName = targetName
 	if speakerName == nil or speakerName == "" then
 		speakerName = self:GetPlayerName()
@@ -1103,7 +1206,15 @@ function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, 
 		resolvedClassFile = self:GetPlayerClassFile()
 	end
 	self:PrintChatLogRaw(
-		self:BuildConsoleAnnouncementMessage(speakerName, message, resolvedClassFile, eventType, iconAsset, iconKind)
+		self:BuildConsoleAnnouncementMessage(
+			speakerName,
+			message,
+			resolvedClassFile,
+			eventType,
+			iconAsset,
+			iconKind,
+			locationInfo
+		)
 	)
 end
 
@@ -1624,6 +1735,22 @@ function QuestTogether:HandleSlashCommand(input)
 			self:SetOption("debugMode", boolValue)
 		end
 		self:Print("debugMode = " .. tostring(self:GetOption("debugMode")))
+		return
+	end
+
+	if command == "devlogall" then
+		local flag = string.lower(rest or "")
+		if flag == "toggle" or flag == "" then
+			self:SetOption("devLogAllAnnouncements", not self:GetOption("devLogAllAnnouncements"))
+		else
+			local boolValue = self:ParseBoolean(flag)
+			if boolValue == nil then
+				self:Print("Usage: /qt devlogall on|off|toggle")
+				return
+			end
+			self:SetOption("devLogAllAnnouncements", boolValue)
+		end
+		self:Print("devLogAllAnnouncements = " .. tostring(self:GetOption("devLogAllAnnouncements")))
 		return
 	end
 

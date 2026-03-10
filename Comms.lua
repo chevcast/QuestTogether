@@ -8,7 +8,7 @@ display preferences when deciding whether to render bubbles or print chat logs.
 
 local QuestTogether = _G.QuestTogether
 
-local ANNOUNCEMENT_WIRE_VERSION = 2
+local ANNOUNCEMENT_WIRE_VERSION = 3
 local ANNOUNCEMENT_COMMAND = "ANN"
 local ANNOUNCEMENT_MAX_TEXT_LENGTH = 220
 
@@ -101,6 +101,10 @@ function QuestTogether:EncodeAnnouncementPayload(eventData)
 		self:EscapePayload(eventData.questId or ""),
 		self:EscapePayload(eventData.iconAsset or ""),
 		self:EscapePayload(eventData.iconKind or ""),
+		self:EscapePayload(eventData.zoneName or ""),
+		self:EscapePayload(eventData.coordX or ""),
+		self:EscapePayload(eventData.coordY or ""),
+		self:EscapePayload(eventData.warMode or ""),
 	}
 
 	return table.concat(fields, ",")
@@ -113,7 +117,7 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 
 	local fields = SplitByDelimiter(payload, ",")
 	local version = tonumber(fields[1] or "")
-	if version ~= 1 and version ~= ANNOUNCEMENT_WIRE_VERSION then
+	if version ~= 1 and version ~= 2 and version ~= ANNOUNCEMENT_WIRE_VERSION then
 		return nil
 	end
 
@@ -125,6 +129,10 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 	local questId = self:UnescapePayload(fields[7] or "")
 	local iconAsset = self:UnescapePayload(fields[8] or "")
 	local iconKind = self:UnescapePayload(fields[9] or "")
+	local zoneName = self:UnescapePayload(fields[10] or "")
+	local coordX = self:UnescapePayload(fields[11] or "")
+	local coordY = self:UnescapePayload(fields[12] or "")
+	local warMode = self:UnescapePayload(fields[13] or "")
 
 	if eventType == "" or senderName == "" or text == "" then
 		return nil
@@ -140,6 +148,10 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 		questId = questId,
 		iconAsset = iconAsset,
 		iconKind = iconKind,
+		zoneName = zoneName,
+		coordX = coordX,
+		coordY = coordY,
+		warMode = warMode,
 	}
 end
 
@@ -218,6 +230,7 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId)
 	local senderGUID = self.API.UnitGUID and self.API.UnitGUID("player") or ""
 	local sanitizedText = self:SanitizeAnnouncementText(text)
 	local iconAsset, iconKind = self:GetAnnouncementIconInfo(eventType, questId)
+	local locationInfo = self.GetPlayerAnnouncementLocationInfo and self:GetPlayerAnnouncementLocationInfo() or nil
 	if sanitizedText == "" then
 		return nil
 	end
@@ -232,6 +245,10 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId)
 		questId = questId and tostring(questId) or "",
 		iconAsset = tostring(iconAsset or ""),
 		iconKind = tostring(iconKind or ""),
+		zoneName = locationInfo and tostring(locationInfo.zoneName or "") or "",
+		coordX = locationInfo and locationInfo.coordX and string.format("%.1f", tonumber(locationInfo.coordX) or 0) or "",
+		coordY = locationInfo and locationInfo.coordY and string.format("%.1f", tonumber(locationInfo.coordY) or 0) or "",
+		warMode = locationInfo and tostring(locationInfo.warMode and "1" or "0") or "",
 	}
 end
 
@@ -264,6 +281,10 @@ function QuestTogether:BuildAnnouncementEventForUnit(unitToken, eventType, text)
 		questId = "",
 		iconAsset = "",
 		iconKind = "",
+		zoneName = "",
+		coordX = "",
+		coordY = "",
+		warMode = "",
 	}
 end
 
@@ -404,24 +425,29 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 	end
 	hasNearbySignal = hasNearbyNameplate or nearbyUnitToken ~= nil
 	isGrouped = self:IsGroupedSender(senderName)
+	local forceAllChatLogs = not isLocal
+		and self:GetOption("showChatLogs")
+		and self:GetOption("devLogAllAnnouncements")
+	local allowRemoteDisplay = isLocal or self:ShouldShowAnnouncementsForRemoteSender(senderName, hasNearbySignal)
 	self:Debugf(
 		"comms",
-		"HandleAnnouncement eventType=%s sender=%s isLocal=%s grouped=%s nearbyNameplate=%s nearbyUnit=%s",
+		"HandleAnnouncement eventType=%s sender=%s isLocal=%s grouped=%s nearbyNameplate=%s nearbyUnit=%s forceLogs=%s",
 		tostring(eventData.eventType),
 		tostring(senderName),
 		tostring(isLocal),
 		tostring(isGrouped),
 		tostring(hasNearbyNameplate),
-		tostring(nearbyUnitToken)
+		tostring(nearbyUnitToken),
+		tostring(forceAllChatLogs)
 	)
 
-	if not isLocal and not self:ShouldShowAnnouncementsForRemoteSender(senderName, hasNearbySignal) then
+	if not allowRemoteDisplay and not forceAllChatLogs then
 		self:Debugf("comms", "Filtered remote sender=%s by showProgressFor scope", tostring(senderName))
 		return false
 	end
 
 	if self:GetOption("showChatLogs") then
-		local shouldPrint = isLocal or isGrouped or hasNearbySignal
+		local shouldPrint = isLocal or isGrouped or hasNearbySignal or forceAllChatLogs
 		if shouldPrint then
 			self:Debugf("comms", "Printing chat log sender=%s class=%s", tostring(senderName), tostring(classFile))
 			self:PrintConsoleAnnouncement(
@@ -430,7 +456,8 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 				classFile,
 				eventData.eventType,
 				eventData.iconAsset,
-				eventData.iconKind
+				eventData.iconKind,
+				eventData
 			)
 		else
 			self:Debugf("comms", "Skipped chat log sender=%s reason=no nearby/group signal", tostring(senderName))
@@ -453,7 +480,7 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 			else
 				self:Debug("Skipped local personal bubble due to hideMyOwnChatBubbles or unavailable renderer", "bubble")
 			end
-		elseif hasNearbyNameplate and self.ShowPrototypeBubbleOnNameplate then
+		elseif allowRemoteDisplay and hasNearbyNameplate and self.ShowPrototypeBubbleOnNameplate then
 			self:Debugf("bubble", "Showing remote nearby bubble sender=%s", tostring(senderName))
 			self:ShowPrototypeBubbleOnNameplate(
 				nearbyNameplate,

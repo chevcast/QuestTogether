@@ -398,6 +398,29 @@ QuestTogether:RegisterTest("console announcement uses sender provided quest icon
 	AssertTrue(string.find(message, "MyPlayer", 1, true) ~= nil)
 end)
 
+QuestTogether:RegisterTest("dev log all announcements appends location metadata to chat logs", function()
+	QuestTogether.db.profile.devLogAllAnnouncements = true
+
+	local message = QuestTogether:BuildConsoleAnnouncementMessage(
+		"MyPlayer-Realm",
+		"hello there",
+		"MAGE",
+		"QUEST_PROGRESS",
+		nil,
+		nil,
+		{
+			zoneName = "Silvermoon City",
+			coordX = "45.2",
+			coordY = "31.8",
+			warMode = "1",
+		}
+	)
+
+	AssertTrue(string.find(message, "Silvermoon City", 1, true) ~= nil)
+	AssertTrue(string.find(message, "45.2, 31.8", 1, true) ~= nil)
+	AssertTrue(string.find(message, "WM On", 1, true) ~= nil)
+end)
+
 QuestTogether:RegisterTest("local announcement event includes resolved icon metadata", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		UnitGUID = function(unitToken)
@@ -415,6 +438,37 @@ QuestTogether:RegisterTest("local announcement event includes resolved icon meta
 		AssertEquals(eventData.questId, "12345")
 		AssertEquals(eventData.iconAsset, "CampaignInProgressQuestIcon")
 		AssertEquals(eventData.iconKind, "atlas")
+	end)
+end)
+
+QuestTogether:RegisterTest("local announcement event includes location metadata", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		UnitGUID = function()
+			return "Player-1-ABC"
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetPlayerFullName", function()
+		return "MyPlayer-Realm"
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetAnnouncementIconInfo", function()
+			return nil, nil
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetPlayerAnnouncementLocationInfo", function()
+				return {
+					zoneName = "Eversong Woods",
+					coordX = 12.3,
+					coordY = 45.6,
+					warMode = false,
+				}
+			end, function()
+				local eventData = QuestTogether:BuildLocalAnnouncementEvent("QUEST_PROGRESS", "1/3 Objectives", 12345)
+				AssertEquals(eventData.zoneName, "Eversong Woods")
+				AssertEquals(eventData.coordX, "12.3")
+				AssertEquals(eventData.coordY, "45.6")
+				AssertEquals(eventData.warMode, "0")
+			end)
+		end)
 	end)
 end)
 
@@ -903,6 +957,38 @@ QuestTogether:RegisterTest("remote sender with matching target prints chat log w
 			AssertTrue(string.find(printed[1], "Targeted", 1, true) ~= nil)
 			AssertTrue(string.find(printed[1], "|cffffd200: 7/7 Notes|r", 1, true) ~= nil)
 		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("dev log all announcements prints remote sender without nearby signal", function()
+	local printed = {}
+	local bubbleCalls = 0
+	QuestTogether.db.profile.showChatLogs = true
+	QuestTogether.db.profile.showChatBubbles = true
+	QuestTogether.db.profile.showProgressFor = "party_only"
+	QuestTogether.db.profile.devLogAllAnnouncements = true
+
+	QuestTogether.PrintChatLogRaw = function(_, message)
+		printed[#printed + 1] = message
+	end
+
+	WithPatchedMethod(QuestTogether, "ShowPrototypeBubbleOnNameplate", function()
+		bubbleCalls = bubbleCalls + 1
+		return true
+	end, function()
+		local handled = QuestTogether:HandleAnnouncementEvent({
+			eventType = "QUEST_PROGRESS",
+			senderGUID = "Player-7-DEV",
+			classFile = "SHAMAN",
+			senderName = "Faraway-Realm",
+			text = "9/9 Mischief",
+		}, false)
+
+		AssertTrue(handled)
+		AssertEquals(#printed, 1)
+		AssertEquals(bubbleCalls, 0)
+		AssertTrue(string.find(printed[1], "Faraway", 1, true) ~= nil)
+		AssertTrue(string.find(printed[1], "|cffffd200: 9/9 Mischief|r", 1, true) ~= nil)
 	end)
 end)
 
