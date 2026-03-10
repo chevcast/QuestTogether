@@ -542,11 +542,11 @@ QuestTogether.API = QuestTogether.API or {
 		return nil
 	end,
 	IsWarModeActive = function()
-		if C_PvP and C_PvP.IsWarModeActive then
-			return C_PvP.IsWarModeActive()
-		end
 		if C_PvP and C_PvP.IsWarModeDesired then
 			return C_PvP.IsWarModeDesired()
+		end
+		if C_PvP and C_PvP.IsWarModeActive then
+			return C_PvP.IsWarModeActive()
 		end
 		return false
 	end,
