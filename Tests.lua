@@ -351,6 +351,30 @@ QuestTogether:RegisterTest("console announcement message wraps speaker in clicka
 	end)
 end)
 
+QuestTogether:RegisterTest("console announcement message wraps quest title in clickable link", function()
+	WithPatchedMethod(LinkUtil, "FormatLink", function(linkType, linkDisplayText, linkData)
+		if linkType == QuestTogether.chatLogLinkType then
+			return "|Hquesttogetherlog:MyPlayer-Realm|h[MyPlayer]|h"
+		end
+
+		AssertEquals(linkType, QuestTogether.chatLogQuestLinkType)
+		AssertEquals(linkDisplayText, "[Test Quest]")
+		AssertEquals(linkData, "12345")
+		return "|Hquesttogetherquest:12345|h[Test Quest]|h"
+	end, function()
+		local message = QuestTogether:BuildConsoleAnnouncementMessage(
+			"MyPlayer-Realm",
+			"Quest Accepted: Test Quest",
+			"MAGE",
+			"QUEST_ACCEPTED",
+			nil,
+			nil,
+			{ questId = "12345" }
+		)
+		AssertTrue(string.find(message, "|Hquesttogetherquest:12345|h%[Test Quest%]|h") ~= nil)
+	end)
+end)
+
 QuestTogether:RegisterTest("chat log speaker link handler opens QuestTogether menu", function()
 	local capturedOwner = nil
 	local capturedSpeaker = nil
@@ -371,6 +395,52 @@ QuestTogether:RegisterTest("chat log speaker link handler opens QuestTogether me
 
 	AssertEquals(capturedOwner, "ChatFrame1")
 	AssertEquals(capturedSpeaker, "MyPlayer-Realm")
+end)
+
+QuestTogether:RegisterTest("chat log quest link handler prints local quest status", function()
+	local printed = nil
+	QuestTogether.PrintRaw = function(_, message)
+		printed = message
+	end
+
+	QuestTogether.API = CreateApiWithOverrides({
+		IsQuestFlaggedCompleted = function(questId)
+			AssertEquals(questId, 12345)
+			return false
+		end,
+		IsQuestReadyForTurnIn = function(questId)
+			AssertEquals(questId, 12345)
+			return true
+		end,
+		GetQuestLogIndexForQuestID = function(questId)
+			AssertEquals(questId, 12345)
+			return 7
+		end,
+		IsOnQuest = function(questId)
+			AssertEquals(questId, 12345)
+			return true
+		end,
+		IsQuestComplete = function(questId)
+			AssertEquals(questId, 12345)
+			return true
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetQuestTitle", function(_, questId)
+		AssertEquals(questId, 12345)
+		return "Test Quest"
+	end, function()
+		local response = QuestTogether:HandleChatLogQuestLink(
+			nil,
+			nil,
+			{ options = "12345" },
+			{ frame = "ChatFrame1" }
+		)
+		AssertEquals(response, LinkProcessorResponse.Handled)
+	end)
+
+	AssertTrue(string.find(printed or "", "Test Quest", 1, true) ~= nil)
+	AssertTrue(string.find(printed or "", "Ready to Turn In", 1, true) ~= nil)
 end)
 
 QuestTogether:RegisterTest("chat log speaker menu includes player actions", function()

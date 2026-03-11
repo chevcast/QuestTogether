@@ -119,6 +119,18 @@ QuestTogether.chatLogDestinationOrder = {
 	"separate",
 }
 QuestTogether.chatLogLinkType = "questtogetherlog"
+QuestTogether.chatLogQuestLinkType = "questtogetherquest"
+QuestTogether.questTitleLinkEventTypes = {
+	QUEST_ACCEPTED = true,
+	QUEST_COMPLETED = true,
+	QUEST_REMOVED = true,
+	WORLD_QUEST_ENTERED = true,
+	WORLD_QUEST_LEFT = true,
+	WORLD_QUEST_COMPLETED = true,
+	BONUS_OBJECTIVE_ENTERED = true,
+	BONUS_OBJECTIVE_LEFT = true,
+	BONUS_OBJECTIVE_COMPLETED = true,
+}
 
 QuestTogether.DEFAULT_PERSONAL_BUBBLE_ANCHOR = {
 	point = "CENTER",
@@ -504,6 +516,36 @@ QuestTogether.API = QuestTogether.API or {
 	end,
 	UnitIsPlayer = function(unitToken)
 		return UnitIsPlayer(unitToken)
+	end,
+	GetQuestLogIndexForQuestID = function(questID)
+		if C_QuestLog and C_QuestLog.GetLogIndexForQuestID then
+			return C_QuestLog.GetLogIndexForQuestID(questID)
+		end
+		return nil
+	end,
+	IsQuestFlaggedCompleted = function(questID)
+		if C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted then
+			return C_QuestLog.IsQuestFlaggedCompleted(questID)
+		end
+		return false
+	end,
+	IsQuestReadyForTurnIn = function(questID)
+		if C_QuestLog and C_QuestLog.ReadyForTurnIn then
+			return C_QuestLog.ReadyForTurnIn(questID)
+		end
+		return false
+	end,
+	IsQuestComplete = function(questID)
+		if C_QuestLog and C_QuestLog.IsComplete then
+			return C_QuestLog.IsComplete(questID)
+		end
+		return false
+	end,
+	IsOnQuest = function(questID)
+		if C_QuestLog and C_QuestLog.IsOnQuest then
+			return C_QuestLog.IsOnQuest(questID)
+		end
+		return false
 	end,
 	InviteUnit = function(name)
 		if C_PartyInfo and C_PartyInfo.InviteUnit then
@@ -1409,9 +1451,79 @@ function QuestTogether:BuildChatLogSpeakerLabel(targetName, classFile)
 	return speakerColor .. speakerLabel .. "|r"
 end
 
+function QuestTogether:BuildChatLogQuestLabel(questId, questTitle)
+	local numericQuestId = tonumber(questId)
+	local titleText = tostring(questTitle or "")
+	if not numericQuestId or titleText == "" or not LinkUtil or not LinkUtil.FormatLink then
+		return titleText
+	end
+
+	local linkDisplayText = "[" .. titleText .. "]"
+	return LinkUtil.FormatLink(self.chatLogQuestLinkType or "questtogetherquest", linkDisplayText, tostring(numericQuestId))
+end
+
+function QuestTogether:DecorateAnnouncementMessageWithQuestLink(message, eventType, questId)
+	if not self.questTitleLinkEventTypes or not self.questTitleLinkEventTypes[eventType] then
+		return tostring(message or "")
+	end
+
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId then
+		return tostring(message or "")
+	end
+
+	local prefixText, questTitle = tostring(message or ""):match("^(.-:%s+)(.+)$")
+	if not prefixText or not questTitle or questTitle == "" then
+		return tostring(message or "")
+	end
+
+	return prefixText .. self:BuildChatLogQuestLabel(numericQuestId, questTitle)
+end
+
+function QuestTogether:GetQuestStatusLabel(questId)
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId then
+		return "Unknown"
+	end
+
+	if self.API and self.API.IsQuestFlaggedCompleted and self.API.IsQuestFlaggedCompleted(numericQuestId) then
+		return "Completed"
+	end
+	if self.API and self.API.IsQuestReadyForTurnIn and self.API.IsQuestReadyForTurnIn(numericQuestId) then
+		return "Ready to Turn In"
+	end
+
+	local questLogIndex = self.API and self.API.GetQuestLogIndexForQuestID and self.API.GetQuestLogIndexForQuestID(numericQuestId)
+	local isOnQuest = self.API and self.API.IsOnQuest and self.API.IsOnQuest(numericQuestId)
+	if questLogIndex or isOnQuest then
+		if self.API and self.API.IsQuestComplete and self.API.IsQuestComplete(numericQuestId) then
+			return "Objectives Complete"
+		end
+		return "In Progress"
+	end
+
+	return "Not Started"
+end
+
+function QuestTogether:BuildQuestStatusMessage(questId)
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId then
+		return "QuestTogether: Quest status unavailable."
+	end
+
+	local questTitle = self:GetQuestTitle(numericQuestId)
+	local statusLabel = self:GetQuestStatusLabel(numericQuestId)
+	return "|cff33ff99QuestTogether|r: " .. tostring(questTitle) .. " - " .. tostring(statusLabel)
+end
+
+function QuestTogether:PrintQuestStatus(questId)
+	self:PrintRaw(self:BuildQuestStatusMessage(questId))
+end
+
 function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType, iconAsset, iconKind, locationInfo)
 	local iconTag = self:GetAnnouncementIconChatTag(eventType, 14, iconAsset, iconKind)
-	local trimmedMessage = tostring(message or "")
+	local questId = type(locationInfo) == "table" and locationInfo.questId or nil
+	local trimmedMessage = self:DecorateAnnouncementMessageWithQuestLink(tostring(message or ""), eventType, questId)
 	local body = trimmedMessage
 	local speakerText = self:BuildChatLogSpeakerLabel(targetName, classFile)
 
@@ -1627,6 +1739,19 @@ function QuestTogether:HandleChatLogSpeakerLink(link, text, linkData, contextDat
 		or LinkProcessorResponse.Handled
 end
 
+function QuestTogether:HandleChatLogQuestLink(link, text, linkData, contextData)
+	local questId = linkData and linkData.options
+	if not questId or questId == "" then
+		return LinkProcessorResponse.Handled
+	end
+	if IsModifiedClick and IsModifiedClick() then
+		return LinkProcessorResponse.Handled
+	end
+
+	self:PrintQuestStatus(questId)
+	return LinkProcessorResponse.Handled
+end
+
 function QuestTogether:TryInstallChatLogLinkHandler()
 	if self.chatLogLinkHandlerInstalled then
 		return
@@ -1634,14 +1759,20 @@ function QuestTogether:TryInstallChatLogLinkHandler()
 	if not LinkUtil or not LinkUtil.RegisterLinkHandler then
 		return
 	end
-	if LinkUtil.IsLinkHandlerRegistered and LinkUtil.IsLinkHandlerRegistered(self.chatLogLinkType) then
-		self.chatLogLinkHandlerInstalled = true
-		return
+
+	local speakerRegistered = LinkUtil.IsLinkHandlerRegistered and LinkUtil.IsLinkHandlerRegistered(self.chatLogLinkType)
+	if not speakerRegistered then
+		LinkUtil.RegisterLinkHandler(self.chatLogLinkType, function(link, text, linkData, contextData)
+			return QuestTogether:HandleChatLogSpeakerLink(link, text, linkData, contextData)
+		end)
 	end
 
-	LinkUtil.RegisterLinkHandler(self.chatLogLinkType, function(link, text, linkData, contextData)
-		return QuestTogether:HandleChatLogSpeakerLink(link, text, linkData, contextData)
-	end)
+	local questRegistered = LinkUtil.IsLinkHandlerRegistered and LinkUtil.IsLinkHandlerRegistered(self.chatLogQuestLinkType)
+	if not questRegistered then
+		LinkUtil.RegisterLinkHandler(self.chatLogQuestLinkType, function(link, text, linkData, contextData)
+			return QuestTogether:HandleChatLogQuestLink(link, text, linkData, contextData)
+		end)
+	end
 	self.chatLogLinkHandlerInstalled = true
 end
 
