@@ -8,7 +8,7 @@ display preferences when deciding whether to render bubbles or print chat logs.
 
 local QuestTogether = _G.QuestTogether
 
-local ANNOUNCEMENT_WIRE_VERSION = 2
+local ANNOUNCEMENT_WIRE_VERSION = 3
 local ANNOUNCEMENT_COMMAND = "ANN"
 local PING_REQUEST_VERSION = 1
 local PING_REQUEST_COMMAND = "PING"
@@ -83,6 +83,14 @@ local function SplitByDelimiter(text, delimiter)
 	return pieces
 end
 
+local function SafeNumber(addon, value)
+	if addon and addon.SafeToNumber then
+		return addon:SafeToNumber(value)
+	end
+
+	return tonumber(value)
+end
+
 function QuestTogether:EscapePayload(value)
 	local text = tostring(value or "")
 	return (text:gsub("([^%w%-_%.~])", function(character)
@@ -140,7 +148,7 @@ function QuestTogether:DecodePingRequestPayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
+	local version = SafeNumber(self, fields[1] or "")
 	if version ~= PING_REQUEST_VERSION then
 		return nil
 	end
@@ -184,7 +192,7 @@ function QuestTogether:DecodePingResponsePayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
+	local version = SafeNumber(self, fields[1] or "")
 	if version ~= 1 and version ~= PING_RESPONSE_VERSION then
 		return nil
 	end
@@ -239,7 +247,7 @@ function QuestTogether:DecodeQuestCompareRequestPayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
+	local version = SafeNumber(self, fields[1] or "")
 	if version ~= QUEST_COMPARE_REQUEST_VERSION then
 		return nil
 	end
@@ -279,7 +287,7 @@ function QuestTogether:DecodeQuestCompareEntryPayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
+	local version = SafeNumber(self, fields[1] or "")
 	if version ~= QUEST_COMPARE_ENTRY_VERSION then
 		return nil
 	end
@@ -322,7 +330,7 @@ function QuestTogether:DecodeQuestCompareDonePayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
+	local version = SafeNumber(self, fields[1] or "")
 	if version ~= QUEST_COMPARE_DONE_VERSION then
 		return nil
 	end
@@ -338,7 +346,7 @@ function QuestTogether:DecodeQuestCompareDonePayload(payload)
 		version = version,
 		requestId = requestId,
 		senderName = senderName,
-		count = self.SafeToNumber and self:SafeToNumber(count) or tonumber(count) or 0,
+		count = SafeNumber(self, count) or 0,
 	}
 end
 
@@ -357,6 +365,7 @@ function QuestTogether:EncodeAnnouncementPayload(eventData)
 		self:EscapePayload(eventData.coordX or ""),
 		self:EscapePayload(eventData.coordY or ""),
 		self:EscapePayload(eventData.warMode or ""),
+		self:EscapePayload(eventData.emoteToken or ""),
 	}
 
 	return table.concat(fields, ",")
@@ -368,8 +377,8 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
-	if version ~= 1 and version ~= ANNOUNCEMENT_WIRE_VERSION then
+	local version = SafeNumber(self, fields[1] or "")
+	if version ~= 1 and version ~= 2 and version ~= ANNOUNCEMENT_WIRE_VERSION then
 		return nil
 	end
 
@@ -385,6 +394,7 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 	local coordX = self:UnescapePayload(fields[11] or "")
 	local coordY = self:UnescapePayload(fields[12] or "")
 	local warMode = self:UnescapePayload(fields[13] or "")
+	local emoteToken = self:UnescapePayload(fields[14] or "")
 
 	if eventType == "" or senderName == "" or text == "" then
 		return nil
@@ -404,6 +414,7 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 		coordX = coordX,
 		coordY = coordY,
 		warMode = warMode,
+		emoteToken = emoteToken,
 	}
 end
 
@@ -588,7 +599,7 @@ function QuestTogether:BuildChannelRequestId(prefix)
 	)
 end
 
-function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId)
+function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId, extraData)
 	local senderName = self:GetPlayerFullName() or self:GetPlayerName()
 	local senderGUID = self.API.UnitGUID and self.API.UnitGUID("player") or ""
 	local sanitizedText = self:SanitizeAnnouncementText(text)
@@ -614,6 +625,7 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId)
 		coordX = numericCoordX and string.format("%.1f", numericCoordX) or "",
 		coordY = numericCoordY and string.format("%.1f", numericCoordY) or "",
 		warMode = locationInfo and tostring(locationInfo.warMode and "1" or "0") or "",
+		emoteToken = type(extraData) == "table" and tostring(extraData.emoteToken or "") or "",
 	}
 end
 
@@ -650,6 +662,7 @@ function QuestTogether:BuildAnnouncementEventForUnit(unitToken, eventType, text)
 		coordX = "",
 		coordY = "",
 		warMode = "",
+		emoteToken = "",
 	}
 end
 
@@ -665,7 +678,7 @@ end
 
 function QuestTogether:BuildQuestCompareEntries()
 	local entries = {}
-	local numQuestLogEntries = tonumber(self.API.GetNumQuestLogEntries and self.API.GetNumQuestLogEntries()) or 0
+	local numQuestLogEntries = SafeNumber(self, self.API.GetNumQuestLogEntries and self.API.GetNumQuestLogEntries()) or 0
 
 	for questLogIndex = 1, numQuestLogEntries do
 		local questInfo = self.API.GetQuestLogInfo and self.API.GetQuestLogInfo(questLogIndex)
@@ -712,7 +725,7 @@ function QuestTogether:SendQuestCompareDone(requestId, count)
 		self:EncodeQuestCompareDonePayload({
 			requestId = requestId,
 			senderName = self:GetPlayerFullName() or self:GetPlayerName() or "",
-			count = tonumber(count) or 0,
+			count = SafeNumber(self, count) or 0,
 		})
 	)
 	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
@@ -850,13 +863,13 @@ function QuestTogether:IsAnnouncementChannelEvent(channel, localID, name)
 	return type(name) == "string" and name ~= "" and name == self.announcementChannelName
 end
 
-function QuestTogether:SendAnnouncementEvent(eventType, text, questId)
+function QuestTogether:SendAnnouncementEvent(eventType, text, questId, extraData)
 	if not self.isEnabled then
 		self:Debugf("comms", "Skipping announcement send while disabled eventType=%s", tostring(eventType))
 		return false
 	end
 
-	local eventData = self:BuildLocalAnnouncementEvent(eventType, text, questId)
+	local eventData = self:BuildLocalAnnouncementEvent(eventType, text, questId, extraData)
 	if not eventData then
 		self:Debugf("comms", "Failed to build local announcement event eventType=%s", tostring(eventType))
 		return false
@@ -864,6 +877,66 @@ function QuestTogether:SendAnnouncementEvent(eventType, text, questId)
 
 	self:DebugState("comms", "localAnnouncement", eventData)
 	return self:SendAnnouncementWireEvent(eventData)
+end
+
+function QuestTogether:IsSpecialCompletionEmote(emoteToken)
+	return emoteToken == "mountspecial" or emoteToken == "forthealliance" or emoteToken == "forthehorde"
+end
+
+function QuestTogether:GetSafeRemoteCompletionEmote(emoteToken)
+	local token = tostring(emoteToken or "")
+	if token == "" then
+		return nil
+	end
+
+	if not self:IsSpecialCompletionEmote(token) then
+		return token
+	end
+
+	if token == "mountspecial" and self.API and self.API.IsMounted and self.API.IsMounted() then
+		return token
+	end
+
+	if token == "forthealliance" or token == "forthehorde" then
+		local faction = self.API and self.API.GetFaction and self.API.GetFaction() or nil
+		if faction == "Alliance" then
+			return "forthealliance"
+		end
+		if faction == "Horde" then
+			return "forthehorde"
+		end
+	end
+
+	local safetyCounter = 0
+	repeat
+		safetyCounter = safetyCounter + 1
+		token = self:PickRandomCompletionEmote()
+	until not self:IsSpecialCompletionEmote(token) or safetyCounter > 20
+
+	if self:IsSpecialCompletionEmote(token) then
+		return nil
+	end
+
+	return token
+end
+
+function QuestTogether:PlayRemoteCompletionEmote(eventData, nearbyUnitToken, senderName)
+	if type(eventData) ~= "table" or not self:GetOption("doEmotes") then
+		return false
+	end
+
+	local token = self:GetSafeRemoteCompletionEmote(eventData.emoteToken)
+	if not token then
+		return false
+	end
+
+	local emoteTarget = nearbyUnitToken or senderName
+	if not emoteTarget or emoteTarget == "" or not (self.API and self.API.DoEmote) then
+		return false
+	end
+
+	self.API.DoEmote(token, emoteTarget)
+	return true
 end
 
 function QuestTogether:SendAnnouncementWireEvent(eventData)
@@ -1021,6 +1094,16 @@ function QuestTogether:ShouldShowAnnouncementsForRemoteSender(senderName, hasNea
 	return isGrouped or hasNearbyNameplate
 end
 
+function QuestTogether:ShouldPlayRemoteEmoteForAnnouncement(eventData)
+	if type(eventData) ~= "table" then
+		return false
+	end
+
+	return eventData.eventType == "QUEST_COMPLETED"
+		or eventData.eventType == "WORLD_QUEST_COMPLETED"
+		or eventData.eventType == "BONUS_OBJECTIVE_COMPLETED"
+end
+
 function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 	if type(eventData) ~= "table" then
 		self:Debug("Rejected announcement event because payload was not a table", "comms")
@@ -1097,6 +1180,21 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 		self:Debug("Chat log display disabled", "comms")
 	end
 
+	if
+		not isLocal
+		and allowRemoteDisplay
+		and hasNearbySignal
+		and self:ShouldPlayRemoteEmoteForAnnouncement(eventData)
+	then
+		local emoteTarget = nearbyUnitToken
+		if not emoteTarget and hasNearbyNameplate and nearbyNameplate and nearbyNameplate.GetUnit then
+			emoteTarget = nearbyNameplate:GetUnit()
+		end
+		if self:PlayRemoteCompletionEmote(eventData, emoteTarget, senderName) then
+			self:Debugf("comms", "Played remote completion emote sender=%s token=%s", tostring(senderName), tostring(eventData.emoteToken))
+		end
+	end
+
 	if self:GetOption("showChatBubbles") then
 		if isLocal then
 			if not self:GetOption("hideMyOwnChatBubbles") and self.ShowPrototypeBubbleOnUnitNameplate then
@@ -1130,15 +1228,15 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 	return true
 end
 
-function QuestTogether:PublishAnnouncementEvent(eventType, text, questId)
-	local eventData = self:BuildLocalAnnouncementEvent(eventType, text, questId)
+function QuestTogether:PublishAnnouncementEvent(eventType, text, questId, extraData)
+	local eventData = self:BuildLocalAnnouncementEvent(eventType, text, questId, extraData)
 	if not eventData then
 		self:Debugf("comms", "PublishAnnouncementEvent dropped eventType=%s due to empty payload", tostring(eventType))
 		return false
 	end
 
 	self:DebugState("comms", "publishAnnouncement", eventData)
-	self:SendAnnouncementEvent(eventType, text, questId)
+	self:SendAnnouncementEvent(eventType, text, questId, extraData)
 	self:HandleAnnouncementEvent(eventData, true)
 	return true
 end

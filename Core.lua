@@ -1690,8 +1690,9 @@ end
 
 function QuestTogether:PrintQuestCompareDone(remoteName, count)
 	local suffix = ""
-	if tonumber(count) then
-		suffix = string.format(" (%d quests)", count)
+	local numericCount = self:SafeToNumber(count)
+	if numericCount then
+		suffix = string.format(" (%d quests)", numericCount)
 	end
 	self:PrintConsoleAnnouncement("Finished comparing quests" .. suffix .. ".", remoteName, nil, "QUEST_COMPLETED")
 end

@@ -77,19 +77,31 @@ end
 
 function QuestTogether:HandleQuestCompleted(questTitle, questId)
 	self:Debugf("quest", "Quest completed questId=%s title=%s", tostring(questId), tostring(questTitle))
+	local completionEmote = self:PickRandomCompletionEmote()
 	if questId and self:IsWorldQuest(questId) then
-		self:PublishAnnouncementEvent("WORLD_QUEST_COMPLETED", "World Quest Completed: " .. tostring(questTitle), questId)
+		self:PublishAnnouncementEvent(
+			"WORLD_QUEST_COMPLETED",
+			"World Quest Completed: " .. tostring(questTitle),
+			questId,
+			{ emoteToken = completionEmote }
+		)
 	elseif questId and self:IsBonusObjective(questId) then
 		self:PublishAnnouncementEvent(
 			"BONUS_OBJECTIVE_COMPLETED",
 			"Bonus Objective Completed: " .. tostring(questTitle),
-			questId
+			questId,
+			{ emoteToken = completionEmote }
 		)
 	else
-		self:PublishAnnouncementEvent("QUEST_COMPLETED", "Quest Completed: " .. tostring(questTitle), questId)
+		self:PublishAnnouncementEvent(
+			"QUEST_COMPLETED",
+			"Quest Completed: " .. tostring(questTitle),
+			questId,
+			{ emoteToken = completionEmote }
+		)
 	end
 
-	self:PlayLocalCompletionEmote(self:PickRandomCompletionEmote())
+	self:PlayLocalCompletionEmote(completionEmote)
 end
 
 function QuestTogether:HandleQuestRemoved(questTitle)

@@ -287,6 +287,35 @@ QuestTogether:RegisterTest("quest status uses ready to turn in announcement even
 	AssertEquals(QuestTogether:GetQuestStatusAnnouncementEventType(12345), "QUEST_READY_TO_TURN_IN")
 end)
 
+QuestTogether:RegisterTest("quest completion publishes and plays the same emote token", function()
+	local published = nil
+	local played = nil
+
+	WithPatchedMethod(QuestTogether, "PickRandomCompletionEmote", function()
+		return "cheer"
+	end, function()
+		WithPatchedMethod(QuestTogether, "PublishAnnouncementEvent", function(_, eventType, text, questId, extraData)
+			published = {
+				eventType = eventType,
+				text = text,
+				questId = questId,
+				extraData = extraData,
+			}
+		end, function()
+			WithPatchedMethod(QuestTogether, "PlayLocalCompletionEmote", function(_, emoteToken)
+				played = emoteToken
+			end, function()
+				QuestTogether:HandleQuestCompleted("Test Quest", 12345)
+			end)
+		end)
+	end)
+
+	AssertEquals(published.eventType, "QUEST_COMPLETED")
+	AssertEquals(published.questId, 12345)
+	AssertEquals(published.extraData.emoteToken, "cheer")
+	AssertEquals(played, "cheer")
+end)
+
 QuestTogether:RegisterTest("chat bubble option validation rejects unknown values", function()
 	AssertTrue(QuestTogether:SetOption("chatBubbleSize", 140))
 	AssertEquals(QuestTogether:GetOption("chatBubbleSize"), 140)
@@ -572,6 +601,31 @@ QuestTogether:RegisterTest("open ping waypoint prefers TomTom and falls back to 
 	AssertEquals(calls[1], "point:999:0.471:0.699")
 	AssertEquals(calls[2], "set:999:0.471:0.699")
 	AssertEquals(calls[3], "track:true")
+end)
+
+QuestTogether:RegisterTest("announcement decode rejects nonnumeric version without raw tonumber fallback", function()
+	WithPatchedMethod(QuestTogether, "SafeToNumber", function(_, value)
+		AssertEquals(value, "secret")
+		return nil
+	end, function()
+		AssertEquals(QuestTogether:DecodeAnnouncementPayload("secret,event,senderGuid,MAGE,Sender,text"), nil)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest compare done decode treats nonnumeric count as zero safely", function()
+	WithPatchedMethod(QuestTogether, "SafeToNumber", function(_, value)
+		if value == "1" then
+			return 1
+		end
+		if value == "secret" then
+			return nil
+		end
+		return tonumber(value)
+	end, function()
+		local decoded = QuestTogether:DecodeQuestCompareDonePayload("1,req,Remote-Realm,secret")
+		AssertTrue(decoded ~= nil)
+		AssertEquals(decoded.count, 0)
+	end)
 end)
 
 QuestTogether:RegisterTest("chat log speaker menu includes player actions", function()
@@ -1700,6 +1754,77 @@ QuestTogether:RegisterTest("remote nearby sender shows bubble and chat log for p
 			AssertEquals(bubbleText, "4/4 Widgets")
 		end)
 	end)
+end)
+
+QuestTogether:RegisterTest("remote nearby completion plays synced emote", function()
+	local emoteCalls = {}
+
+	QuestTogether.API = CreateApiWithOverrides({
+		DoEmote = function(token, target)
+			emoteCalls[#emoteCalls + 1] = token .. ":" .. tostring(target)
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function()
+		return nil
+	end, function()
+		WithPatchedMethod(QuestTogether, "FindNearbyPlayerUnitTokenForSender", function(_, senderGUID, senderName)
+			AssertEquals(senderGUID, "Player-4-JKL")
+			AssertEquals(senderName, "Nearby-Realm")
+			return "target"
+		end, function()
+			WithPatchedMethod(QuestTogether, "PrintConsoleAnnouncement", function() end, function()
+				AssertTrue(QuestTogether:HandleAnnouncementEvent({
+					eventType = "QUEST_COMPLETED",
+					senderGUID = "Player-4-JKL",
+					classFile = "MAGE",
+					senderName = "Nearby-Realm",
+					text = "Quest Completed: Widgets",
+					emoteToken = "cheer",
+				}, false))
+			end)
+		end)
+	end)
+
+	AssertEquals(#emoteCalls, 1)
+	AssertEquals(emoteCalls[1], "cheer:target")
+end)
+
+QuestTogether:RegisterTest("remote far completion does not play synced emote", function()
+	local emoteCalls = 0
+
+	QuestTogether.API = CreateApiWithOverrides({
+		DoEmote = function()
+			emoteCalls = emoteCalls + 1
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function()
+		return nil
+	end, function()
+		WithPatchedMethod(QuestTogether, "FindNearbyPlayerUnitTokenForSender", function()
+			return nil
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsAnnouncementSenderNearbyByLocation", function()
+				return false
+			end, function()
+				AssertFalse(QuestTogether:HandleAnnouncementEvent({
+					eventType = "QUEST_COMPLETED",
+					senderGUID = "Player-4-JKL",
+					classFile = "MAGE",
+					senderName = "Faraway-Realm",
+					text = "Quest Completed: Widgets",
+					emoteToken = "cheer",
+					zoneName = "Elsewhere",
+					coordX = "1.0",
+					coordY = "1.0",
+					warMode = "1",
+				}, false))
+			end)
+		end)
+	end)
+
+	AssertEquals(emoteCalls, 0)
 end)
 
 QuestTogether:RegisterTest("remote sender with matching target prints chat log without a nameplate", function()
