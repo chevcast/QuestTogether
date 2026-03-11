@@ -505,6 +505,41 @@ QuestTogether.API = QuestTogether.API or {
 	UnitIsPlayer = function(unitToken)
 		return UnitIsPlayer(unitToken)
 	end,
+	InviteUnit = function(name)
+		if C_PartyInfo and C_PartyInfo.InviteUnit then
+			return C_PartyInfo.InviteUnit(name)
+		end
+		return nil
+	end,
+	SendTell = function(name, chatFrame)
+		if ChatFrameUtil and ChatFrameUtil.SendTell then
+			return ChatFrameUtil.SendTell(name, chatFrame)
+		end
+		if type(ChatFrame_SendTell) == "function" then
+			return ChatFrame_SendTell(name, chatFrame)
+		end
+		return nil
+	end,
+	AddFriend = function(name)
+		if C_FriendList and C_FriendList.AddFriend then
+			return C_FriendList.AddFriend(name)
+		end
+		return nil
+	end,
+	AddOrDelIgnore = function(name)
+		if C_FriendList and C_FriendList.AddOrDelIgnore then
+			local ok, result = pcall(C_FriendList.AddOrDelIgnore, name)
+			return ok and result or nil
+		end
+		return nil
+	end,
+	IsOnIgnoredList = function(name)
+		if C_FriendList and C_FriendList.IsOnIgnoredList then
+			local ok, result = pcall(C_FriendList.IsOnIgnoredList, name)
+			return ok and result or false
+		end
+		return false
+	end,
 	IsAddOnLoaded = function(addonName)
 		if C_AddOns and C_AddOns.IsAddOnLoaded then
 			return C_AddOns.IsAddOnLoaded(addonName)
@@ -728,6 +763,30 @@ function QuestTogether:FindQuestLogChatFrame()
 	return nil, nil
 end
 
+function QuestTogether:FindVisibleQuestLogChatFrame(excludedFrame)
+	local chatWindowName = self.questLogWindowName or "QuestTogether"
+	local maxWindows = tonumber(self.API.GetNumChatWindows and self.API.GetNumChatWindows()) or 0
+
+	for chatFrameID = 1, maxWindows do
+		local frameName = self.API.GetChatWindowInfo and self.API.GetChatWindowInfo(chatFrameID)
+		if frameName == chatWindowName then
+			local chatFrame = nil
+			if self.API.GetChatFrameByID then
+				chatFrame = self.API.GetChatFrameByID(chatFrameID)
+			end
+			if not chatFrame then
+				chatFrame = _G["ChatFrame" .. tostring(chatFrameID)]
+			end
+			if chatFrame and chatFrame ~= excludedFrame and self:IsQuestLogChatFrameVisible(chatFrame) then
+				self:SetConfiguredQuestLogChatFrameID(chatFrameID)
+				return chatFrame, chatFrameID
+			end
+		end
+	end
+
+	return nil, nil
+end
+
 function QuestTogether:IsQuestLogChatFrame(chatFrame)
 	if not chatFrame or not chatFrame.GetID then
 		return false
@@ -790,8 +849,8 @@ function QuestTogether:HandleQuestLogChatFrameClosed(chatFrame)
 				return
 			end
 
-			local existingFrame, existingID = self:FindQuestLogChatFrame()
-			if existingFrame and self:IsQuestLogChatFrameVisible(existingFrame) then
+			local existingFrame, existingID = self:FindVisibleQuestLogChatFrame(chatFrame)
+			if existingFrame then
 				self:SetConfiguredQuestLogChatFrameID(existingID)
 				self:Debugf(
 					"chat",
@@ -912,8 +971,11 @@ function QuestTogether:CloseQuestLogChatFrame()
 
 	if self.API.CloseChatWindow then
 		self.suppressQuestLogChatCloseHook = true
-		self.API.CloseChatWindow(chatFrame)
+		local ok, closeError = pcall(self.API.CloseChatWindow, chatFrame)
 		self.suppressQuestLogChatCloseHook = false
+		if not ok then
+			self:Debugf("chat", "Failed to close QuestTogether chat window id=%s error=%s", tostring(chatFrameID), tostring(closeError))
+		end
 	end
 
 	self:SetConfiguredQuestLogChatFrameID(nil)
@@ -1420,19 +1482,115 @@ function QuestTogether:ShowChatLogSpeakerMenu(ownerFrame, speakerName)
 		return false
 	end
 
-	local shortName = self:GetShortDisplayName(speakerName)
-	local isSeparate = self:GetOption("chatLogDestination") == "separate"
 	MenuUtil.CreateContextMenu(ownerFrame, function(_, rootDescription)
-		rootDescription:CreateTitle(shortName ~= "" and shortName or "QuestTogether")
-
-		local buttonText = isSeparate and "Move QuestTogether Logs to Main Window" or "Move QuestTogether Logs to Separate Window"
-		rootDescription:CreateButton(buttonText, function()
-			self:SetOption("chatLogDestination", isSeparate and "main" or "separate")
-			if self.RefreshOptionsWindow then
-				self:RefreshOptionsWindow()
-			end
-		end)
+		self:PopulateChatLogSpeakerMenu(rootDescription, ownerFrame, speakerName)
 	end)
+	return true
+end
+
+function QuestTogether:IsIgnoredPlayerName(playerName)
+	local fullName = tostring(playerName or "")
+	if fullName == "" or not self.API or not self.API.IsOnIgnoredList then
+		return false
+	end
+
+	if self.API.IsOnIgnoredList(fullName) then
+		return true
+	end
+
+	local shortName = self:GetShortDisplayName(fullName)
+	if shortName ~= "" and shortName ~= fullName and self.API.IsOnIgnoredList(shortName) then
+		return true
+	end
+
+	return false
+end
+
+function QuestTogether:InviteChatLogSpeaker(speakerName)
+	local fullName = tostring(speakerName or "")
+	if fullName == "" or not self.API or not self.API.InviteUnit then
+		return false
+	end
+
+	self.API.InviteUnit(fullName)
+	return true
+end
+
+function QuestTogether:WhisperChatLogSpeaker(speakerName, ownerFrame)
+	local fullName = tostring(speakerName or "")
+	if fullName == "" or not self.API or not self.API.SendTell then
+		return false
+	end
+
+	self.API.SendTell(fullName, ownerFrame)
+	return true
+end
+
+function QuestTogether:AddFriendFromChatLogSpeaker(speakerName)
+	local fullName = tostring(speakerName or "")
+	if fullName == "" or not self.API or not self.API.AddFriend then
+		return false
+	end
+
+	self.API.AddFriend(fullName)
+	return true
+end
+
+function QuestTogether:ToggleIgnoreChatLogSpeaker(speakerName)
+	local fullName = tostring(speakerName or "")
+	if fullName == "" or not self.API or not self.API.AddOrDelIgnore then
+		return false
+	end
+
+	self.API.AddOrDelIgnore(fullName)
+	return true
+end
+
+function QuestTogether:PopulateChatLogSpeakerMenu(rootDescription, ownerFrame, speakerName)
+	if not rootDescription then
+		return false
+	end
+
+	local fullName = tostring(speakerName or "")
+	local shortName = self:GetShortDisplayName(fullName)
+	local isSeparate = self:GetOption("chatLogDestination") == "separate"
+	local isIgnored = false
+	local ignoredOk, ignoredResult = pcall(function()
+		return self:IsIgnoredPlayerName(fullName)
+	end)
+	if ignoredOk and ignoredResult then
+		isIgnored = true
+	end
+
+	rootDescription:CreateTitle(shortName ~= "" and shortName or "QuestTogether")
+
+	if fullName ~= "" then
+		rootDescription:CreateButton("Invite", function()
+			self:InviteChatLogSpeaker(fullName)
+		end)
+		rootDescription:CreateButton("Whisper", function()
+			self:WhisperChatLogSpeaker(fullName, ownerFrame)
+		end)
+		rootDescription:CreateButton("Add Friend", function()
+			self:AddFriendFromChatLogSpeaker(fullName)
+		end)
+		rootDescription:CreateButton(isIgnored and "Unignore" or "Ignore", function()
+			self:ToggleIgnoreChatLogSpeaker(fullName)
+		end)
+	end
+
+	if rootDescription.CreateDivider then
+		rootDescription:CreateDivider()
+	end
+
+	local buttonText = isSeparate and "Move QuestTogether Logs to Main Window" or "Move QuestTogether Logs to Separate Window"
+	rootDescription:CreateButton(buttonText, function()
+		self:SetOption("chatLogDestination", isSeparate and "main" or "separate")
+		if self.RefreshOptionsWindow then
+			self:RefreshOptionsWindow()
+		end
+	end)
+
 	return true
 end
 

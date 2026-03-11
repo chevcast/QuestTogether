@@ -847,6 +847,10 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 		self:Debugf("comms", "Ignoring self-sent addon message sender=%s", tostring(sender))
 		return
 	end
+	if self.IsIgnoredPlayerName and self:IsIgnoredPlayerName(self:NormalizeMemberName(sender) or sender) then
+		self:Debugf("comms", "Ignoring addon message from ignored sender=%s", tostring(sender))
+		return
+	end
 	if not self:IsAnnouncementChannelEvent(channel, localID, name) then
 		self:Debugf("comms", "Ignoring addon message outside announcement channel sender=%s", tostring(sender))
 		return

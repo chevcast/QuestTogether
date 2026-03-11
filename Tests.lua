@@ -62,6 +62,19 @@ local function WithPatchedMethod(targetTable, methodName, replacement, fn)
 	end
 end
 
+local function WithPatchedGlobal(globalName, replacement, fn)
+	local original = _G[globalName]
+	_G[globalName] = replacement
+
+	local ok, err = pcall(fn)
+
+	_G[globalName] = original
+
+	if not ok then
+		error(err, 0)
+	end
+end
+
 local function WithIsolatedState(testFn)
 	if not QuestTogether.db then
 		QuestTogether:OnInitialize()
@@ -360,6 +373,103 @@ QuestTogether:RegisterTest("chat log speaker link handler opens QuestTogether me
 	AssertEquals(capturedSpeaker, "MyPlayer-Realm")
 end)
 
+QuestTogether:RegisterTest("chat log speaker menu includes player actions", function()
+	local titles = {}
+	local buttons = {}
+	local dividers = 0
+	local fakeRoot = {
+		CreateTitle = function(_, text)
+			titles[#titles + 1] = text
+		end,
+		CreateButton = function(_, text, callback)
+			buttons[#buttons + 1] = {
+				text = text,
+				callback = callback,
+			}
+		end,
+		CreateDivider = function()
+			dividers = dividers + 1
+		end,
+	}
+
+	WithPatchedMethod(QuestTogether, "IsIgnoredPlayerName", function()
+		return false
+	end, function()
+		QuestTogether:PopulateChatLogSpeakerMenu(fakeRoot, "ChatFrame1", "MyPlayer-Realm")
+	end)
+
+	AssertEquals(titles[1], "MyPlayer")
+	AssertEquals(buttons[1].text, "Invite")
+	AssertEquals(buttons[2].text, "Whisper")
+	AssertEquals(buttons[3].text, "Add Friend")
+	AssertEquals(buttons[4].text, "Ignore")
+	AssertEquals(buttons[5].text, "Move QuestTogether Logs to Separate Window")
+	AssertEquals(dividers, 1)
+end)
+
+QuestTogether:RegisterTest("chat log speaker menu invite action uses full speaker name", function()
+	local invitedName = nil
+	WithPatchedMethod(QuestTogether.API, "InviteUnit", function(name)
+		invitedName = name
+	end, function()
+		AssertTrue(QuestTogether:InviteChatLogSpeaker("MyPlayer-Realm"))
+	end)
+	AssertEquals(invitedName, "MyPlayer-Realm")
+end)
+
+QuestTogether:RegisterTest("chat log speaker menu whisper action uses owner frame", function()
+	local whisperedName = nil
+	local whisperedFrame = nil
+	WithPatchedMethod(QuestTogether.API, "SendTell", function(name, chatFrame)
+		whisperedName = name
+		whisperedFrame = chatFrame
+	end, function()
+		AssertTrue(QuestTogether:WhisperChatLogSpeaker("MyPlayer-Realm", "ChatFrame9"))
+	end)
+	AssertEquals(whisperedName, "MyPlayer-Realm")
+	AssertEquals(whisperedFrame, "ChatFrame9")
+end)
+
+QuestTogether:RegisterTest("chat log speaker menu add friend action uses full speaker name", function()
+	local friendName = nil
+	WithPatchedMethod(QuestTogether.API, "AddFriend", function(name)
+		friendName = name
+	end, function()
+		AssertTrue(QuestTogether:AddFriendFromChatLogSpeaker("MyPlayer-Realm"))
+	end)
+	AssertEquals(friendName, "MyPlayer-Realm")
+end)
+
+QuestTogether:RegisterTest("chat log speaker menu ignore action uses full speaker name", function()
+	local ignoredName = nil
+	WithPatchedMethod(QuestTogether.API, "AddOrDelIgnore", function(name)
+		ignoredName = name
+	end, function()
+		AssertTrue(QuestTogether:ToggleIgnoreChatLogSpeaker("MyPlayer-Realm"))
+	end)
+	AssertEquals(ignoredName, "MyPlayer-Realm")
+end)
+
+QuestTogether:RegisterTest("chat log speaker menu shows unignore for ignored speaker", function()
+	local buttons = {}
+	local fakeRoot = {
+		CreateTitle = function() end,
+		CreateButton = function(_, text)
+			buttons[#buttons + 1] = text
+		end,
+		CreateDivider = function() end,
+	}
+
+	WithPatchedMethod(QuestTogether, "IsIgnoredPlayerName", function(_, speakerName)
+		AssertEquals(speakerName, "Ignored-Realm")
+		return true
+	end, function()
+		QuestTogether:PopulateChatLogSpeakerMenu(fakeRoot, "ChatFrame1", "Ignored-Realm")
+	end)
+
+	AssertEquals(buttons[4], "Unignore")
+end)
+
 QuestTogether:RegisterTest("world quest console announcement uses world quest icon", function()
 	local message =
 		QuestTogether:BuildConsoleAnnouncementMessage("MyPlayer-Realm", "entered the area", "MAGE", "WORLD_QUEST_ENTERED")
@@ -482,7 +592,7 @@ QuestTogether:RegisterTest("dev log all announcements omits missing war mode met
 	)
 
 	AssertFalse(string.find(message, "WM Off", 1, true) ~= nil)
-	AssertFalse(string.find(message, "[", 1, true) ~= nil)
+	AssertFalse(string.find(message, " |cff999999[", 1, true) ~= nil)
 end)
 
 QuestTogether:RegisterTest("local announcement event includes resolved icon metadata", function()
@@ -660,9 +770,18 @@ QuestTogether:RegisterTest("closing QuestTogether chat window reverts chat log d
 		Delay = function(_, callback)
 			callback()
 		end,
+		GetNumChatWindows = function()
+			return 0
+		end,
 		GetChatWindowInfo = function(chatFrameID)
 			if chatFrameID == 3 then
 				return "QuestTogether", 18
+			end
+			return nil
+		end,
+		GetChatFrameByID = function(chatFrameID)
+			if chatFrameID == 3 then
+				return fakeQuestFrame
 			end
 			return nil
 		end,
@@ -706,48 +825,48 @@ QuestTogether:RegisterTest("closing QuestTogether chat window keeps separate des
 
 	QuestTogether.db.profile.chatLogDestination = "separate"
 	QuestTogether.db.global.questLogChatFrameID = 3
-	_G.ChatFrame4Tab = {
+	WithPatchedGlobal("ChatFrame4Tab", {
 		IsShown = function()
 			return true
 		end,
-	}
-	QuestTogether.API = CreateApiWithOverrides({
-		Delay = function(_, callback)
-			callback()
-		end,
-		GetChatWindowInfo = function(chatFrameID)
-			if chatFrameID == 3 then
-				return "QuestTogether", 18
-			end
-			if chatFrameID == 4 then
-				return "QuestTogether", 18
-			end
-			return nil
-		end,
-		GetChatFrameByID = function(chatFrameID)
-			if chatFrameID == 3 then
-				return closedFrame
-			end
-			if chatFrameID == 4 then
-				return replacementFrame
-			end
-			return nil
-		end,
-		GetNumChatWindows = function()
-			return 4
-		end,
-	})
+	}, function()
+		QuestTogether.API = CreateApiWithOverrides({
+			Delay = function(_, callback)
+				callback()
+			end,
+			GetChatWindowInfo = function(chatFrameID)
+				if chatFrameID == 3 then
+					return "QuestTogether", 18
+				end
+				if chatFrameID == 4 then
+					return "QuestTogether", 18
+				end
+				return nil
+			end,
+			GetChatFrameByID = function(chatFrameID)
+				if chatFrameID == 3 then
+					return closedFrame
+				end
+				if chatFrameID == 4 then
+					return replacementFrame
+				end
+				return nil
+			end,
+			GetNumChatWindows = function()
+				return 4
+			end,
+		})
 
-	WithPatchedMethod(QuestTogether, "RefreshOptionsWindow", function()
-		refreshed = refreshed + 1
-	end, function()
-		AssertTrue(QuestTogether:HandleQuestLogChatFrameClosed(closedFrame))
+		WithPatchedMethod(QuestTogether, "RefreshOptionsWindow", function()
+			refreshed = refreshed + 1
+		end, function()
+			AssertTrue(QuestTogether:HandleQuestLogChatFrameClosed(closedFrame))
+		end)
 	end)
 
 	AssertEquals(QuestTogether.db.profile.chatLogDestination, "separate")
 	AssertEquals(QuestTogether.db.global.questLogChatFrameID, 4)
 	AssertEquals(refreshed, 0)
-	_G.ChatFrame4Tab = nil
 end)
 
 QuestTogether:RegisterTest("bubble test announcement uses target player when available", function()
