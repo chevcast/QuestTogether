@@ -763,6 +763,15 @@ function QuestTogether:FindQuestLogChatFrame()
 	return nil, nil
 end
 
+function QuestTogether:GetResolvedChatLogDestination()
+	local chatFrame = self:FindVisibleQuestLogChatFrame()
+	if chatFrame then
+		return "separate"
+	end
+
+	return "main"
+end
+
 function QuestTogether:FindVisibleQuestLogChatFrame(excludedFrame)
 	local chatWindowName = self.questLogWindowName or "QuestTogether"
 	local maxWindows = tonumber(self.API.GetNumChatWindows and self.API.GetNumChatWindows()) or 0
@@ -840,41 +849,38 @@ function QuestTogether:HandleQuestLogChatFrameClosed(chatFrame)
 	end
 
 	self:SetConfiguredQuestLogChatFrameID(nil)
-	if self.db and self.db.profile and self.db.profile.chatLogDestination == "separate" then
-		local evaluateClose = function()
-			if self.isLoggingOut then
-				return
-			end
-			if not self.db or not self.db.profile or self.db.profile.chatLogDestination ~= "separate" then
-				return
-			end
+	local evaluateClose = function()
+		if self.isLoggingOut then
+			return
+		end
 
-			local existingFrame, existingID = self:FindVisibleQuestLogChatFrame(chatFrame)
-			if existingFrame then
-				self:SetConfiguredQuestLogChatFrameID(existingID)
-				self:Debugf(
-					"chat",
-					"Ignoring QuestTogether chat window close because a visible replacement exists id=%s",
-					tostring(existingID)
-				)
-				return
-			end
-
-			self.db.profile.chatLogDestination = "main"
-			self:Debug("QuestTogether chat window was closed; reverting chat log destination to main chat window", "chat")
+		local existingFrame, existingID = self:FindVisibleQuestLogChatFrame(chatFrame)
+		if existingFrame then
+			self:SetConfiguredQuestLogChatFrameID(existingID)
+			self:Debugf(
+				"chat",
+				"Ignoring QuestTogether chat window close because a visible replacement exists id=%s",
+				tostring(existingID)
+			)
 			if self.RefreshOptionsWindow then
 				self:RefreshOptionsWindow()
 			end
-			if self.isEnabled and self.hasLoggedIn then
-				self:PrintChatLogDestinationMessage()
-			end
+			return
 		end
 
-		if self.API and self.API.Delay then
-			self.API.Delay(0, evaluateClose)
-		else
-			evaluateClose()
+		self:Debug("QuestTogether chat window was closed; reverting chat log destination to main chat window", "chat")
+		if self.RefreshOptionsWindow then
+			self:RefreshOptionsWindow()
 		end
+		if self.isEnabled and self.hasLoggedIn then
+			self:PrintChatLogDestinationMessage()
+		end
+	end
+
+	if self.API and self.API.Delay then
+		self.API.Delay(0, evaluateClose)
+	else
+		evaluateClose()
 	end
 
 	return true
@@ -986,6 +992,21 @@ function QuestTogether:CloseQuestLogChatFrame()
 	return true
 end
 
+function QuestTogether:ReconcileQuestLogChatDestination()
+	local visibleFrame, visibleID = self:FindVisibleQuestLogChatFrame()
+	if visibleFrame and visibleID then
+		self:SetConfiguredQuestLogChatFrameID(visibleID)
+		self:Debugf("chat", "Adopted existing QuestTogether chat window id=%s on login", tostring(visibleID))
+		if self.RefreshOptionsWindow then
+			self:RefreshOptionsWindow()
+		end
+		return true
+	end
+
+	self:SetConfiguredQuestLogChatFrameID(nil)
+	return false
+end
+
 function QuestTogether:ApplyMainChatFontSizeToChatFrame(chatFrame)
 	if not chatFrame or not chatFrame.GetID or not self.API.GetChatWindowInfo or not self.API.SetChatWindowFontSize then
 		return false
@@ -1008,7 +1029,7 @@ function QuestTogether:ApplyMainChatFontSizeToChatFrame(chatFrame)
 end
 
 function QuestTogether:GetChatLogFrame()
-	if self:GetOption("chatLogDestination") == "separate" then
+	if self:GetResolvedChatLogDestination() == "separate" then
 		local chatFrame = self:EnsureQuestLogChatFrame()
 		if chatFrame and chatFrame.AddMessage then
 			return chatFrame
@@ -1805,6 +1826,9 @@ function QuestTogether:GetOption(key)
 	if not self.db or not self.db.profile then
 		return nil
 	end
+	if key == "chatLogDestination" then
+		return self:GetResolvedChatLogDestination()
+	end
 	return self.db.profile[key]
 end
 
@@ -2397,6 +2421,7 @@ end
 function QuestTogether:OnLogin()
 	self.hasLoggedIn = true
 	self.isLoggingOut = false
+	self:ReconcileQuestLogChatDestination()
 	self:Debugf("core", "PLAYER_LOGIN processed enabledSetting=%s", tostring(self.db and self.db.profile and self.db.profile.enabled))
 	if self.db.profile.enabled then
 		self:Enable()
@@ -2437,6 +2462,14 @@ function QuestTogether:PLAYER_LOGIN()
 	self:OnLogin()
 end
 
+function QuestTogether:PLAYER_ENTERING_WORLD()
+	self.isLoggingOut = false
+end
+
+function QuestTogether:PLAYER_LEAVING_WORLD()
+	self.isLoggingOut = true
+end
+
 function QuestTogether:PLAYER_LOGOUT()
 	self.isLoggingOut = true
 end
@@ -2457,5 +2490,7 @@ end
 QuestTogether.eventFrame = QuestTogether.eventFrame or CreateFrame("Frame")
 QuestTogether.eventFrame:SetScript("OnEvent", DispatchEvent)
 QuestTogether.eventFrame:RegisterEvent("ADDON_LOADED")
+QuestTogether.eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+QuestTogether.eventFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
 QuestTogether.eventFrame:RegisterEvent("PLAYER_LOGIN")
 QuestTogether.eventFrame:RegisterEvent("PLAYER_LOGOUT")

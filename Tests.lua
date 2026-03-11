@@ -793,7 +793,7 @@ QuestTogether:RegisterTest("closing QuestTogether chat window reverts chat log d
 		AssertTrue(QuestTogether:HandleQuestLogChatFrameClosed(fakeQuestFrame))
 	end)
 
-	AssertEquals(QuestTogether.db.profile.chatLogDestination, "main")
+	AssertEquals(QuestTogether:GetOption("chatLogDestination"), "main")
 	AssertEquals(QuestTogether.db.global.questLogChatFrameID, nil)
 	AssertEquals(refreshed, 1)
 end)
@@ -864,9 +864,55 @@ QuestTogether:RegisterTest("closing QuestTogether chat window keeps separate des
 		end)
 	end)
 
-	AssertEquals(QuestTogether.db.profile.chatLogDestination, "separate")
+	AssertEquals(QuestTogether:GetOption("chatLogDestination"), "separate")
 	AssertEquals(QuestTogether.db.global.questLogChatFrameID, 4)
 	AssertEquals(refreshed, 0)
+end)
+
+QuestTogether:RegisterTest("login adopts visible QuestTogether chat window as separate destination", function()
+	local refreshed = 0
+	local visibleFrame = {
+		GetID = function()
+			return 4
+		end,
+		GetName = function()
+			return "ChatFrame4"
+		end,
+		IsShown = function()
+			return true
+		end,
+	}
+
+	QuestTogether.db.profile.chatLogDestination = "main"
+	QuestTogether.db.global.questLogChatFrameID = nil
+
+	QuestTogether.API = CreateApiWithOverrides({
+		GetNumChatWindows = function()
+			return 4
+		end,
+		GetChatWindowInfo = function(chatFrameID)
+			if chatFrameID == 4 then
+				return "QuestTogether", 18
+			end
+			return nil
+		end,
+		GetChatFrameByID = function(chatFrameID)
+			if chatFrameID == 4 then
+				return visibleFrame
+			end
+			return nil
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshOptionsWindow", function()
+		refreshed = refreshed + 1
+	end, function()
+		AssertTrue(QuestTogether:ReconcileQuestLogChatDestination())
+	end)
+
+	AssertEquals(QuestTogether:GetOption("chatLogDestination"), "separate")
+	AssertEquals(QuestTogether.db.global.questLogChatFrameID, 4)
+	AssertEquals(refreshed, 1)
 end)
 
 QuestTogether:RegisterTest("bubble test announcement uses target player when available", function()
