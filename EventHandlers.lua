@@ -436,6 +436,23 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 					)
 				end
 
+				local currentReadyForTurnIn = C_QuestLog.ReadyForTurnIn and C_QuestLog.ReadyForTurnIn(questId) and true
+					or false
+				local readyForTurnInChanged = questData.isReadyForTurnIn ~= currentReadyForTurnIn
+				if readyForTurnInChanged then
+					questData.isReadyForTurnIn = currentReadyForTurnIn
+					self:Debugf(
+						"quest",
+						"Ready for turn-in state changed questId=%s ready=%s",
+						tostring(questId),
+						tostring(currentReadyForTurnIn)
+					)
+					if currentReadyForTurnIn and not self:GetTaskAnnouncementType(questId) then
+						local questTitle = questData.title or self:GetQuestTitle(questId)
+						self:PublishAnnouncementEvent("QUEST_READY_TO_TURN_IN", "Ready to Turn In: " .. tostring(questTitle), questId)
+					end
+				end
+
 				local hasObjectiveChanges = false
 				for _ in pairs(changedObjectives) do
 					hasObjectiveChanges = true

@@ -14,8 +14,15 @@ local PING_REQUEST_VERSION = 1
 local PING_REQUEST_COMMAND = "PING"
 local PING_RESPONSE_VERSION = 1
 local PING_RESPONSE_COMMAND = "PONG"
+local QUEST_COMPARE_REQUEST_VERSION = 1
+local QUEST_COMPARE_REQUEST_COMMAND = "QCMP"
+local QUEST_COMPARE_ENTRY_VERSION = 1
+local QUEST_COMPARE_ENTRY_COMMAND = "QCQE"
+local QUEST_COMPARE_DONE_VERSION = 1
+local QUEST_COMPARE_DONE_COMMAND = "QCDN"
 local ANNOUNCEMENT_MAX_TEXT_LENGTH = 220
 local PING_REQUEST_TIMEOUT_SECONDS = 10
+local QUEST_COMPARE_TIMEOUT_SECONDS = 10
 local ANNOUNCEMENT_CHANNEL_FILTER_EVENTS = {
 	"CHAT_MSG_CHANNEL",
 	"CHAT_MSG_CHANNEL_NOTICE",
@@ -209,6 +216,126 @@ function QuestTogether:DecodePingResponsePayload(payload)
 		coordX = coordX,
 		coordY = coordY,
 		warMode = warMode,
+	}
+end
+
+function QuestTogether:EncodeQuestCompareRequestPayload(requestData)
+	local fields = {
+		tostring(QUEST_COMPARE_REQUEST_VERSION),
+		self:EscapePayload(requestData.requestId or ""),
+		self:EscapePayload(requestData.requesterName or ""),
+		self:EscapePayload(requestData.targetName or ""),
+	}
+
+	return table.concat(fields, ",")
+end
+
+function QuestTogether:DecodeQuestCompareRequestPayload(payload)
+	if not payload or payload == "" then
+		return nil
+	end
+
+	local fields = SplitByDelimiter(payload, ",")
+	local version = tonumber(fields[1] or "")
+	if version ~= QUEST_COMPARE_REQUEST_VERSION then
+		return nil
+	end
+
+	local requestId = self:UnescapePayload(fields[2] or "")
+	local requesterName = self:UnescapePayload(fields[3] or "")
+	local targetName = self:UnescapePayload(fields[4] or "")
+	if requestId == "" or targetName == "" then
+		return nil
+	end
+
+	return {
+		version = version,
+		requestId = requestId,
+		requesterName = requesterName,
+		targetName = targetName,
+	}
+end
+
+function QuestTogether:EncodeQuestCompareEntryPayload(entryData)
+	local fields = {
+		tostring(QUEST_COMPARE_ENTRY_VERSION),
+		self:EscapePayload(entryData.requestId or ""),
+		self:EscapePayload(entryData.senderName or ""),
+		self:EscapePayload(entryData.questId or ""),
+		self:EscapePayload(entryData.questTitle or ""),
+		self:EscapePayload(entryData.isComplete and "1" or "0"),
+		self:EscapePayload(entryData.isPushable and "1" or "0"),
+	}
+
+	return table.concat(fields, ",")
+end
+
+function QuestTogether:DecodeQuestCompareEntryPayload(payload)
+	if not payload or payload == "" then
+		return nil
+	end
+
+	local fields = SplitByDelimiter(payload, ",")
+	local version = tonumber(fields[1] or "")
+	if version ~= QUEST_COMPARE_ENTRY_VERSION then
+		return nil
+	end
+
+	local requestId = self:UnescapePayload(fields[2] or "")
+	local senderName = self:UnescapePayload(fields[3] or "")
+	local questId = self:UnescapePayload(fields[4] or "")
+	local questTitle = self:UnescapePayload(fields[5] or "")
+	local isComplete = self:UnescapePayload(fields[6] or "") == "1"
+	local isPushable = self:UnescapePayload(fields[7] or "") == "1"
+	if requestId == "" or senderName == "" or questId == "" then
+		return nil
+	end
+
+	return {
+		version = version,
+		requestId = requestId,
+		senderName = senderName,
+		questId = questId,
+		questTitle = questTitle,
+		isComplete = isComplete,
+		isPushable = isPushable,
+	}
+end
+
+function QuestTogether:EncodeQuestCompareDonePayload(doneData)
+	local fields = {
+		tostring(QUEST_COMPARE_DONE_VERSION),
+		self:EscapePayload(doneData.requestId or ""),
+		self:EscapePayload(doneData.senderName or ""),
+		self:EscapePayload(doneData.count or ""),
+	}
+
+	return table.concat(fields, ",")
+end
+
+function QuestTogether:DecodeQuestCompareDonePayload(payload)
+	if not payload or payload == "" then
+		return nil
+	end
+
+	local fields = SplitByDelimiter(payload, ",")
+	local version = tonumber(fields[1] or "")
+	if version ~= QUEST_COMPARE_DONE_VERSION then
+		return nil
+	end
+
+	local requestId = self:UnescapePayload(fields[2] or "")
+	local senderName = self:UnescapePayload(fields[3] or "")
+	local count = self:UnescapePayload(fields[4] or "")
+	if requestId == "" or senderName == "" then
+		return nil
+	end
+
+	return {
+		version = version,
+		requestId = requestId,
+		senderName = senderName,
+		count = tonumber(count) or 0,
 	}
 end
 
@@ -446,6 +573,17 @@ function QuestTogether:GetPlayerPingMetadata()
 	}
 end
 
+function QuestTogether:BuildChannelRequestId(prefix)
+	local requestPrefix = tostring(prefix or "req")
+	return string.format(
+		"%s-%s-%d-%d",
+		requestPrefix,
+		tostring(self:GetPlayerName() or "player"),
+		math.floor((self.API.GetTime and self.API.GetTime() or 0) * 1000),
+		self.API.Random and self.API.Random(1000, 9999) or 1000
+	)
+end
+
 function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId)
 	local senderName = self:GetPlayerFullName() or self:GetPlayerName()
 	local senderGUID = self.API.UnitGUID and self.API.UnitGUID("player") or ""
@@ -521,6 +659,185 @@ function QuestTogether:BuildPingResponse(requestId)
 	return payload
 end
 
+function QuestTogether:BuildQuestCompareEntries()
+	local entries = {}
+	local numQuestLogEntries = tonumber(self.API.GetNumQuestLogEntries and self.API.GetNumQuestLogEntries()) or 0
+
+	for questLogIndex = 1, numQuestLogEntries do
+		local questInfo = self.API.GetQuestLogInfo and self.API.GetQuestLogInfo(questLogIndex)
+		if questInfo and not questInfo.isHeader and not questInfo.isHidden and questInfo.questID then
+			entries[#entries + 1] = {
+				questId = tostring(questInfo.questID),
+				questTitle = self:GetQuestTitle(questInfo.questID, questInfo),
+				isComplete = questInfo.isComplete and true or false,
+				isPushable = self.API.IsPushableQuest and self.API.IsPushableQuest(questInfo.questID) and true or false,
+			}
+		end
+	end
+
+	return entries
+end
+
+function QuestTogether:SendQuestCompareEntry(requestId, entryData)
+	if type(requestId) ~= "string" or requestId == "" or type(entryData) ~= "table" then
+		return false
+	end
+
+	local wireMessage = self:SerializeWireMessage(
+		QUEST_COMPARE_ENTRY_COMMAND,
+		self:EncodeQuestCompareEntryPayload({
+			requestId = requestId,
+			senderName = self:GetPlayerFullName() or self:GetPlayerName() or "",
+			questId = entryData.questId or "",
+			questTitle = entryData.questTitle or "",
+			isComplete = entryData.isComplete and true or false,
+			isPushable = entryData.isPushable and true or false,
+		})
+	)
+	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
+	return true
+end
+
+function QuestTogether:SendQuestCompareDone(requestId, count)
+	if type(requestId) ~= "string" or requestId == "" then
+		return false
+	end
+
+	local wireMessage = self:SerializeWireMessage(
+		QUEST_COMPARE_DONE_COMMAND,
+		self:EncodeQuestCompareDonePayload({
+			requestId = requestId,
+			senderName = self:GetPlayerFullName() or self:GetPlayerName() or "",
+			count = tonumber(count) or 0,
+		})
+	)
+	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
+	return true
+end
+
+function QuestTogether:HandleQuestCompareRequest(requestData)
+	if type(requestData) ~= "table" or type(requestData.requestId) ~= "string" or requestData.requestId == "" then
+		return false
+	end
+
+	local targetName = self:NormalizeMemberName(requestData.targetName) or requestData.targetName
+	local playerName = self:GetPlayerFullName() or self:GetPlayerName() or ""
+	local normalizedPlayerName = self:NormalizeMemberName(playerName) or playerName
+	if targetName ~= normalizedPlayerName then
+		return false
+	end
+	if not self:EnsureAnnouncementChannelJoined() then
+		return false
+	end
+
+	local entries = self:BuildQuestCompareEntries()
+	for _, entryData in ipairs(entries) do
+		self:SendQuestCompareEntry(requestData.requestId, entryData)
+	end
+	self:SendQuestCompareDone(requestData.requestId, #entries)
+	return true
+end
+
+function QuestTogether:HandleQuestCompareEntry(entryData)
+	if type(entryData) ~= "table" or type(entryData.requestId) ~= "string" or entryData.requestId == "" then
+		return false
+	end
+
+	self.pendingQuestCompareRequests = self.pendingQuestCompareRequests or {}
+	local pending = self.pendingQuestCompareRequests[entryData.requestId]
+	if type(pending) ~= "table" then
+		return false
+	end
+
+	local senderName = self:NormalizeMemberName(entryData.senderName) or entryData.senderName
+	if pending.targetName ~= senderName then
+		return false
+	end
+
+	pending.count = (pending.count or 0) + 1
+	if self.PrintQuestCompareMessage then
+		self:PrintQuestCompareMessage(senderName, entryData)
+	end
+	return true
+end
+
+function QuestTogether:HandleQuestCompareDone(doneData)
+	if type(doneData) ~= "table" or type(doneData.requestId) ~= "string" or doneData.requestId == "" then
+		return false
+	end
+
+	self.pendingQuestCompareRequests = self.pendingQuestCompareRequests or {}
+	local pending = self.pendingQuestCompareRequests[doneData.requestId]
+	if type(pending) ~= "table" then
+		return false
+	end
+
+	local senderName = self:NormalizeMemberName(doneData.senderName) or doneData.senderName
+	if pending.targetName ~= senderName then
+		return false
+	end
+
+	self.pendingQuestCompareRequests[doneData.requestId] = nil
+	if self.PrintQuestCompareDone then
+		self:PrintQuestCompareDone(senderName, doneData.count)
+	end
+	return true
+end
+
+function QuestTogether:RequestQuestCompare(speakerName)
+	local targetName = self:NormalizeMemberName(speakerName) or tostring(speakerName or "")
+	if targetName == "" then
+		return false
+	end
+
+	if self.PrintQuestCompareStart then
+		self:PrintQuestCompareStart(targetName)
+	end
+
+	local playerName = self:GetPlayerFullName() or self:GetPlayerName() or ""
+	local normalizedPlayerName = self:NormalizeMemberName(playerName) or playerName
+	if targetName == normalizedPlayerName then
+		local localEntries = self:BuildQuestCompareEntries()
+		for _, entryData in ipairs(localEntries) do
+			if self.PrintQuestCompareMessage then
+				self:PrintQuestCompareMessage(targetName, entryData)
+			end
+		end
+		if self.PrintQuestCompareDone then
+			self:PrintQuestCompareDone(targetName, #localEntries)
+		end
+		return true
+	end
+
+	if not self.isEnabled or not self:EnsureAnnouncementChannelJoined() then
+		return false
+	end
+
+	local requestId = self:BuildChannelRequestId("qcmp")
+	self.pendingQuestCompareRequests = self.pendingQuestCompareRequests or {}
+	self.pendingQuestCompareRequests[requestId] = {
+		targetName = targetName,
+		count = 0,
+	}
+	self.API.Delay(QUEST_COMPARE_TIMEOUT_SECONDS, function()
+		local pending = QuestTogether.pendingQuestCompareRequests and QuestTogether.pendingQuestCompareRequests[requestId]
+		if pending then
+			QuestTogether.pendingQuestCompareRequests[requestId] = nil
+		end
+	end)
+
+	local wireMessage = self:SerializeWireMessage(
+		QUEST_COMPARE_REQUEST_COMMAND,
+		self:EncodeQuestCompareRequestPayload({
+			requestId = requestId,
+			requesterName = playerName,
+			targetName = targetName,
+		})
+	)
+	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
+	return true
+end
+
 function QuestTogether:IsAnnouncementChannelEvent(channel, localID, name)
 	if channel ~= "CHANNEL" then
 		return false
@@ -577,12 +894,7 @@ function QuestTogether:SendPingRequest()
 		return false, "Unable to join the QuestTogether announcement channel."
 	end
 
-	local requestId = string.format(
-		"%s-%d-%d",
-		tostring(self:GetPlayerName() or "player"),
-		math.floor((self.API.GetTime and self.API.GetTime() or 0) * 1000),
-		self.API.Random and self.API.Random(1000, 9999) or 1000
-	)
+	local requestId = self:BuildChannelRequestId("ping")
 	local requesterName = self:GetPlayerFullName() or self:GetPlayerName() or ""
 	self.pendingPingRequests = self.pendingPingRequests or {}
 	self.pendingPingRequests[requestId] = true
@@ -890,6 +1202,36 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 			return
 		end
 		self:HandlePingResponse(responseData)
+		return
+	end
+
+	if command == QUEST_COMPARE_REQUEST_COMMAND then
+		local requestData = self:DecodeQuestCompareRequestPayload(payload)
+		if not requestData then
+			self:Debug("Failed to decode quest compare request payload", "comms")
+			return
+		end
+		self:HandleQuestCompareRequest(requestData)
+		return
+	end
+
+	if command == QUEST_COMPARE_ENTRY_COMMAND then
+		local entryData = self:DecodeQuestCompareEntryPayload(payload)
+		if not entryData then
+			self:Debug("Failed to decode quest compare entry payload", "comms")
+			return
+		end
+		self:HandleQuestCompareEntry(entryData)
+		return
+	end
+
+	if command == QUEST_COMPARE_DONE_COMMAND then
+		local doneData = self:DecodeQuestCompareDonePayload(payload)
+		if not doneData then
+			self:Debug("Failed to decode quest compare done payload", "comms")
+			return
+		end
+		self:HandleQuestCompareDone(doneData)
 		return
 	end
 

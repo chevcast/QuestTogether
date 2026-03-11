@@ -104,6 +104,7 @@ local function WithIsolatedState(testFn)
 	local originalPrototypeBubbleScreenHostFrame = QuestTogether.prototypeBubbleScreenHostFrame
 	local originalAnnouncementChannelLocalID = QuestTogether.announcementChannelLocalID
 	local originalPendingPingRequests = QuestTogether.pendingPingRequests
+	local originalPendingQuestCompareRequests = QuestTogether.pendingQuestCompareRequests
 	local originalIsLoggingOut = QuestTogether.isLoggingOut
 	local originalQuestLogChatFrameID = QuestTogether.db.global.questLogChatFrameID
 
@@ -134,6 +135,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.prototypeBubbleScreenHostFrame = nil
 	QuestTogether.announcementChannelLocalID = nil
 	QuestTogether.pendingPingRequests = {}
+	QuestTogether.pendingQuestCompareRequests = {}
 	QuestTogether.isLoggingOut = false
 
 	local ok, err = pcall(testFn)
@@ -173,6 +175,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.prototypeBubbleScreenHostFrame = originalPrototypeBubbleScreenHostFrame
 	QuestTogether.announcementChannelLocalID = originalAnnouncementChannelLocalID
 	QuestTogether.pendingPingRequests = originalPendingPingRequests
+	QuestTogether.pendingQuestCompareRequests = originalPendingQuestCompareRequests
 	QuestTogether.isLoggingOut = originalIsLoggingOut
 
 	if originalIsEnabled then
@@ -226,6 +229,7 @@ QuestTogether:RegisterTest("default profile contains new announcement display op
 	AssertTrue(QuestTogether.DEFAULTS.profile.announceBonusObjectiveAreaLeave ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.announceBonusObjectiveProgress ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.announceBonusObjectiveCompleted ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.announceReadyToTurnIn ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.showChatBubbles ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.hideMyOwnChatBubbles ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.showChatLogs ~= nil)
@@ -235,6 +239,52 @@ QuestTogether:RegisterTest("default profile contains new announcement display op
 	AssertTrue(QuestTogether.DEFAULTS.profile.chatBubbleDuration ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.primaryChannel == nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel == nil)
+end)
+
+QuestTogether:RegisterTest("quest ready to turn in message wraps quest title in clickable link", function()
+	WithPatchedMethod(LinkUtil, "FormatLink", function(linkType, linkDisplayText, linkData)
+		if linkType == QuestTogether.chatLogLinkType then
+			return "|Hquesttogetherlog:MyPlayer-Realm|h[MyPlayer]|h"
+		end
+
+		AssertEquals(linkType, QuestTogether.chatLogQuestLinkType)
+		AssertEquals(linkDisplayText, "[Test Quest]")
+		AssertEquals(linkData, "12345")
+		return "|Hquesttogetherquest:12345|h[Test Quest]|h"
+	end, function()
+		local message = QuestTogether:BuildConsoleAnnouncementMessage(
+			"MyPlayer-Realm",
+			"Ready to Turn In: Test Quest",
+			"MAGE",
+			"QUEST_READY_TO_TURN_IN",
+			nil,
+			nil,
+			{ questId = "12345" }
+		)
+		AssertTrue(string.find(message, "|Hquesttogetherquest:12345|h%[Test Quest%]|h") ~= nil)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest status uses ready to turn in announcement event", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		IsQuestFlaggedCompleted = function()
+			return false
+		end,
+		IsQuestReadyForTurnIn = function()
+			return true
+		end,
+		GetQuestLogIndexForQuestID = function()
+			return 1
+		end,
+		IsOnQuest = function()
+			return true
+		end,
+		IsQuestComplete = function()
+			return true
+		end,
+	})
+
+	AssertEquals(QuestTogether:GetQuestStatusAnnouncementEventType(12345), "QUEST_READY_TO_TURN_IN")
 end)
 
 QuestTogether:RegisterTest("chat bubble option validation rejects unknown values", function()
@@ -426,6 +476,10 @@ QuestTogether:RegisterTest("chat log quest link handler prints local quest statu
 			AssertEquals(questId, 12345)
 			return true
 		end,
+		IsPushableQuest = function(questId)
+			AssertEquals(questId, 12345)
+			return true
+		end,
 	})
 
 	WithPatchedMethod(QuestTogether, "GetQuestTitle", function(_, questId)
@@ -445,6 +499,7 @@ QuestTogether:RegisterTest("chat log quest link handler prints local quest statu
 	AssertTrue(string.find(printed[1] or "", "Test Quest", 1, true) ~= nil)
 	AssertTrue(string.find(printed[1] or "", "Ready to Turn In", 1, true) ~= nil)
 	AssertTrue(string.find(printed[1] or "", "Quest Status:", 1, true) ~= nil)
+	AssertTrue(string.find(printed[1] or "", "Shareable: Yes", 1, true) ~= nil)
 end)
 
 QuestTogether:RegisterTest("chat log speaker menu includes player actions", function()
@@ -484,8 +539,20 @@ QuestTogether:RegisterTest("chat log speaker menu includes player actions", func
 	AssertEquals(buttons[2].text, "Whisper")
 	AssertEquals(buttons[3].text, "Add Friend")
 	AssertEquals(buttons[4].text, "Ignore")
-	AssertEquals(buttons[5].text, "Move QuestTogether Logs to Separate Window")
+	AssertEquals(buttons[5].text, "Compare Quests")
+	AssertEquals(buttons[6].text, "Move QuestTogether Logs to Separate Window")
 	AssertEquals(dividers, 1)
+end)
+
+QuestTogether:RegisterTest("chat log speaker menu compare quests action uses full speaker name", function()
+	local comparedName = nil
+	WithPatchedMethod(QuestTogether, "RequestQuestCompare", function(_, speakerName)
+		comparedName = speakerName
+		return true
+	end, function()
+		AssertTrue(QuestTogether:CompareQuestsWithChatLogSpeaker("MyPlayer-Realm"))
+	end)
+	AssertEquals(comparedName, "MyPlayer-Realm")
 end)
 
 QuestTogether:RegisterTest("chat log speaker menu invite action uses full speaker name", function()
@@ -549,6 +616,155 @@ QuestTogether:RegisterTest("chat log speaker menu shows unignore for ignored spe
 	end)
 
 	AssertEquals(buttons[4], "Unignore")
+end)
+
+QuestTogether:RegisterTest("request quest compare sends compare request for remote speaker", function()
+	local sent = {}
+
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		GetChannelName = function(channelName)
+			AssertEquals(channelName, QuestTogether.announcementChannelName)
+			return 9
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+		end,
+		Delay = function() end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "LocalPlayer", "Realm"
+		end,
+	})
+
+	local startedWith = nil
+	WithPatchedMethod(QuestTogether, "PrintQuestCompareStart", function(_, remoteName)
+		startedWith = remoteName
+	end, function()
+		AssertTrue(QuestTogether:RequestQuestCompare("Remote-Realm"))
+	end)
+
+	AssertEquals(startedWith, "Remote-Realm")
+	AssertEquals(#sent, 1)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "CHANNEL")
+	AssertEquals(sent[1].target, 9)
+	AssertTrue(string.find(sent[1].message, "^QCMP|", 1) ~= nil)
+end)
+
+QuestTogether:RegisterTest("quest compare entry prints local status and shareable state", function()
+	local printed = {}
+	QuestTogether.API = CreateApiWithOverrides({
+		IsQuestFlaggedCompleted = function(questId)
+			AssertEquals(questId, 12345)
+			return false
+		end,
+		IsQuestReadyForTurnIn = function(questId)
+			AssertEquals(questId, 12345)
+			return false
+		end,
+		GetQuestLogIndexForQuestID = function(questId)
+			AssertEquals(questId, 12345)
+			return 4
+		end,
+		IsOnQuest = function(questId)
+			AssertEquals(questId, 12345)
+			return true
+		end,
+		IsQuestComplete = function(questId)
+			AssertEquals(questId, 12345)
+			return false
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "PrintConsoleAnnouncement", function(_, message, targetName, classFile, eventType)
+		printed[#printed + 1] = {
+			message = message,
+			targetName = targetName,
+			classFile = classFile,
+			eventType = eventType,
+		}
+	end, function()
+		QuestTogether:PrintQuestCompareMessage("Remote-Realm", {
+			questId = "12345",
+			questTitle = "Test Quest",
+			isComplete = true,
+			isPushable = true,
+		})
+	end)
+
+	AssertEquals(#printed, 1)
+	AssertEquals(printed[1].targetName, "Remote-Realm")
+	AssertEquals(printed[1].eventType, "QUEST_COMPLETED")
+	AssertTrue(string.find(printed[1].message, "Test Quest", 1, true) ~= nil)
+	AssertTrue(string.find(printed[1].message, "Them: Complete", 1, true) ~= nil)
+	AssertTrue(string.find(printed[1].message, "You: In Progress", 1, true) ~= nil)
+	AssertTrue(string.find(printed[1].message, "Shareable to You: Yes", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("quest compare response prints entries and clears pending request on done", function()
+	local printed = {}
+	QuestTogether.pendingQuestCompareRequests = {
+		["qcmp-123"] = {
+			targetName = "Remote-Realm",
+			count = 0,
+		},
+	}
+
+	QuestTogether.API = CreateApiWithOverrides({
+		IsQuestFlaggedCompleted = function()
+			return false
+		end,
+		IsQuestReadyForTurnIn = function()
+			return false
+		end,
+		GetQuestLogIndexForQuestID = function()
+			return nil
+		end,
+		IsOnQuest = function()
+			return false
+		end,
+		IsQuestComplete = function()
+			return false
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "PrintConsoleAnnouncement", function(_, message, targetName, classFile, eventType)
+		printed[#printed + 1] = {
+			message = message,
+			targetName = targetName,
+			classFile = classFile,
+			eventType = eventType,
+		}
+	end, function()
+		AssertTrue(QuestTogether:HandleQuestCompareEntry({
+			requestId = "qcmp-123",
+			senderName = "Remote-Realm",
+			questId = "12345",
+			questTitle = "Remote Quest",
+			isComplete = false,
+			isPushable = false,
+		}))
+		AssertTrue(QuestTogether:HandleQuestCompareDone({
+			requestId = "qcmp-123",
+			senderName = "Remote-Realm",
+			count = 1,
+		}))
+	end)
+
+	AssertEquals(#printed, 2)
+	AssertEquals(printed[1].targetName, "Remote-Realm")
+	AssertEquals(printed[1].eventType, "QUEST_PROGRESS")
+	AssertTrue(string.find(printed[1].message, "Remote Quest", 1, true) ~= nil)
+	AssertEquals(printed[2].targetName, "Remote-Realm")
+	AssertEquals(printed[2].eventType, "QUEST_COMPLETED")
+	AssertTrue(string.find(printed[2].message, "Finished comparing quests", 1, true) ~= nil)
+	AssertEquals(QuestTogether.pendingQuestCompareRequests["qcmp-123"], nil)
 end)
 
 QuestTogether:RegisterTest("world quest console announcement uses world quest icon", function()

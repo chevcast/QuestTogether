@@ -35,6 +35,7 @@ QuestTogether.isInitialized = QuestTogether.isInitialized or false
 QuestTogether.hasLoggedIn = QuestTogether.hasLoggedIn or false
 QuestTogether.isEnabled = QuestTogether.isEnabled or false
 QuestTogether.pendingPingRequests = QuestTogether.pendingPingRequests or {}
+QuestTogether.pendingQuestCompareRequests = QuestTogether.pendingQuestCompareRequests or {}
 
 -- Work queues / state tables used by event handlers.
 QuestTogether.onQuestLogUpdate = QuestTogether.onQuestLogUpdate or {}
@@ -49,6 +50,7 @@ QuestTogether.DEFAULTS = {
 		enabled = true,
 		announceAccepted = true,
 		announceCompleted = true,
+		announceReadyToTurnIn = true,
 		announceRemoved = true,
 		announceProgress = true,
 		announceWorldQuestAreaEnter = true,
@@ -123,6 +125,7 @@ QuestTogether.chatLogQuestLinkType = "questtogetherquest"
 QuestTogether.questTitleLinkEventTypes = {
 	QUEST_ACCEPTED = true,
 	QUEST_COMPLETED = true,
+	QUEST_READY_TO_TURN_IN = true,
 	QUEST_REMOVED = true,
 	WORLD_QUEST_ENTERED = true,
 	WORLD_QUEST_LEFT = true,
@@ -546,6 +549,24 @@ QuestTogether.API = QuestTogether.API or {
 			return C_QuestLog.IsOnQuest(questID)
 		end
 		return false
+	end,
+	IsPushableQuest = function(questID)
+		if C_QuestLog and C_QuestLog.IsPushableQuest then
+			return C_QuestLog.IsPushableQuest(questID)
+		end
+		return false
+	end,
+	GetNumQuestLogEntries = function()
+		if C_QuestLog and C_QuestLog.GetNumQuestLogEntries then
+			return C_QuestLog.GetNumQuestLogEntries()
+		end
+		return 0
+	end,
+	GetQuestLogInfo = function(questLogIndex)
+		if C_QuestLog and C_QuestLog.GetInfo then
+			return C_QuestLog.GetInfo(questLogIndex)
+		end
+		return nil
 	end,
 	InviteUnit = function(name)
 		if C_PartyInfo and C_PartyInfo.InviteUnit then
@@ -1244,10 +1265,18 @@ function QuestTogether:GetQuestStateAnnouncementIconInfo(eventType, questId)
 	if eventType == "QUEST_ACCEPTED" and QuestUtil.GetQuestIconOfferForQuestID then
 		asset, isAtlas = QuestUtil.GetQuestIconOfferForQuestID(numericQuestId)
 	elseif
-		(eventType == "QUEST_PROGRESS" or eventType == "QUEST_REMOVED" or eventType == "QUEST_COMPLETED")
+		(
+			eventType == "QUEST_PROGRESS"
+			or eventType == "QUEST_REMOVED"
+			or eventType == "QUEST_COMPLETED"
+			or eventType == "QUEST_READY_TO_TURN_IN"
+		)
 		and QuestUtil.GetQuestIconActiveForQuestID
 	then
-		asset, isAtlas = QuestUtil.GetQuestIconActiveForQuestID(numericQuestId, eventType == "QUEST_COMPLETED")
+		asset, isAtlas = QuestUtil.GetQuestIconActiveForQuestID(
+			numericQuestId,
+			eventType == "QUEST_COMPLETED" or eventType == "QUEST_READY_TO_TURN_IN"
+		)
 	end
 
 	if type(asset) ~= "string" or asset == "" then
@@ -1509,6 +1538,25 @@ function QuestTogether:GetQuestStatusLabel(questId)
 	return "Not Started"
 end
 
+function QuestTogether:GetQuestShareableStatusLabel(questId)
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId then
+		return "Unknown"
+	end
+
+	local questLogIndex = self.API and self.API.GetQuestLogIndexForQuestID and self.API.GetQuestLogIndexForQuestID(numericQuestId)
+	local isOnQuest = self.API and self.API.IsOnQuest and self.API.IsOnQuest(numericQuestId)
+	if not questLogIndex and not isOnQuest then
+		return "Unknown"
+	end
+
+	if self.API and self.API.IsPushableQuest and self.API.IsPushableQuest(numericQuestId) then
+		return "Yes"
+	end
+
+	return "No"
+end
+
 function QuestTogether:BuildQuestStatusMessage(questId)
 	local numericQuestId = tonumber(questId)
 	if not numericQuestId then
@@ -1517,13 +1565,17 @@ function QuestTogether:BuildQuestStatusMessage(questId)
 
 	local questTitle = self:GetQuestTitle(numericQuestId)
 	local statusLabel = self:GetQuestStatusLabel(numericQuestId)
-	return "Quest Status: " .. tostring(questTitle) .. " - " .. tostring(statusLabel)
+	local shareableLabel = self:GetQuestShareableStatusLabel(numericQuestId)
+	return "Quest Status: " .. tostring(questTitle) .. " - " .. tostring(statusLabel) .. " | Shareable: " .. tostring(shareableLabel)
 end
 
 function QuestTogether:GetQuestStatusAnnouncementEventType(questId)
 	local statusLabel = self:GetQuestStatusLabel(questId)
-	if statusLabel == "Completed" or statusLabel == "Ready to Turn In" or statusLabel == "Objectives Complete" then
+	if statusLabel == "Completed" or statusLabel == "Objectives Complete" then
 		return "QUEST_COMPLETED"
+	end
+	if statusLabel == "Ready to Turn In" then
+		return "QUEST_READY_TO_TURN_IN"
 	end
 	if statusLabel == "In Progress" then
 		return "QUEST_PROGRESS"
@@ -1539,6 +1591,84 @@ function QuestTogether:PrintQuestStatus(questId)
 	local message = self:BuildQuestStatusMessage(questId)
 	local eventType = self:GetQuestStatusAnnouncementEventType(questId)
 	self:PrintConsoleAnnouncement(message, nil, nil, eventType)
+end
+
+function QuestTogether:GetQuestCompareRemoteStatusLabel(isComplete)
+	if isComplete then
+		return "Complete"
+	end
+
+	return "In Progress"
+end
+
+function QuestTogether:GetQuestCompareShareableToYouLabel(isPushable)
+	if type(isPushable) == "boolean" then
+		return isPushable and "Yes" or "No"
+	end
+
+	if type(isPushable) == "string" then
+		local normalized = string.lower(isPushable)
+		if isPushable == "1" or normalized == "true" then
+			return "Yes"
+		end
+		if isPushable == "0" or normalized == "false" then
+			return "No"
+		end
+	end
+
+	return "Unknown"
+end
+
+function QuestTogether:BuildQuestCompareMessage(remoteName, compareEntry)
+	if type(compareEntry) ~= "table" then
+		return "Quest comparison unavailable."
+	end
+
+	local questId = tonumber(compareEntry.questId)
+	local questTitle = tostring(compareEntry.questTitle or "")
+	if questTitle == "" then
+		questTitle = self:GetQuestTitle(questId)
+	end
+	local localStatus = self:GetQuestStatusLabel(questId)
+	local shareableLabel = self:GetQuestCompareShareableToYouLabel(compareEntry.isPushable)
+	local remoteStatus = self:GetQuestCompareRemoteStatusLabel(compareEntry.isComplete)
+	local decoratedQuestTitle = self:BuildChatLogQuestLabel(questId, questTitle)
+
+	return tostring(decoratedQuestTitle)
+		.. " | Them: "
+		.. tostring(remoteStatus)
+		.. " | You: "
+		.. tostring(localStatus)
+		.. " | Shareable to You: "
+		.. tostring(shareableLabel)
+end
+
+function QuestTogether:PrintQuestCompareMessage(remoteName, compareEntry)
+	local eventType = compareEntry and compareEntry.isComplete and "QUEST_COMPLETED" or "QUEST_PROGRESS"
+	local locationInfo = {
+		questId = compareEntry and compareEntry.questId or nil,
+	}
+	self:PrintConsoleAnnouncement(
+		self:BuildQuestCompareMessage(remoteName, compareEntry),
+		remoteName,
+		nil,
+		eventType,
+		nil,
+		nil,
+		locationInfo
+	)
+end
+
+function QuestTogether:PrintQuestCompareStart(remoteName)
+	self:PrintConsoleAnnouncement("Comparing quests...", remoteName, nil, "QUEST_PROGRESS")
+end
+
+function QuestTogether:PrintQuestCompareDone(remoteName, count)
+	local suffix = ""
+	if tonumber(count) then
+		suffix = string.format(" (%d quests)", count)
+	end
+	self:PrintConsoleAnnouncement("Finished comparing quests" .. suffix .. ".", remoteName, nil, "QUEST_COMPLETED")
 end
 
 function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType, iconAsset, iconKind, locationInfo)
@@ -1700,6 +1830,15 @@ function QuestTogether:ToggleIgnoreChatLogSpeaker(speakerName)
 	return true
 end
 
+function QuestTogether:CompareQuestsWithChatLogSpeaker(speakerName)
+	local fullName = self:NormalizeMemberName(speakerName) or tostring(speakerName or "")
+	if fullName == "" or not self.RequestQuestCompare then
+		return false
+	end
+
+	return self:RequestQuestCompare(fullName)
+end
+
 function QuestTogether:PopulateChatLogSpeakerMenu(rootDescription, ownerFrame, speakerName)
 	if not rootDescription then
 		return false
@@ -1730,6 +1869,9 @@ function QuestTogether:PopulateChatLogSpeakerMenu(rootDescription, ownerFrame, s
 		end)
 		rootDescription:CreateButton(isIgnored and "Unignore" or "Ignore", function()
 			self:ToggleIgnoreChatLogSpeaker(fullName)
+		end)
+		rootDescription:CreateButton("Compare Quests", function()
+			self:CompareQuestsWithChatLogSpeaker(fullName)
 		end)
 	end
 
@@ -1850,6 +1992,7 @@ function QuestTogether:GetAnnouncementOptionKey(eventType)
 	local keysByType = {
 		QUEST_ACCEPTED = "announceAccepted",
 		QUEST_COMPLETED = "announceCompleted",
+		QUEST_READY_TO_TURN_IN = "announceReadyToTurnIn",
 		QUEST_REMOVED = "announceRemoved",
 		QUEST_PROGRESS = "announceProgress",
 		WORLD_QUEST_ENTERED = "announceWorldQuestAreaEnter",
@@ -2527,6 +2670,7 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		-- This avoids noisy chat lines caused by text-only objective rewrites.
 		objectiveValues = {},
 		isComplete = C_QuestLog.IsComplete(questId) and true or false,
+		isReadyForTurnIn = C_QuestLog.ReadyForTurnIn and C_QuestLog.ReadyForTurnIn(questId) and true or false,
 	}
 	self:DebugState("quest", "trackedQuest", tracker[questId])
 
