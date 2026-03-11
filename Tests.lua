@@ -502,6 +502,78 @@ QuestTogether:RegisterTest("chat log quest link handler prints local quest statu
 	AssertTrue(string.find(printed[1] or "", "Shareable: Yes", 1, true) ~= nil)
 end)
 
+QuestTogether:RegisterTest("ping response wraps coordinates in clickable link", function()
+	WithPatchedMethod(LinkUtil, "FormatLink", function(linkType, linkDisplayText, linkData)
+		AssertEquals(linkType, QuestTogether.chatLogCoordLinkType)
+		AssertEquals(linkDisplayText, "[47.1, 69.9]")
+		AssertEquals(linkData, "999:47.1:69.9")
+		return "|Hquesttogethercoord:999:47.1:69.9|h[47.1, 69.9]|h"
+	end, function()
+		local message = QuestTogether:BuildPingResponseMessage({
+			senderName = "Remote-Realm",
+			classFile = "WARRIOR",
+			className = "Warrior",
+			level = "80",
+			zoneName = "Eversong Woods",
+			coordX = "47.1",
+			coordY = "69.9",
+			warMode = "1",
+			mapID = "999",
+		})
+		AssertTrue(string.find(message, "|Hquesttogethercoord:999:47%.1:69%.9|h%[47%.1, 69%.9%]|h") ~= nil)
+	end)
+end)
+
+QuestTogether:RegisterTest("chat log coord link handler opens ping waypoint", function()
+	local opened = nil
+	WithPatchedMethod(QuestTogether, "OpenPingWaypoint", function(_, mapID, coordX, coordY)
+		opened = { mapID = mapID, coordX = coordX, coordY = coordY }
+		return true
+	end, function()
+		local response = QuestTogether:HandleChatLogCoordLink(
+			nil,
+			nil,
+			{ options = "999:47.1:69.9" },
+			{ frame = "ChatFrame1" }
+		)
+		AssertEquals(response, LinkProcessorResponse.Handled)
+	end)
+
+	AssertEquals(opened.mapID, "999")
+	AssertEquals(opened.coordX, "47.1")
+	AssertEquals(opened.coordY, "69.9")
+end)
+
+QuestTogether:RegisterTest("open ping waypoint prefers TomTom and falls back to Blizzard waypoint", function()
+	local calls = {}
+
+	QuestTogether.API = CreateApiWithOverrides({
+		IsAddOnLoaded = function(addonName)
+			AssertEquals(addonName, "TomTom")
+			return false
+		end,
+		CanSetUserWaypointOnMap = function(mapID)
+			AssertEquals(mapID, 999)
+			return true
+		end,
+		CreateUiMapPoint = function(mapID, x, y)
+			calls[#calls + 1] = string.format("point:%d:%.3f:%.3f", mapID, x, y)
+			return { mapID = mapID, x = x, y = y }
+		end,
+		SetUserWaypoint = function(point)
+			calls[#calls + 1] = string.format("set:%d:%.3f:%.3f", point.mapID, point.x, point.y)
+		end,
+		SetSuperTrackedUserWaypoint = function(shouldTrack)
+			calls[#calls + 1] = "track:" .. tostring(shouldTrack)
+		end,
+	})
+
+	AssertTrue(QuestTogether:OpenPingWaypoint("999", "47.1", "69.9"))
+	AssertEquals(calls[1], "point:999:0.471:0.699")
+	AssertEquals(calls[2], "set:999:0.471:0.699")
+	AssertEquals(calls[3], "track:true")
+end)
+
 QuestTogether:RegisterTest("chat log speaker menu includes player actions", function()
 	local titles = {}
 	local buttons = {}

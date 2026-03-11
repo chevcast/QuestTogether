@@ -122,6 +122,7 @@ QuestTogether.chatLogDestinationOrder = {
 }
 QuestTogether.chatLogLinkType = "questtogetherlog"
 QuestTogether.chatLogQuestLinkType = "questtogetherquest"
+QuestTogether.chatLogCoordLinkType = "questtogethercoord"
 QuestTogether.questTitleLinkEventTypes = {
 	QUEST_ACCEPTED = true,
 	QUEST_COMPLETED = true,
@@ -647,6 +648,30 @@ QuestTogether.API = QuestTogether.API or {
 			return C_PvP.IsWarModeActive()
 		end
 		return false
+	end,
+	CreateUiMapPoint = function(mapID, x, y)
+		if UiMapPoint and UiMapPoint.CreateFromCoordinates then
+			return UiMapPoint.CreateFromCoordinates(mapID, x, y)
+		end
+		return nil
+	end,
+	CanSetUserWaypointOnMap = function(mapID)
+		if C_Map and C_Map.CanSetUserWaypointOnMap then
+			return C_Map.CanSetUserWaypointOnMap(mapID)
+		end
+		return false
+	end,
+	SetUserWaypoint = function(point)
+		if C_Map and C_Map.SetUserWaypoint then
+			return C_Map.SetUserWaypoint(point)
+		end
+		return nil
+	end,
+	SetSuperTrackedUserWaypoint = function(shouldSuperTrack)
+		if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then
+			return C_SuperTrack.SetSuperTrackedUserWaypoint(shouldSuperTrack)
+		end
+		return nil
 	end,
 }
 
@@ -1722,7 +1747,7 @@ function QuestTogether:BuildPingResponseMessage(pongData)
 	local coordX = self:SafeToNumber(pongData.coordX)
 	local coordY = self:SafeToNumber(pongData.coordY)
 	if coordX and coordY then
-		locationBits[#locationBits + 1] = string.format("%.1f, %.1f", coordX, coordY)
+		locationBits[#locationBits + 1] = self:BuildPingCoordinateLabel(pongData.mapID, coordX, coordY)
 	end
 	local warMode = self:NormalizeAnnouncementWarModeValue(pongData.warMode)
 	if warMode ~= nil then
@@ -1735,8 +1760,83 @@ function QuestTogether:BuildPingResponseMessage(pongData)
 	return "|cff33ff99QuestTogether|r: Pong: " .. table.concat(parts, " ")
 end
 
+function QuestTogether:BuildPingCoordinateLabel(mapID, coordX, coordY)
+	local numericX = self:SafeToNumber(coordX)
+	local numericY = self:SafeToNumber(coordY)
+	if not numericX or not numericY then
+		return ""
+	end
+
+	local bracketedText = string.format("[%.1f, %.1f]", numericX, numericY)
+	local numericMapID = self:SafeToNumber(mapID)
+	if not numericMapID or not LinkUtil or not LinkUtil.FormatLink then
+		return bracketedText
+	end
+
+	local linkData = string.format("%d:%.1f:%.1f", numericMapID, numericX, numericY)
+	return LinkUtil.FormatLink(self.chatLogCoordLinkType or "questtogethercoord", bracketedText, linkData)
+end
+
 function QuestTogether:PrintPingResponse(pongData)
 	self:PrintChatLogRaw(self:BuildPingResponseMessage(pongData))
+end
+
+function QuestTogether:CreateTomTomWaypoint(mapID, coordX, coordY)
+	local numericMapID = self:SafeToNumber(mapID)
+	local numericX = self:SafeToNumber(coordX)
+	local numericY = self:SafeToNumber(coordY)
+	if not numericMapID or not numericX or not numericY then
+		return false
+	end
+
+	if not (self.API and self.API.IsAddOnLoaded and self.API.IsAddOnLoaded("TomTom")) then
+		return false
+	end
+
+	local tomTom = _G.TomTom
+	if not (tomTom and tomTom.AddWaypoint) then
+		return false
+	end
+
+	local ok = pcall(tomTom.AddWaypoint, tomTom, numericMapID, numericX / 100, numericY / 100, {
+		title = string.format("QuestTogether %.1f, %.1f", numericX, numericY),
+		from = "QuestTogether/ping",
+	})
+	return ok and true or false
+end
+
+function QuestTogether:CreateBlizzardWaypoint(mapID, coordX, coordY)
+	local numericMapID = self:SafeToNumber(mapID)
+	local numericX = self:SafeToNumber(coordX)
+	local numericY = self:SafeToNumber(coordY)
+	if not numericMapID or not numericX or not numericY then
+		return false
+	end
+
+	if not (self.API and self.API.CanSetUserWaypointOnMap and self.API.CanSetUserWaypointOnMap(numericMapID)) then
+		return false
+	end
+
+	local point = self.API.CreateUiMapPoint and self.API.CreateUiMapPoint(numericMapID, numericX / 100, numericY / 100)
+	if not point then
+		return false
+	end
+
+	if self.API.SetUserWaypoint then
+		self.API.SetUserWaypoint(point)
+	end
+	if self.API.SetSuperTrackedUserWaypoint then
+		self.API.SetSuperTrackedUserWaypoint(true)
+	end
+	return true
+end
+
+function QuestTogether:OpenPingWaypoint(mapID, coordX, coordY)
+	if self:CreateTomTomWaypoint(mapID, coordX, coordY) then
+		return true
+	end
+
+	return self:CreateBlizzardWaypoint(mapID, coordX, coordY)
 end
 
 function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, eventType, iconAsset, iconKind, locationInfo)
@@ -1915,6 +2015,20 @@ function QuestTogether:HandleChatLogQuestLink(link, text, linkData, contextData)
 	return LinkProcessorResponse.Handled
 end
 
+function QuestTogether:HandleChatLogCoordLink(link, text, linkData, contextData)
+	local options = tostring(linkData and linkData.options or "")
+	local mapID, coordX, coordY = string.match(options, "^([^:]+):([^:]+):([^:]+)$")
+	if not mapID or not coordX or not coordY then
+		return LinkProcessorResponse.Handled
+	end
+	if IsModifiedClick and IsModifiedClick() then
+		return LinkProcessorResponse.Handled
+	end
+
+	self:OpenPingWaypoint(mapID, coordX, coordY)
+	return LinkProcessorResponse.Handled
+end
+
 function QuestTogether:TryInstallChatLogLinkHandler()
 	if self.chatLogLinkHandlerInstalled then
 		return
@@ -1934,6 +2048,12 @@ function QuestTogether:TryInstallChatLogLinkHandler()
 	if not questRegistered then
 		LinkUtil.RegisterLinkHandler(self.chatLogQuestLinkType, function(link, text, linkData, contextData)
 			return QuestTogether:HandleChatLogQuestLink(link, text, linkData, contextData)
+		end)
+	end
+	local coordRegistered = LinkUtil.IsLinkHandlerRegistered and LinkUtil.IsLinkHandlerRegistered(self.chatLogCoordLinkType)
+	if not coordRegistered then
+		LinkUtil.RegisterLinkHandler(self.chatLogCoordLinkType, function(link, text, linkData, contextData)
+			return QuestTogether:HandleChatLogCoordLink(link, text, linkData, contextData)
 		end)
 	end
 	self.chatLogLinkHandlerInstalled = true

@@ -12,7 +12,7 @@ local ANNOUNCEMENT_WIRE_VERSION = 2
 local ANNOUNCEMENT_COMMAND = "ANN"
 local PING_REQUEST_VERSION = 1
 local PING_REQUEST_COMMAND = "PING"
-local PING_RESPONSE_VERSION = 1
+local PING_RESPONSE_VERSION = 2
 local PING_RESPONSE_COMMAND = "PONG"
 local QUEST_COMPARE_REQUEST_VERSION = 1
 local QUEST_COMPARE_REQUEST_COMMAND = "QCMP"
@@ -140,7 +140,7 @@ function QuestTogether:DecodePingRequestPayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = tonumber(fields[1] or "")
+	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
 	if version ~= PING_REQUEST_VERSION then
 		return nil
 	end
@@ -172,6 +172,7 @@ function QuestTogether:EncodePingResponsePayload(responseData)
 		self:EscapePayload(responseData.coordX or ""),
 		self:EscapePayload(responseData.coordY or ""),
 		self:EscapePayload(responseData.warMode or ""),
+		self:EscapePayload(responseData.mapID or ""),
 	}
 
 	return table.concat(fields, ",")
@@ -183,8 +184,8 @@ function QuestTogether:DecodePingResponsePayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = tonumber(fields[1] or "")
-	if version ~= PING_RESPONSE_VERSION then
+	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
+	if version ~= 1 and version ~= PING_RESPONSE_VERSION then
 		return nil
 	end
 
@@ -199,6 +200,7 @@ function QuestTogether:DecodePingResponsePayload(payload)
 	local coordX = self:UnescapePayload(fields[10] or "")
 	local coordY = self:UnescapePayload(fields[11] or "")
 	local warMode = self:UnescapePayload(fields[12] or "")
+	local mapID = self:UnescapePayload(fields[13] or "")
 	if requestId == "" or senderName == "" then
 		return nil
 	end
@@ -216,6 +218,7 @@ function QuestTogether:DecodePingResponsePayload(payload)
 		coordX = coordX,
 		coordY = coordY,
 		warMode = warMode,
+		mapID = mapID,
 	}
 end
 
@@ -236,7 +239,7 @@ function QuestTogether:DecodeQuestCompareRequestPayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = tonumber(fields[1] or "")
+	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
 	if version ~= QUEST_COMPARE_REQUEST_VERSION then
 		return nil
 	end
@@ -276,7 +279,7 @@ function QuestTogether:DecodeQuestCompareEntryPayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = tonumber(fields[1] or "")
+	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
 	if version ~= QUEST_COMPARE_ENTRY_VERSION then
 		return nil
 	end
@@ -319,7 +322,7 @@ function QuestTogether:DecodeQuestCompareDonePayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = tonumber(fields[1] or "")
+	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
 	if version ~= QUEST_COMPARE_DONE_VERSION then
 		return nil
 	end
@@ -335,7 +338,7 @@ function QuestTogether:DecodeQuestCompareDonePayload(payload)
 		version = version,
 		requestId = requestId,
 		senderName = senderName,
-		count = tonumber(count) or 0,
+		count = self.SafeToNumber and self:SafeToNumber(count) or tonumber(count) or 0,
 	}
 end
 
@@ -365,7 +368,7 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 	end
 
 	local fields = SplitByDelimiter(payload, ",")
-	local version = tonumber(fields[1] or "")
+	local version = self.SafeToNumber and self:SafeToNumber(fields[1] or "") or tonumber(fields[1] or "")
 	if version ~= 1 and version ~= ANNOUNCEMENT_WIRE_VERSION then
 		return nil
 	end
@@ -570,6 +573,7 @@ function QuestTogether:GetPlayerPingMetadata()
 		coordX = numericCoordX and string.format("%.1f", numericCoordX) or "",
 		coordY = numericCoordY and string.format("%.1f", numericCoordY) or "",
 		warMode = locationInfo and tostring(locationInfo.warMode and "1" or "0") or "",
+		mapID = locationInfo and tostring(locationInfo.mapID or "") or "",
 	}
 end
 
