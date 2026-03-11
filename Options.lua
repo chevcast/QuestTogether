@@ -311,6 +311,7 @@ end
 local CHECKBOX_OPTION_KEYS = {
 	"announceAccepted",
 	"announceCompleted",
+	"announceReadyToTurnIn",
 	"announceRemoved",
 	"announceProgress",
 	"announceWorldQuestAreaEnter",
