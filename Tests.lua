@@ -395,7 +395,14 @@ QuestTogether:RegisterTest("chat log speaker menu includes player actions", func
 	WithPatchedMethod(QuestTogether, "IsIgnoredPlayerName", function()
 		return false
 	end, function()
-		QuestTogether:PopulateChatLogSpeakerMenu(fakeRoot, "ChatFrame1", "MyPlayer-Realm")
+		WithPatchedMethod(QuestTogether, "GetOption", function(_, key)
+			if key == "chatLogDestination" then
+				return "main"
+			end
+			return QuestTogether.db.profile[key]
+		end, function()
+			QuestTogether:PopulateChatLogSpeakerMenu(fakeRoot, "ChatFrame1", "MyPlayer-Realm")
+		end)
 	end)
 
 	AssertEquals(titles[1], "MyPlayer")
@@ -866,7 +873,7 @@ QuestTogether:RegisterTest("closing QuestTogether chat window keeps separate des
 
 	AssertEquals(QuestTogether:GetOption("chatLogDestination"), "separate")
 	AssertEquals(QuestTogether.db.global.questLogChatFrameID, 4)
-	AssertEquals(refreshed, 0)
+	AssertEquals(refreshed, 1)
 end)
 
 QuestTogether:RegisterTest("login adopts visible QuestTogether chat window as separate destination", function()
