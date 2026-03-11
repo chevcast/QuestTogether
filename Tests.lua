@@ -198,7 +198,7 @@ function QuestTogether:RunTests()
 	local passed = 0
 	local failed = 0
 
-	self:Print(BuildTestLogMessage("Running " .. tostring(total) .. " in-game tests..."))
+	self:PrintChatLogSystemMessage(BuildTestLogMessage("Running " .. tostring(total) .. " in-game tests..."))
 
 	for _, testCase in ipairs(self.tests) do
 		local ok, err = pcall(function()
@@ -207,14 +207,16 @@ function QuestTogether:RunTests()
 
 		if ok then
 			passed = passed + 1
-			self:Print(BuildTestLogMessage("[PASS] " .. testCase.name))
+			self:PrintChatLogSystemMessage(BuildTestLogMessage("[PASS] " .. testCase.name))
 		else
 			failed = failed + 1
-			self:Print(BuildTestLogMessage("[FAIL] " .. testCase.name .. " -> " .. tostring(err)))
+			self:PrintChatLogSystemMessage(BuildTestLogMessage("[FAIL] " .. testCase.name .. " -> " .. tostring(err)))
 		end
 	end
 
-	self:Print(BuildTestLogMessage("Test summary: " .. tostring(passed) .. " passed, " .. tostring(failed) .. " failed."))
+	self:PrintChatLogSystemMessage(
+		BuildTestLogMessage("Test summary: " .. tostring(passed) .. " passed, " .. tostring(failed) .. " failed.")
+	)
 	return failed == 0
 end
 
@@ -398,9 +400,9 @@ QuestTogether:RegisterTest("chat log speaker link handler opens QuestTogether me
 end)
 
 QuestTogether:RegisterTest("chat log quest link handler prints local quest status", function()
-	local printed = nil
-	QuestTogether.PrintRaw = function(_, message)
-		printed = message
+	local printed = {}
+	QuestTogether.PrintChatLogRaw = function(_, message)
+		printed[#printed + 1] = message
 	end
 
 	QuestTogether.API = CreateApiWithOverrides({
@@ -439,8 +441,10 @@ QuestTogether:RegisterTest("chat log quest link handler prints local quest statu
 		AssertEquals(response, LinkProcessorResponse.Handled)
 	end)
 
-	AssertTrue(string.find(printed or "", "Test Quest", 1, true) ~= nil)
-	AssertTrue(string.find(printed or "", "Ready to Turn In", 1, true) ~= nil)
+	AssertEquals(#printed, 1)
+	AssertTrue(string.find(printed[1] or "", "Test Quest", 1, true) ~= nil)
+	AssertTrue(string.find(printed[1] or "", "Ready to Turn In", 1, true) ~= nil)
+	AssertTrue(string.find(printed[1] or "", "Quest Status:", 1, true) ~= nil)
 end)
 
 QuestTogether:RegisterTest("chat log speaker menu includes player actions", function()

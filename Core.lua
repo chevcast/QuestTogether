@@ -740,6 +740,10 @@ function QuestTogether:PrintRaw(message)
 	end
 end
 
+function QuestTogether:PrintChatLogSystemMessage(message)
+	self:PrintChatLogRaw("|cff33ff99QuestTogether|r: " .. tostring(message))
+end
+
 function QuestTogether:GetMainChatFrame()
 	return DEFAULT_CHAT_FRAME
 end
@@ -1508,16 +1512,33 @@ end
 function QuestTogether:BuildQuestStatusMessage(questId)
 	local numericQuestId = tonumber(questId)
 	if not numericQuestId then
-		return "QuestTogether: Quest status unavailable."
+		return "Quest status unavailable."
 	end
 
 	local questTitle = self:GetQuestTitle(numericQuestId)
 	local statusLabel = self:GetQuestStatusLabel(numericQuestId)
-	return "|cff33ff99QuestTogether|r: " .. tostring(questTitle) .. " - " .. tostring(statusLabel)
+	return "Quest Status: " .. tostring(questTitle) .. " - " .. tostring(statusLabel)
+end
+
+function QuestTogether:GetQuestStatusAnnouncementEventType(questId)
+	local statusLabel = self:GetQuestStatusLabel(questId)
+	if statusLabel == "Completed" or statusLabel == "Ready to Turn In" or statusLabel == "Objectives Complete" then
+		return "QUEST_COMPLETED"
+	end
+	if statusLabel == "In Progress" then
+		return "QUEST_PROGRESS"
+	end
+	if statusLabel == "Not Started" then
+		return "QUEST_ACCEPTED"
+	end
+
+	return "QUEST_PROGRESS"
 end
 
 function QuestTogether:PrintQuestStatus(questId)
-	self:PrintRaw(self:BuildQuestStatusMessage(questId))
+	local message = self:BuildQuestStatusMessage(questId)
+	local eventType = self:GetQuestStatusAnnouncementEventType(questId)
+	self:PrintConsoleAnnouncement(message, nil, nil, eventType)
 end
 
 function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType, iconAsset, iconKind, locationInfo)
@@ -1585,7 +1606,7 @@ function QuestTogether:BuildPingResponseMessage(pongData)
 end
 
 function QuestTogether:PrintPingResponse(pongData)
-	self:PrintRaw(self:BuildPingResponseMessage(pongData))
+	self:PrintChatLogRaw(self:BuildPingResponseMessage(pongData))
 end
 
 function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, eventType, iconAsset, iconKind, locationInfo)
@@ -1790,7 +1811,7 @@ function QuestTogether:Debug(message, category)
 		prefix = prefix .. "[" .. tostring(category) .. "]"
 	end
 
-	self:Print(prefix .. ": " .. tostring(message))
+	self:PrintChatLogSystemMessage(prefix .. ": " .. tostring(message))
 	return true
 end
 
@@ -2375,7 +2396,7 @@ function QuestTogether:HandleSlashCommand(input)
 			return
 		end
 
-		self:Print("Ping sent.")
+		self:PrintChatLogSystemMessage("Ping sent.")
 		return
 	end
 
