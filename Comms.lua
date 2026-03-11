@@ -46,6 +46,18 @@ local function SafeDebugString(value)
 	return tostring(value)
 end
 
+local function SafeChannelNumber(addon, value)
+	if addon and addon.SafeToNumber then
+		return addon:SafeToNumber(value)
+	end
+
+	if IsSecretValue(value) then
+		return nil
+	end
+
+	return tonumber(value)
+end
+
 local function MatchesAnnouncementChannelName(addon, value)
 	if type(value) ~= "string" or value == "" then
 		return false
@@ -860,7 +872,13 @@ function QuestTogether:IsAnnouncementChannelEvent(channel, localID, name)
 		return false
 	end
 
-	return type(name) == "string" and name ~= "" and name == self.announcementChannelName
+	if type(name) == "string" and name ~= "" and name == self.announcementChannelName then
+		return true
+	end
+
+	local expectedLocalID = SafeChannelNumber(self, self.announcementChannelLocalID)
+	local incomingLocalID = SafeChannelNumber(self, localID)
+	return expectedLocalID ~= nil and incomingLocalID ~= nil and expectedLocalID == incomingLocalID
 end
 
 function QuestTogether:SendAnnouncementEvent(eventType, text, questId, extraData)
@@ -1252,21 +1270,21 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 	self:Debugf(
 		"comms",
 		"Received addon message channel=%s sender=%s name=%s bytes=%d",
-		tostring(channel),
-		tostring(sender),
-		tostring(name),
+		SafeDebugString(channel),
+		SafeDebugString(sender),
+		SafeDebugString(name),
 		type(message) == "string" and #message or 0
 	)
 	if self:IsSelfSender(sender) then
-		self:Debugf("comms", "Ignoring self-sent addon message sender=%s", tostring(sender))
+		self:Debugf("comms", "Ignoring self-sent addon message sender=%s", SafeDebugString(sender))
 		return
 	end
 	if self.IsIgnoredPlayerName and self:IsIgnoredPlayerName(self:NormalizeMemberName(sender) or sender) then
-		self:Debugf("comms", "Ignoring addon message from ignored sender=%s", tostring(sender))
+		self:Debugf("comms", "Ignoring addon message from ignored sender=%s", SafeDebugString(sender))
 		return
 	end
 	if not self:IsAnnouncementChannelEvent(channel, localID, name) then
-		self:Debugf("comms", "Ignoring addon message outside announcement channel sender=%s", tostring(sender))
+		self:Debugf("comms", "Ignoring addon message outside announcement channel sender=%s", SafeDebugString(sender))
 		return
 	end
 

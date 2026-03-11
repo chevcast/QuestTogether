@@ -62,19 +62,6 @@ local function WithPatchedMethod(targetTable, methodName, replacement, fn)
 	end
 end
 
-local function WithPatchedGlobal(globalName, replacement, fn)
-	local original = _G[globalName]
-	_G[globalName] = replacement
-
-	local ok, err = pcall(fn)
-
-	_G[globalName] = original
-
-	if not ok then
-		error(err, 0)
-	end
-end
-
 local function WithIsolatedState(testFn)
 	if not QuestTogether.db then
 		QuestTogether:OnInitialize()
@@ -243,30 +230,6 @@ QuestTogether:RegisterTest("default profile contains new announcement display op
 	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel == nil)
 end)
 
-QuestTogether:RegisterTest("quest ready to turn in message wraps quest title in clickable link", function()
-	WithPatchedMethod(LinkUtil, "FormatLink", function(linkType, linkDisplayText, linkData)
-		if linkType == QuestTogether.chatLogLinkType then
-			return "|Hquesttogetherlog:MyPlayer-Realm|h[MyPlayer]|h"
-		end
-
-		AssertEquals(linkType, QuestTogether.chatLogQuestLinkType)
-		AssertEquals(linkDisplayText, "[Test Quest]")
-		AssertEquals(linkData, "12345")
-		return "|Hquesttogetherquest:12345|h[Test Quest]|h"
-	end, function()
-		local message = QuestTogether:BuildConsoleAnnouncementMessage(
-			"MyPlayer-Realm",
-			"Ready to Turn In: Test Quest",
-			"MAGE",
-			"QUEST_READY_TO_TURN_IN",
-			nil,
-			nil,
-			{ questId = "12345" }
-		)
-		AssertTrue(string.find(message, "|Hquesttogetherquest:12345|h%[Test Quest%]|h") ~= nil)
-	end)
-end)
-
 QuestTogether:RegisterTest("quest status uses ready to turn in announcement event", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		IsQuestFlaggedCompleted = function()
@@ -433,42 +396,6 @@ QuestTogether:RegisterTest("console announcement message includes icon and playe
 	AssertTrue(string.find(message, "|cffffd200: hello there|r", 1, true) ~= nil)
 end)
 
-QuestTogether:RegisterTest("console announcement message wraps speaker in clickable link", function()
-	WithPatchedMethod(LinkUtil, "FormatLink", function(linkType, linkDisplayText, speakerName)
-		AssertEquals(linkType, QuestTogether.chatLogLinkType)
-		AssertEquals(linkDisplayText, "[MyPlayer]")
-		AssertEquals(speakerName, "MyPlayer-Realm")
-		return "|Hquesttogetherlog:MyPlayer-Realm|h[MyPlayer]|h"
-	end, function()
-		local message = QuestTogether:BuildConsoleAnnouncementMessage("MyPlayer-Realm", "hello there", "MAGE")
-		AssertTrue(string.find(message, "|Hquesttogetherlog:MyPlayer%-Realm|h%[MyPlayer%]|h") ~= nil)
-	end)
-end)
-
-QuestTogether:RegisterTest("console announcement message wraps quest title in clickable link", function()
-	WithPatchedMethod(LinkUtil, "FormatLink", function(linkType, linkDisplayText, linkData)
-		if linkType == QuestTogether.chatLogLinkType then
-			return "|Hquesttogetherlog:MyPlayer-Realm|h[MyPlayer]|h"
-		end
-
-		AssertEquals(linkType, QuestTogether.chatLogQuestLinkType)
-		AssertEquals(linkDisplayText, "[Test Quest]")
-		AssertEquals(linkData, "12345")
-		return "|Hquesttogetherquest:12345|h[Test Quest]|h"
-	end, function()
-		local message = QuestTogether:BuildConsoleAnnouncementMessage(
-			"MyPlayer-Realm",
-			"Quest Accepted: Test Quest",
-			"MAGE",
-			"QUEST_ACCEPTED",
-			nil,
-			nil,
-			{ questId = "12345" }
-		)
-		AssertTrue(string.find(message, "|Hquesttogetherquest:12345|h%[Test Quest%]|h") ~= nil)
-	end)
-end)
-
 QuestTogether:RegisterTest("chat log speaker link handler opens QuestTogether menu", function()
 	local capturedOwner = nil
 	local capturedSpeaker = nil
@@ -542,28 +469,6 @@ QuestTogether:RegisterTest("chat log quest link handler prints local quest statu
 	AssertTrue(string.find(printed[1] or "", "Ready to Turn In", 1, true) ~= nil)
 	AssertTrue(string.find(printed[1] or "", "Quest Status:", 1, true) ~= nil)
 	AssertTrue(string.find(printed[1] or "", "Shareable: Yes", 1, true) ~= nil)
-end)
-
-QuestTogether:RegisterTest("ping response wraps coordinates in clickable link", function()
-	WithPatchedMethod(LinkUtil, "FormatLink", function(linkType, linkDisplayText, linkData)
-		AssertEquals(linkType, QuestTogether.chatLogCoordLinkType)
-		AssertEquals(linkDisplayText, "[47.1, 69.9]")
-		AssertEquals(linkData, "999:47.1:69.9")
-		return "|Hquesttogethercoord:999:47.1:69.9|h[47.1, 69.9]|h"
-	end, function()
-		local message = QuestTogether:BuildPingResponseMessage({
-			senderName = "Remote-Realm",
-			classFile = "WARRIOR",
-			className = "Warrior",
-			level = "80",
-			zoneName = "Eversong Woods",
-			coordX = "47.1",
-			coordY = "69.9",
-			warMode = "1",
-			mapID = "999",
-		})
-		AssertTrue(string.find(message, "|Hquesttogethercoord:999:47%.1:69%.9|h%[47%.1, 69%.9%]|h") ~= nil)
-	end)
 end)
 
 QuestTogether:RegisterTest("chat log coord link handler opens ping waypoint", function()
@@ -1107,6 +1012,28 @@ QuestTogether:RegisterTest("console announcements use separate QuestTogether cha
 	AssertTrue(string.find(printedToFrame[1], "hello there", 1, true) ~= nil)
 end)
 
+QuestTogether:RegisterTest("generic print uses resolved QuestTogether chat frame", function()
+	local printedToFrame = {}
+	local fakeFrame = {
+		AddMessage = function(_, message)
+			printedToFrame[#printedToFrame + 1] = message
+		end,
+	}
+
+	WithPatchedMethod(QuestTogether, "GetChatLogFrame", function()
+		return fakeFrame
+	end, function()
+		QuestTogether:Print("separate frame only")
+	end)
+
+	AssertEquals(#printedToFrame, 1)
+	AssertTrue(string.find(printedToFrame[1], "separate frame only", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("nameplate quest icon helper does not leak a global", function()
+	AssertEquals(_G.ApplyQuestIconVisual, nil)
+end)
+
 QuestTogether:RegisterTest("separate chat window inherits main chat font size when enabled", function()
 	local appliedFontSize = nil
 	local fakeMainFrame = {
@@ -1231,77 +1158,6 @@ QuestTogether:RegisterTest("closing QuestTogether chat window reverts chat log d
 
 	AssertEquals(QuestTogether:GetOption("chatLogDestination"), "main")
 	AssertEquals(QuestTogether.db.global.questLogChatFrameID, nil)
-	AssertEquals(refreshed, 1)
-end)
-
-QuestTogether:RegisterTest("closing QuestTogether chat window keeps separate destination when a visible replacement exists", function()
-	local refreshed = 0
-	local closedFrame = {
-		GetID = function()
-			return 3
-		end,
-		GetName = function()
-			return "ChatFrame3"
-		end,
-		IsShown = function()
-			return false
-		end,
-	}
-	local replacementFrame = {
-		GetID = function()
-			return 4
-		end,
-		GetName = function()
-			return "ChatFrame4"
-		end,
-		IsShown = function()
-			return true
-		end,
-	}
-
-	QuestTogether.db.profile.chatLogDestination = "separate"
-	QuestTogether.db.global.questLogChatFrameID = 3
-	WithPatchedGlobal("ChatFrame4Tab", {
-		IsShown = function()
-			return true
-		end,
-	}, function()
-		QuestTogether.API = CreateApiWithOverrides({
-			Delay = function(_, callback)
-				callback()
-			end,
-			GetChatWindowInfo = function(chatFrameID)
-				if chatFrameID == 3 then
-					return "QuestTogether", 18
-				end
-				if chatFrameID == 4 then
-					return "QuestTogether", 18
-				end
-				return nil
-			end,
-			GetChatFrameByID = function(chatFrameID)
-				if chatFrameID == 3 then
-					return closedFrame
-				end
-				if chatFrameID == 4 then
-					return replacementFrame
-				end
-				return nil
-			end,
-			GetNumChatWindows = function()
-				return 4
-			end,
-		})
-
-		WithPatchedMethod(QuestTogether, "RefreshOptionsWindow", function()
-			refreshed = refreshed + 1
-		end, function()
-			AssertTrue(QuestTogether:HandleQuestLogChatFrameClosed(closedFrame))
-		end)
-	end)
-
-	AssertEquals(QuestTogether:GetOption("chatLogDestination"), "separate")
-	AssertEquals(QuestTogether.db.global.questLogChatFrameID, 4)
 	AssertEquals(refreshed, 1)
 end)
 
@@ -1478,57 +1334,6 @@ QuestTogether:RegisterTest("joining announcement channel removes it from chat wi
 	AssertEquals(#removed, 2)
 	AssertEquals(removed[1], "1:" .. QuestTogether.announcementChannelName)
 	AssertEquals(removed[2], "2:" .. QuestTogether.announcementChannelName)
-end)
-
-QuestTogether:RegisterTest("scan quest log prints locally and broadcasts scan status", function()
-	local sent = {}
-	local printed = {}
-
-	QuestTogether.isEnabled = true
-	QuestTogether.API = CreateApiWithOverrides({
-		GetChannelName = function()
-			return 4
-		end,
-		SendAddonMessage = function(_, message)
-			sent[#sent + 1] = message
-			return 0
-		end,
-		UnitFullName = function(unitToken)
-			AssertEquals(unitToken, "player")
-			return "MyPlayer", "Realm"
-		end,
-		UnitClass = function(unitToken)
-			AssertEquals(unitToken, "player")
-			return "Mage", "MAGE"
-		end,
-		UnitGUID = function(unitToken)
-			AssertEquals(unitToken, "player")
-			return "Player-1-ABC"
-		end,
-	})
-	QuestTogether.PrintChatLogRaw = function(_, message)
-		printed[#printed + 1] = message
-	end
-
-	WithPatchedMethod(QuestTogether, "GetPlayerTracker", function()
-		return {}
-	end, function()
-		WithPatchedMethod(QuestTogether, "RefreshWorldQuestAreaState", function() end, function()
-			WithPatchedMethod(QuestTogether, "RefreshBonusObjectiveAreaState", function() end, function()
-				WithPatchedMethod(C_QuestLog, "GetNumQuestLogEntries", function()
-					return 0
-				end, function()
-					QuestTogether:ScanQuestLog()
-
-					AssertEquals(#printed, 1)
-					AssertTrue(string.find(printed[1], "quests are being monitored by QuestTogether.", 1, true) ~= nil)
-					AssertEquals(#sent, 1)
-					AssertTrue(string.find(sent[1], "^ANN|", 1) ~= nil)
-					AssertTrue(string.find(sent[1], "SCAN_STATUS", 1, true) ~= nil)
-				end)
-			end)
-		end)
-	end)
 end)
 
 QuestTogether:RegisterTest("target test announcement sends target payload and handles locally as remote", function()

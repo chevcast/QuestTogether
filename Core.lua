@@ -693,6 +693,14 @@ function QuestTogether:SafeToNumber(value)
 	return tonumber(value)
 end
 
+function QuestTogether:SafeToString(value, fallback)
+	if self:IsSecretValue(value) then
+		return fallback or "<secret>"
+	end
+
+	return tostring(value)
+end
+
 -- Deep copy helper used for defaults merging and tests.
 function QuestTogether:DeepCopy(value)
 	if type(value) ~= "table" then
@@ -770,18 +778,20 @@ function QuestTogether:ApplyDefaults(destination, defaults)
 end
 
 function QuestTogether:Print(message)
-	local text = "|cff33ff99QuestTogether|r: " .. tostring(message)
-	if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
-		DEFAULT_CHAT_FRAME:AddMessage(text)
+	local text = "|cff33ff99QuestTogether|r: " .. self:SafeToString(message)
+	local chatFrame = self:GetChatLogFrame()
+	if chatFrame and chatFrame.AddMessage then
+		chatFrame:AddMessage(text)
 	else
-		print("QuestTogether:", tostring(message))
+		print("QuestTogether:", self:SafeToString(message))
 	end
 end
 
 function QuestTogether:PrintRaw(message)
-	local text = tostring(message)
-	if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
-		DEFAULT_CHAT_FRAME:AddMessage(text)
+	local text = self:SafeToString(message)
+	local chatFrame = self:GetChatLogFrame()
+	if chatFrame and chatFrame.AddMessage then
+		chatFrame:AddMessage(text)
 	else
 		print(text)
 	end
