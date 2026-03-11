@@ -237,6 +237,8 @@ QuestTogether:RegisterTest("default profile contains new announcement display op
 	AssertTrue(QuestTogether.DEFAULTS.profile.showProgressFor ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.chatBubbleSize ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.chatBubbleDuration ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.emoteOnQuestCompletion ~= nil)
+	AssertTrue(QuestTogether.DEFAULTS.profile.emoteOnNearbyPlayerQuestCompletion ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.primaryChannel == nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel == nil)
 end)
@@ -356,6 +358,17 @@ QuestTogether:RegisterTest("legacy bubble settings migrate to numeric values", f
 	QuestTogether:NormalizeAnnouncementDisplayOptions()
 	AssertEquals(QuestTogether.db.profile.chatBubbleSize, QuestTogether.DEFAULTS.profile.chatBubbleSize)
 	AssertEquals(QuestTogether.db.profile.chatBubbleDuration, QuestTogether.DEFAULTS.profile.chatBubbleDuration)
+end)
+
+QuestTogether:RegisterTest("legacy doEmotes setting migrates to split emote options", function()
+	QuestTogether.db.profile.doEmotes = false
+	QuestTogether.db.profile.emoteOnQuestCompletion = nil
+	QuestTogether.db.profile.emoteOnNearbyPlayerQuestCompletion = nil
+
+	QuestTogether:NormalizeAnnouncementDisplayOptions()
+
+	AssertFalse(QuestTogether.db.profile.emoteOnQuestCompletion)
+	AssertFalse(QuestTogether.db.profile.emoteOnNearbyPlayerQuestCompletion)
 end)
 
 QuestTogether:RegisterTest("progressbar objective text strips trailing parenthetical percent", function()
@@ -1758,6 +1771,7 @@ end)
 
 QuestTogether:RegisterTest("remote nearby completion plays synced emote", function()
 	local emoteCalls = {}
+	QuestTogether.db.profile.emoteOnNearbyPlayerQuestCompletion = true
 
 	QuestTogether.API = CreateApiWithOverrides({
 		DoEmote = function(token, target)
@@ -1792,6 +1806,7 @@ end)
 
 QuestTogether:RegisterTest("remote far completion does not play synced emote", function()
 	local emoteCalls = 0
+	QuestTogether.db.profile.emoteOnNearbyPlayerQuestCompletion = true
 
 	QuestTogether.API = CreateApiWithOverrides({
 		DoEmote = function()
@@ -1819,6 +1834,38 @@ QuestTogether:RegisterTest("remote far completion does not play synced emote", f
 					coordX = "1.0",
 					coordY = "1.0",
 					warMode = "1",
+				}, false))
+			end)
+		end)
+	end)
+
+	AssertEquals(emoteCalls, 0)
+end)
+
+QuestTogether:RegisterTest("remote nearby completion emote obeys nearby-player emote option", function()
+	local emoteCalls = 0
+	QuestTogether.db.profile.emoteOnNearbyPlayerQuestCompletion = false
+
+	QuestTogether.API = CreateApiWithOverrides({
+		DoEmote = function()
+			emoteCalls = emoteCalls + 1
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "FindVisiblePlayerNameplateForSender", function()
+		return nil
+	end, function()
+		WithPatchedMethod(QuestTogether, "FindNearbyPlayerUnitTokenForSender", function()
+			return "target"
+		end, function()
+			WithPatchedMethod(QuestTogether, "PrintConsoleAnnouncement", function() end, function()
+				AssertTrue(QuestTogether:HandleAnnouncementEvent({
+					eventType = "QUEST_COMPLETED",
+					senderGUID = "Player-4-JKL",
+					classFile = "MAGE",
+					senderName = "Nearby-Realm",
+					text = "Quest Completed: Widgets",
+					emoteToken = "cheer",
 				}, false))
 			end)
 		end)

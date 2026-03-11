@@ -921,7 +921,7 @@ function QuestTogether:GetSafeRemoteCompletionEmote(emoteToken)
 end
 
 function QuestTogether:PlayRemoteCompletionEmote(eventData, nearbyUnitToken, senderName)
-	if type(eventData) ~= "table" or not self:GetOption("doEmotes") then
+	if type(eventData) ~= "table" or not self:GetOption("emoteOnNearbyPlayerQuestCompletion") then
 		return false
 	end
 

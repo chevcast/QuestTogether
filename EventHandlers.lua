@@ -66,8 +66,8 @@ function QuestTogether:PickRandomCompletionEmote()
 end
 
 function QuestTogether:PlayLocalCompletionEmote(emoteToken)
-	if not self:GetOption("doEmotes") then
-		self:Debug("Skipping local emote because doEmotes is disabled.", "quest")
+	if not self:GetOption("emoteOnQuestCompletion") then
+		self:Debug("Skipping local emote because emoteOnQuestCompletion is disabled.", "quest")
 		return false
 	end
 	self:Debugf("quest", "Playing completion emote token=%s", tostring(emoteToken))

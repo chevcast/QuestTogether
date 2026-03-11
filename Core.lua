@@ -70,7 +70,8 @@ QuestTogether.DEFAULTS = {
 		chatBubbleSize = 100,
 		chatBubbleDuration = 3,
 		debugMode = false,
-		doEmotes = true,
+		emoteOnQuestCompletion = true,
+		emoteOnNearbyPlayerQuestCompletion = true,
 		nameplateQuestIconEnabled = true,
 		nameplateQuestIconStyle = "prefix",
 		nameplateQuestHealthColorEnabled = true,
@@ -2226,6 +2227,20 @@ end
 
 function QuestTogether:NormalizeAnnouncementDisplayOptions()
 	local profile = self.db.profile
+	if profile.emoteOnQuestCompletion == nil then
+		if profile.doEmotes ~= nil then
+			profile.emoteOnQuestCompletion = profile.doEmotes and true or false
+		else
+			profile.emoteOnQuestCompletion = self.DEFAULTS.profile.emoteOnQuestCompletion
+		end
+	end
+	if profile.emoteOnNearbyPlayerQuestCompletion == nil then
+		if profile.doEmotes ~= nil then
+			profile.emoteOnNearbyPlayerQuestCompletion = profile.doEmotes and true or false
+		else
+			profile.emoteOnNearbyPlayerQuestCompletion = self.DEFAULTS.profile.emoteOnNearbyPlayerQuestCompletion
+		end
+	end
 	if not self:IsChatLogDestination(profile.chatLogDestination) then
 		profile.chatLogDestination = self.DEFAULTS.profile.chatLogDestination
 	end
@@ -2534,7 +2549,7 @@ function QuestTogether:PrintHelp()
 	self:Print("/qt enable | disable - Enable or disable runtime behavior")
 	self:Print("/qt debug [on|off|toggle] - Show or control debug mode")
 	self:Print("/qt devlogall [on|off|toggle] - Show or control dev all-announcements logging")
-	self:Print("/qt set <option> <value> - Set a boolean option (e.g. doEmotes off)")
+	self:Print("/qt set <option> <value> - Set a boolean option (e.g. emoteOnQuestCompletion off)")
 	self:Print("/qt get <option> - Read an option value")
 	self:Print("/qt scan - Rescan your quest log now")
 	self:Print("/qt ping - Request pong metadata from all QuestTogether clients in the shared channel")

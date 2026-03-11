@@ -327,7 +327,8 @@ local CHECKBOX_OPTION_KEYS = {
 	"showChatLogs",
 	"nameplateQuestIconEnabled",
 	"nameplateQuestHealthColorEnabled",
-	"doEmotes",
+	"emoteOnQuestCompletion",
+	"emoteOnNearbyPlayerQuestCompletion",
 	"debugMode",
 }
 
@@ -553,19 +554,27 @@ function QuestTogether:InitializeOptionsWindow()
 	end)
 
 	CreateSectionLabel(content, "Miscellaneous", 16, -978)
-	local doEmotes = CreateCheckbox(
+	local emoteOnQuestCompletion = CreateCheckbox(
 		content,
-		"doEmotes",
-		"Quest Completion Emotes",
-		"If disabled, this character never performs local completion emotes.",
+		"emoteOnQuestCompletion",
+		"Emote On Quest Completion",
+		"If disabled, this character never performs local quest completion emotes.",
 		16,
 		-1002
 	)
-	local debugMode = CreateCheckbox(content, "debugMode", "Debug Mode", "Print debug output in chat.", 16, -1030)
+	local emoteOnNearbyPlayerQuestCompletion = CreateCheckbox(
+		content,
+		"emoteOnNearbyPlayerQuestCompletion",
+		"Emote On Nearby Player Quest Completion",
+		"If disabled, this character will not mirror nearby players' quest completion emotes.",
+		16,
+		-1030
+	)
+	local debugMode = CreateCheckbox(content, "debugMode", "Debug Mode", "Print debug output in chat.", 16, -1058)
 
 	local testButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
 	testButton:SetSize(180, 24)
-	testButton:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -1072)
+	testButton:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -1100)
 	testButton:SetText("Run In-Game Tests")
 	testButton:SetScript("OnClick", function()
 		QuestTogether:Debug("Run In-Game Tests button clicked", "options")
@@ -607,7 +616,8 @@ function QuestTogether:InitializeOptionsWindow()
 		nameplateQuestHealthColorEnabled = nameplateQuestHealthColorEnabled,
 		nameplateQuestHealthColor = nameplateQuestHealthColor,
 		resetNameplateQuestHealthColor = resetNameplateQuestHealthColor,
-		doEmotes = doEmotes,
+		emoteOnQuestCompletion = emoteOnQuestCompletion,
+		emoteOnNearbyPlayerQuestCompletion = emoteOnNearbyPlayerQuestCompletion,
 		debugMode = debugMode,
 	}
 
