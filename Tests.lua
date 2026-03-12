@@ -83,7 +83,7 @@ local function WithIsolatedState(testFn)
 	local originalNameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken
 	local originalNameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache
 	local originalNameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache
-	local originalNameplateBaseHealthColorByUnitFrame = QuestTogether.nameplateBaseHealthColorByUnitFrame
+	local originalNameplateHealthOverlayByUnitFrame = QuestTogether.nameplateHealthOverlayByUnitFrame
 	local originalNameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
 	local originalNameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken
 	local originalNameplateHealthTintRefreshPendingByUnitToken =
@@ -116,7 +116,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.nameplateQuestStateByUnitToken = {}
 	QuestTogether.nameplateQuestObjectiveCache = {}
 	QuestTogether.nameplateQuestTitleCache = {}
-	QuestTogether.nameplateBaseHealthColorByUnitFrame = setmetatable({}, { __mode = "k" })
+	QuestTogether.nameplateHealthOverlayByUnitFrame = setmetatable({}, { __mode = "k" })
 	QuestTogether.nameplateBubbleByUnitFrame = setmetatable({}, { __mode = "k" })
 	QuestTogether.nameplateRefreshPendingByUnitToken = {}
 	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken = {}
@@ -156,7 +156,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.nameplateQuestStateByUnitToken = originalNameplateQuestStateByUnitToken
 	QuestTogether.nameplateQuestObjectiveCache = originalNameplateQuestObjectiveCache
 	QuestTogether.nameplateQuestTitleCache = originalNameplateQuestTitleCache
-	QuestTogether.nameplateBaseHealthColorByUnitFrame = originalNameplateBaseHealthColorByUnitFrame
+	QuestTogether.nameplateHealthOverlayByUnitFrame = originalNameplateHealthOverlayByUnitFrame
 	QuestTogether.nameplateBubbleByUnitFrame = originalNameplateBubbleByUnitFrame
 	QuestTogether.nameplateRefreshPendingByUnitToken = originalNameplateRefreshPendingByUnitToken
 	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken =
@@ -1440,6 +1440,98 @@ end)
 
 QuestTogether:RegisterTest("nameplate quest icon helper does not leak a global", function()
 	AssertEquals(_G.ApplyQuestIconVisual, nil)
+end)
+
+QuestTogether:RegisterTest("nameplate health tint helpers use overlays without touching status bars", function()
+	local setColorCalls = 0
+	local createdTextures = {}
+	local unitFrame = {
+		healthBar = {
+			SetStatusBarColor = function()
+				setColorCalls = setColorCalls + 1
+			end,
+			GetStatusBarTexture = function()
+				return {
+					GetObjectType = function()
+						return "Texture"
+					end,
+				}
+			end,
+			CreateTexture = function()
+				local texture = {
+					shown = false,
+					color = nil,
+					points = {},
+					allPointsTarget = nil,
+					SetPoint = function(self, ...)
+						self.points[#self.points + 1] = { ... }
+					end,
+					ClearAllPoints = function(self)
+						self.points = {}
+					end,
+					SetAllPoints = function(self, target)
+						self.allPointsTarget = target
+					end,
+					SetColorTexture = function(self, ...)
+						self.color = { ... }
+					end,
+					SetBlendMode = function(self, blendMode)
+						self.blendMode = blendMode
+					end,
+					Show = function(self)
+						self.shown = true
+					end,
+					Hide = function(self)
+						self.shown = false
+					end,
+					SetAlpha = function(self, value)
+						self.alpha = value
+					end,
+				}
+				createdTextures[#createdTextures + 1] = texture
+				return texture
+			end,
+			GetAlpha = function()
+				return 0.8
+			end,
+		},
+	}
+
+	QuestTogether:ApplyQuestTintToNameplate(unitFrame)
+
+	AssertEquals(#createdTextures, 3)
+
+	local overlay = QuestTogether.nameplateHealthOverlayByUnitFrame[unitFrame]
+	AssertTrue(overlay ~= nil)
+	AssertEquals(overlay.Background, createdTextures[1])
+	AssertEquals(overlay.Fill, createdTextures[2])
+	AssertEquals(overlay.Highlight, createdTextures[3])
+
+	AssertTrue(overlay.Background.shown)
+	AssertTrue(overlay.Fill.shown)
+	AssertTrue(overlay.Highlight.shown)
+	AssertEquals(overlay.Background.allPointsTarget, unitFrame.healthBar)
+	AssertEquals(overlay.Fill.blendMode, "BLEND")
+	AssertEquals(overlay.Highlight.blendMode, "ADD")
+	AssertEquals(#overlay.Fill.points, 4)
+	AssertEquals(#overlay.Highlight.points, 4)
+	AssertEquals(overlay.Background.alpha, 0.8)
+	AssertEquals(overlay.Fill.alpha, 0.8)
+	AssertEquals(overlay.Highlight.alpha, 0.8)
+	AssertTrue(overlay.Background.color ~= nil)
+	AssertTrue(overlay.Fill.color ~= nil)
+	AssertTrue(overlay.Highlight.color ~= nil)
+	AssertEquals(overlay.Background.color[4], 0.18)
+	AssertEquals(overlay.Fill.color[4], 1)
+	AssertEquals(overlay.Highlight.color[4], 0.14)
+
+	QuestTogether:RestoreNameplateHealthColor(unitFrame)
+
+	AssertEquals(setColorCalls, 0)
+	AssertEquals(QuestTogether.nameplateHealthOverlayByUnitFrame[unitFrame], overlay)
+	AssertFalse(overlay.Background.shown)
+	AssertFalse(overlay.Fill.shown)
+	AssertFalse(overlay.Highlight.shown)
 end)
 
 QuestTogether:RegisterTest("separate chat window inherits main chat font size when enabled", function()

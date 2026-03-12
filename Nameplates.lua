@@ -3,7 +3,7 @@ QuestTogether Nameplate Augmentation
 
 Purpose:
 - Add a quest icon on Blizzard default nameplates for quest-objective units.
-- Optionally tint quest-objective nameplate health bars to a burnt orange color.
+- Optionally tint quest-objective health bars using an addon overlay, without mutating Blizzard bar colors.
 
 Design constraints:
 - Keep the implementation minimal and non-invasive.
@@ -70,7 +70,7 @@ QuestTogether.nameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjecti
 QuestTogether.nameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken or {}
 QuestTogether.nameplateIconByUnitFrame = QuestTogether.nameplateIconByUnitFrame
 	or setmetatable({}, { __mode = "k" })
-QuestTogether.nameplateBaseHealthColorByUnitFrame = QuestTogether.nameplateBaseHealthColorByUnitFrame
+QuestTogether.nameplateHealthOverlayByUnitFrame = QuestTogether.nameplateHealthOverlayByUnitFrame
 	or setmetatable({}, { __mode = "k" })
 QuestTogether.nameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
 	or setmetatable({}, { __mode = "k" })
@@ -1456,6 +1456,59 @@ local function EnsureQuestIcon(unitFrame)
 	return iconFrame
 end
 
+local function EnsureQuestHealthOverlay(unitFrame)
+	if not unitFrame or not unitFrame.healthBar then
+		return nil
+	end
+
+	local existingOverlay = QuestTogether.nameplateHealthOverlayByUnitFrame[unitFrame]
+	if existingOverlay then
+		return existingOverlay
+	end
+
+	local healthBar = unitFrame.healthBar
+	local background = healthBar:CreateTexture(nil, "BACKGROUND", nil, 1)
+	local fill = healthBar:CreateTexture(nil, "ARTWORK", nil, 1)
+	local highlight = healthBar:CreateTexture(nil, "OVERLAY", nil, 1)
+	if not background or not fill or not highlight then
+		return nil
+	end
+
+	local overlay = {
+		Background = background,
+		Fill = fill,
+		Highlight = highlight,
+	}
+
+	background:SetAllPoints(healthBar)
+	background:Hide()
+
+	if fill.SetBlendMode then
+		fill:SetBlendMode("BLEND")
+	end
+	fill:Hide()
+
+	if highlight.SetBlendMode then
+		highlight:SetBlendMode("ADD")
+	end
+	highlight:Hide()
+
+	QuestTogether.nameplateHealthOverlayByUnitFrame[unitFrame] = overlay
+	return overlay
+end
+
+local function AnchorQuestHealthFillTexture(texture, anchorTarget)
+	if not texture or not anchorTarget then
+		return
+	end
+
+	texture:ClearAllPoints()
+	texture:SetPoint("TOPLEFT", anchorTarget, "TOPLEFT", 0, 0)
+	texture:SetPoint("BOTTOMLEFT", anchorTarget, "BOTTOMLEFT", 0, 0)
+	texture:SetPoint("TOPRIGHT", anchorTarget, "TOPRIGHT", 0, 0)
+	texture:SetPoint("BOTTOMRIGHT", anchorTarget, "BOTTOMRIGHT", 0, 0)
+end
+
 ApplyQuestIconVisual = function(texture)
 	if not texture then
 		return
@@ -1894,83 +1947,65 @@ function QuestTogether:ShowAnnouncementBubbleOnRandomVisiblePlayer(text)
 	return true, unitName or "Unknown"
 end
 
-function QuestTogether:RememberNameplateBaseHealthColor(unitFrame)
-	if not unitFrame or not unitFrame.healthBar then
-		return
-	end
-
-	local unitGuid = nil
-	if unitFrame.unit then
-		local resolvedGuid = self:GetNameplateUnitGuid(unitFrame.unit)
-		if type(resolvedGuid) == "string" and resolvedGuid ~= "" then
-			unitGuid = resolvedGuid
-		end
-	end
-
-	local cachedBase = self.nameplateBaseHealthColorByUnitFrame[unitFrame]
-	if cachedBase then
-		if not unitGuid then
-			return
-		end
-		if cachedBase.unitGuid == unitGuid then
-			return
-		end
-	end
-
-	local red, green, blue = unitFrame.healthBar:GetStatusBarColor()
-	if type(red) ~= "number" or type(green) ~= "number" or type(blue) ~= "number" then
-		return
-	end
-
-	self.nameplateBaseHealthColorByUnitFrame[unitFrame] = {
-		r = red,
-		g = green,
-		b = blue,
-		unitGuid = unitGuid,
-	}
-end
-
 function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
-	if not unitFrame or not unitFrame.healthBar then
+	if not unitFrame then
 		return
 	end
 
-	self:RememberNameplateBaseHealthColor(unitFrame)
+	local overlay = EnsureQuestHealthOverlay(unitFrame)
+	if not overlay then
+		return
+	end
+
+	local healthBar = unitFrame.healthBar
+	local barTexture = healthBar and healthBar.GetStatusBarTexture and healthBar:GetStatusBarTexture() or nil
+	local anchorTarget = barTexture or healthBar
 	local color = self:GetNameplateQuestHealthColor()
-	unitFrame.healthBar:SetStatusBarColor(color.r, color.g, color.b)
+	local highlightRed = math.min(1, color.r + 0.18)
+	local highlightGreen = math.min(1, color.g + 0.18)
+	local highlightBlue = math.min(1, color.b + 0.12)
+
+	AnchorQuestHealthFillTexture(overlay.Fill, anchorTarget)
+	AnchorQuestHealthFillTexture(overlay.Highlight, anchorTarget)
+
+	overlay.Background:SetColorTexture(color.r * 0.55, color.g * 0.55, color.b * 0.55, 0.18)
+	overlay.Background:Show()
+	overlay.Fill:SetColorTexture(color.r, color.g, color.b, 1)
+	overlay.Fill:Show()
+	overlay.Highlight:SetColorTexture(highlightRed, highlightGreen, highlightBlue, 0.14)
+	overlay.Highlight:Show()
+
+	if healthBar and healthBar.GetAlpha then
+		local alpha = healthBar:GetAlpha() or 1
+		if overlay.Background.SetAlpha then
+			overlay.Background:SetAlpha(alpha)
+		end
+		if overlay.Fill.SetAlpha then
+			overlay.Fill:SetAlpha(alpha)
+		end
+		if overlay.Highlight.SetAlpha then
+			overlay.Highlight:SetAlpha(alpha)
+		end
+	end
 end
 
 function QuestTogether:RestoreNameplateHealthColor(unitFrame)
-	if not unitFrame or not unitFrame.healthBar then
+	if not unitFrame then
 		return
 	end
 
-	local cachedBase = self.nameplateBaseHealthColorByUnitFrame[unitFrame]
-	if not cachedBase then
-		return
-	end
-
-	if cachedBase.unitGuid then
-		local currentGuid = nil
-		if unitFrame.unit then
-			local resolvedGuid = self:GetNameplateUnitGuid(unitFrame.unit)
-			if type(resolvedGuid) == "string" and resolvedGuid ~= "" then
-				currentGuid = resolvedGuid
-			end
+	local overlay = self.nameplateHealthOverlayByUnitFrame[unitFrame]
+	if overlay then
+		if overlay.Background then
+			overlay.Background:Hide()
 		end
-		if cachedBase.unitGuid ~= currentGuid then
-			self.nameplateBaseHealthColorByUnitFrame[unitFrame] = nil
-			return
+		if overlay.Fill then
+			overlay.Fill:Hide()
+		end
+		if overlay.Highlight then
+			overlay.Highlight:Hide()
 		end
 	end
-
-	if type(cachedBase.r) ~= "number" or type(cachedBase.g) ~= "number" or type(cachedBase.b) ~= "number" then
-		self.nameplateBaseHealthColorByUnitFrame[unitFrame] = nil
-		return
-	end
-
-	unitFrame.healthBar:SetStatusBarColor(cachedBase.r, cachedBase.g, cachedBase.b)
-	self.nameplateBaseHealthColorByUnitFrame[unitFrame] = nil
 end
 
 function QuestTogether:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObjective)
@@ -2297,26 +2332,8 @@ function QuestTogether:TryInstallNameplateHooks()
 		self.nameplateOptionsHookInstalled = true
 	end
 
-	if
-		not self.nameplateHealthColorHookInstalled
-		and type(hooksecurefunc) == "function"
-		and type(CompactUnitFrame_UpdateHealthColor) == "function"
-	then
-		hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
-			if not frame or type(frame.unit) ~= "string" then
-				return
-			end
-			if not QuestTogether:IsNameplateUnitToken(frame.unit) then
-				return
-			end
-
-			QuestTogether:ScheduleNameplateHealthTintRefresh(frame.unit)
-		end)
-		self.nameplateHealthColorHookInstalled = true
-	end
-
-	-- Previous fallback logic kept here for quick rollback if the direct health-color hook
-	-- ever proves unsafe again.
+	-- Avoid additional secure hooks into Blizzard's frame-setup path. Event-driven refreshes are
+	-- enough for our icon and announcement bubble visuals.
 	--[[
 	if
 		not self.nameplateApplyFrameOptionsHookInstalled
@@ -2339,7 +2356,7 @@ function QuestTogether:TryInstallNameplateHooks()
 	]]
 
 	self.nameplateHooksInstalled = true
-	self:Debug("Using event-driven nameplate augmentation with direct health-color refresh hook", "nameplate")
+	self:Debug("Using event-driven nameplate augmentation without shared health-color hooks", "nameplate")
 end
 
 function QuestTogether:EnableNameplateAugmentation()
@@ -2439,5 +2456,5 @@ function QuestTogether:DisableNameplateAugmentation()
 	self:ForEachVisibleNamePlate(function(frame)
 		self:HideNameplateIcon(frame)
 	end)
-	wipe(self.nameplateBaseHealthColorByUnitFrame)
+	wipe(self.nameplateHealthOverlayByUnitFrame)
 end
