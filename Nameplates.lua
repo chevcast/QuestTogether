@@ -1509,6 +1509,36 @@ local function AnchorQuestHealthFillTexture(texture, anchorTarget)
 	texture:SetPoint("BOTTOMRIGHT", anchorTarget, "BOTTOMRIGHT", 0, 0)
 end
 
+local function ApplyQuestHealthFillGradient(texture, red, green, blue)
+	if not texture then
+		return
+	end
+
+	if texture.SetTexture then
+		texture:SetTexture("Interface\\Buttons\\WHITE8X8")
+	end
+
+	local startRed = red * 0.58
+	local startGreen = green * 0.58
+	local startBlue = blue * 0.58
+	local endRed = math.min(1, red * 1.02)
+	local endGreen = math.min(1, green * 1.02)
+	local endBlue = math.min(1, blue * 1.02)
+
+	if texture.SetGradient and CreateColor then
+		texture:SetGradient(
+			"HORIZONTAL",
+			CreateColor(startRed, startGreen, startBlue, 1),
+			CreateColor(endRed, endGreen, endBlue, 1)
+		)
+		return
+	end
+
+	if texture.SetColorTexture then
+		texture:SetColorTexture(red, green, blue, 1)
+	end
+end
+
 ApplyQuestIconVisual = function(texture)
 	if not texture then
 		return
@@ -1970,7 +2000,7 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 
 	overlay.Background:SetColorTexture(color.r * 0.55, color.g * 0.55, color.b * 0.55, 0.18)
 	overlay.Background:Show()
-	overlay.Fill:SetColorTexture(color.r, color.g, color.b, 1)
+	ApplyQuestHealthFillGradient(overlay.Fill, color.r, color.g, color.b)
 	overlay.Fill:Show()
 	overlay.Highlight:SetColorTexture(highlightRed, highlightGreen, highlightBlue, 0.14)
 	overlay.Highlight:Show()

@@ -1475,6 +1475,13 @@ QuestTogether:RegisterTest("nameplate health tint helpers use overlays without t
 					SetColorTexture = function(self, ...)
 						self.color = { ... }
 					end,
+					SetTexture = function(self, asset)
+						self.textureAsset = asset
+					end,
+					SetGradient = function(self, orientation, ...)
+						self.gradientOrientation = orientation
+						self.gradientColors = { ... }
+					end,
 					SetBlendMode = function(self, blendMode)
 						self.blendMode = blendMode
 					end,
@@ -1515,14 +1522,19 @@ QuestTogether:RegisterTest("nameplate health tint helpers use overlays without t
 	AssertEquals(overlay.Highlight.blendMode, "ADD")
 	AssertEquals(#overlay.Fill.points, 4)
 	AssertEquals(#overlay.Highlight.points, 4)
+	AssertEquals(overlay.Fill.textureAsset, "Interface\\Buttons\\WHITE8X8")
 	AssertEquals(overlay.Background.alpha, 0.8)
 	AssertEquals(overlay.Fill.alpha, 0.8)
 	AssertEquals(overlay.Highlight.alpha, 0.8)
 	AssertTrue(overlay.Background.color ~= nil)
-	AssertTrue(overlay.Fill.color ~= nil)
 	AssertTrue(overlay.Highlight.color ~= nil)
 	AssertEquals(overlay.Background.color[4], 0.18)
-	AssertEquals(overlay.Fill.color[4], 1)
+	if overlay.Fill.gradientOrientation then
+		AssertEquals(overlay.Fill.gradientOrientation, "HORIZONTAL")
+	else
+		AssertTrue(overlay.Fill.color ~= nil)
+		AssertEquals(overlay.Fill.color[4], 1)
+	end
 	AssertEquals(overlay.Highlight.color[4], 0.14)
 
 	QuestTogether:RestoreNameplateHealthColor(unitFrame)
