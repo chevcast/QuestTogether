@@ -565,6 +565,37 @@ QuestTogether:RegisterTest("known nameplate addons suppress the QuestTogether qu
 	end)
 end)
 
+QuestTogether:RegisterTest("quest objective detection falls back to tooltip parsing after API misses", function()
+	local tooltipChecked = false
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function(_, unitToken)
+		AssertEquals(unitToken, "nameplate1")
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetPlayerTracker", function()
+				return {}
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function(_, unitToken)
+					AssertEquals(unitToken, "nameplate1")
+					tooltipChecked = true
+					return true
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function()
+						return false
+					end, function()
+						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate1", {}))
+					end)
+				end)
+			end)
+		end)
+	end)
+
+	AssertTrue(tooltipChecked)
+end)
+
 QuestTogether:RegisterTest("personal bubble anchor persists per character and resets to defaults", function()
 	WithPatchedMethod(QuestTogether, "GetPlayerFullName", function()
 		return "MyPlayer-Realm"

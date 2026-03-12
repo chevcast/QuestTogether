@@ -1110,18 +1110,29 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken)
 	if not unitToken or not self:DoesNameplateUnitExist(unitToken) then
 		return false
 	end
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
+		return false
+	end
 
 	local unitGuid = self:GetNameplateUnitGuid(unitToken)
 	if not unitGuid or unitGuid == "" then
 		return false
 	end
-	if issecretvalue and issecretvalue(unitGuid) then
+	if self:IsSecretValue(unitGuid) then
 		return false
 	end
 
 	local cachedValue = self:GetCachedQuestObjectiveResult(unitGuid)
 	if cachedValue ~= nil then
 		return cachedValue
+	end
+
+	if not next(self.nameplateQuestTitleCache) then
+		self:RebuildNameplateQuestTitleCache()
+	end
+	if not next(self.nameplateQuestTitleCache) then
+		self:SetCachedQuestObjectiveResult(unitGuid, false)
+		return false
 	end
 
 	if not (C_TooltipInfo and C_TooltipInfo.GetHyperlink and Enum and Enum.TooltipDataLineType) then
@@ -1138,22 +1149,26 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken)
 	local scanLines = {}
 	for _, lineData in ipairs(tooltipData.lines) do
 		local lineType = lineData and lineData.type
+		if self:IsSecretValue(lineType) then
+			break
+		end
+
 		if
 			lineType == Enum.TooltipDataLineType.QuestObjective
 			or lineType == Enum.TooltipDataLineType.QuestTitle
 			or lineType == Enum.TooltipDataLineType.QuestPlayer
 		then
-			scanLines[#scanLines + 1] = lineData.leftText or ""
+			local leftText = lineData.leftText or ""
+			if self:IsSecretValue(leftText) then
+				break
+			end
+			scanLines[#scanLines + 1] = tostring(leftText)
 		end
 	end
 
 	if #scanLines == 0 then
 		self:SetCachedQuestObjectiveResult(unitGuid, false)
 		return false
-	end
-
-	if not next(self.nameplateQuestTitleCache) then
-		self:RebuildNameplateQuestTitleCache()
 	end
 
 	local isQuestUnit = false
@@ -1232,7 +1247,6 @@ function QuestTogether:IsQuestObjectiveUnit(unitToken, unitFrame)
 		end
 	end
 
-	-- Plater-style fallback: parse unit tooltip quest lines for unfinished objectives.
 	if self:IsQuestObjectiveViaTooltip(unitToken) then
 		return true
 	end
