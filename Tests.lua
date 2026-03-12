@@ -1561,6 +1561,7 @@ QuestTogether:RegisterTest("nameplate health tint helpers use overlays without t
 				self.alpha = value
 			end,
 		}
+		texture:SetAtlas(QuestTogether.NAMEPLATE_HEALTH_FILL_ATLAS, true)
 		createdTextures[#createdTextures + 1] = texture
 		return texture
 	end, function()
