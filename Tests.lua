@@ -1445,17 +1445,23 @@ end)
 QuestTogether:RegisterTest("nameplate health tint helpers use overlays without touching status bars", function()
 	local setColorCalls = 0
 	local createdTextures = {}
+	local liveFillTexture = {
+		points = {},
+		SetPoint = function(self, ...)
+			self.points[#self.points + 1] = { ... }
+		end,
+		ClearAllPoints = function(self)
+			self.points = {}
+		end,
+	}
 	local unitFrame = {
+		unit = "nameplate1",
 		healthBar = {
 			SetStatusBarColor = function()
 				setColorCalls = setColorCalls + 1
 			end,
 			GetStatusBarTexture = function()
-				return {
-					GetObjectType = function()
-						return "Texture"
-					end,
-				}
+				return liveFillTexture
 			end,
 			CreateTexture = function()
 				local texture = {
@@ -1478,9 +1484,15 @@ QuestTogether:RegisterTest("nameplate health tint helpers use overlays without t
 					SetTexture = function(self, asset)
 						self.textureAsset = asset
 					end,
-					SetGradient = function(self, orientation, ...)
-						self.gradientOrientation = orientation
-						self.gradientColors = { ... }
+					SetAtlas = function(self, asset, useAtlasSize)
+						self.atlasAsset = asset
+						self.useAtlasSize = useAtlasSize
+					end,
+					SetTexCoord = function(self, ...)
+						self.texCoord = { ... }
+					end,
+					SetVertexColor = function(self, ...)
+						self.vertexColor = { ... }
 					end,
 					SetBlendMode = function(self, blendMode)
 						self.blendMode = blendMode
@@ -1504,37 +1516,84 @@ QuestTogether:RegisterTest("nameplate health tint helpers use overlays without t
 		},
 	}
 
-	QuestTogether:ApplyQuestTintToNameplate(unitFrame)
+	WithPatchedMethod(QuestTogether, "CreateNameplateHealthOverlayTexture", function(_, parentFrame)
+		AssertTrue(parentFrame ~= nil)
+		local texture = {
+			shown = false,
+			color = nil,
+			points = {},
+			allPointsTarget = nil,
+			SetPoint = function(self, ...)
+				self.points[#self.points + 1] = { ... }
+			end,
+			ClearAllPoints = function(self)
+				self.points = {}
+			end,
+			SetAllPoints = function(self, target)
+				self.allPointsTarget = target
+			end,
+			SetColorTexture = function(self, ...)
+				self.color = { ... }
+			end,
+			SetTexture = function(self, asset)
+				self.textureAsset = asset
+			end,
+			SetAtlas = function(self, asset, useAtlasSize)
+				self.atlasAsset = asset
+				self.useAtlasSize = useAtlasSize
+			end,
+			SetTexCoord = function(self, ...)
+				self.texCoord = { ... }
+			end,
+			SetVertexColor = function(self, ...)
+				self.vertexColor = { ... }
+			end,
+			SetBlendMode = function(self, blendMode)
+				self.blendMode = blendMode
+			end,
+			Show = function(self)
+				self.shown = true
+			end,
+			Hide = function(self)
+				self.shown = false
+			end,
+			SetAlpha = function(self, value)
+				self.alpha = value
+			end,
+		}
+		createdTextures[#createdTextures + 1] = texture
+		return texture
+	end, function()
+		QuestTogether:ApplyQuestTintToNameplate(unitFrame)
+	end)
 
 	AssertEquals(#createdTextures, 3)
 
 	local overlay = QuestTogether.nameplateHealthOverlayByUnitFrame[unitFrame]
 	AssertTrue(overlay ~= nil)
 	AssertEquals(overlay.Background, createdTextures[1])
-	AssertEquals(overlay.Fill, createdTextures[2])
+	AssertEquals(overlay.FillTexture, createdTextures[2])
 	AssertEquals(overlay.Highlight, createdTextures[3])
 
 	AssertTrue(overlay.Background.shown)
-	AssertTrue(overlay.Fill.shown)
+	AssertTrue(overlay.FillTexture.shown)
 	AssertTrue(overlay.Highlight.shown)
 	AssertEquals(overlay.Background.allPointsTarget, unitFrame.healthBar)
-	AssertEquals(overlay.Fill.blendMode, "BLEND")
+	AssertEquals(#overlay.FillTexture.points, 4)
+	AssertEquals(overlay.FillTexture.points[1][2], liveFillTexture)
 	AssertEquals(overlay.Highlight.blendMode, "ADD")
-	AssertEquals(#overlay.Fill.points, 4)
 	AssertEquals(#overlay.Highlight.points, 4)
-	AssertEquals(overlay.Fill.textureAsset, "Interface\\Buttons\\WHITE8X8")
 	AssertEquals(overlay.Background.alpha, 0.8)
-	AssertEquals(overlay.Fill.alpha, 0.8)
+	AssertEquals(overlay.FillTexture.alpha, 0.8)
 	AssertEquals(overlay.Highlight.alpha, 0.8)
-	AssertTrue(overlay.Background.color ~= nil)
+	AssertEquals(overlay.Background.atlasAsset, "UI-HUD-CoolDownManager-Bar")
+	AssertEquals(overlay.Background.useAtlasSize, true)
+	AssertEquals(overlay.FillTexture.atlasAsset, "UI-HUD-CoolDownManager-Bar")
+	AssertEquals(overlay.FillTexture.useAtlasSize, true)
+	AssertTrue(overlay.Background.vertexColor ~= nil)
+	AssertTrue(overlay.FillTexture.vertexColor ~= nil)
 	AssertTrue(overlay.Highlight.color ~= nil)
-	AssertEquals(overlay.Background.color[4], 0.18)
-	if overlay.Fill.gradientOrientation then
-		AssertEquals(overlay.Fill.gradientOrientation, "HORIZONTAL")
-	else
-		AssertTrue(overlay.Fill.color ~= nil)
-		AssertEquals(overlay.Fill.color[4], 1)
-	end
+	AssertEquals(overlay.Background.vertexColor[4], 0.16)
 	AssertEquals(overlay.Highlight.color[4], 0.14)
 
 	QuestTogether:RestoreNameplateHealthColor(unitFrame)
@@ -1542,8 +1601,43 @@ QuestTogether:RegisterTest("nameplate health tint helpers use overlays without t
 	AssertEquals(setColorCalls, 0)
 	AssertEquals(QuestTogether.nameplateHealthOverlayByUnitFrame[unitFrame], overlay)
 	AssertFalse(overlay.Background.shown)
-	AssertFalse(overlay.Fill.shown)
+	AssertFalse(overlay.FillTexture.shown)
 	AssertFalse(overlay.Highlight.shown)
+end)
+
+QuestTogether:RegisterTest("nameplate health tint hides overlay when live fill texture is unavailable", function()
+	local unitFrame = {
+		unit = "nameplate1",
+		healthBar = {
+			GetStatusBarTexture = function()
+				return nil
+			end,
+			CreateTexture = function()
+				return {
+					SetAllPoints = function() end,
+					SetTexture = function() end,
+					SetAtlas = function() end,
+					SetTexCoord = function() end,
+					SetVertexColor = function() end,
+					SetBlendMode = function() end,
+					Show = function() end,
+					Hide = function() end,
+					SetAlpha = function() end,
+					SetPoint = function() end,
+					ClearAllPoints = function() end,
+				}
+			end,
+		},
+	}
+
+	local restoredUnitFrame = nil
+	WithPatchedMethod(QuestTogether, "RestoreNameplateHealthColor", function(_, candidateFrame)
+		restoredUnitFrame = candidateFrame
+	end, function()
+		QuestTogether:ApplyQuestTintToNameplate(unitFrame)
+	end)
+
+	AssertEquals(restoredUnitFrame, unitFrame)
 end)
 
 QuestTogether:RegisterTest("separate chat window inherits main chat font size when enabled", function()

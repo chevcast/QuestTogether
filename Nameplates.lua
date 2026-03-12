@@ -33,6 +33,8 @@ QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR = {
 	g = 0.45,
 	b = 0.05,
 }
+QuestTogether.NAMEPLATE_HEALTH_FILL_ATLAS = "UI-HUD-CoolDownManager-Bar"
+QuestTogether.NAMEPLATE_HEALTH_BACKGROUND_ATLAS = "UI-HUD-CoolDownManager-Bar-BG"
 
 QuestTogether.knownNameplateAddons = QuestTogether.knownNameplateAddons or {
 	"Plater",
@@ -999,6 +1001,25 @@ function QuestTogether:GetNameplateQuestHealthColor()
 	}
 end
 
+function QuestTogether:CreateNameplateHealthOverlayTexture(parentFrame, drawLayer, subLevel)
+	if not parentFrame or not parentFrame.CreateTexture then
+		return nil
+	end
+
+	local texture = parentFrame:CreateTexture(nil, drawLayer or "ARTWORK", nil, subLevel or 0)
+	if not texture then
+		return nil
+	end
+
+	if texture.SetAtlas then
+		texture:SetAtlas(self.NAMEPLATE_HEALTH_FILL_ATLAS, true)
+	else
+		texture:SetTexture("Interface\\Buttons\\WHITE8X8")
+	end
+
+	return texture
+end
+
 local function GetBooleanFieldIfPresent(tableValue, key)
 	if not tableValue then
 		return nil
@@ -1467,31 +1488,34 @@ local function EnsureQuestHealthOverlay(unitFrame)
 	end
 
 	local healthBar = unitFrame.healthBar
-	local background = healthBar:CreateTexture(nil, "BACKGROUND", nil, 1)
-	local fill = healthBar:CreateTexture(nil, "ARTWORK", nil, 1)
-	local highlight = healthBar:CreateTexture(nil, "OVERLAY", nil, 1)
-	if not background or not fill or not highlight then
+	local background = QuestTogether:CreateNameplateHealthOverlayTexture(healthBar, "ARTWORK", 0)
+	local fillTexture = QuestTogether:CreateNameplateHealthOverlayTexture(healthBar, "ARTWORK", 1)
+	local highlight = healthBar:CreateTexture(nil, "ARTWORK", nil, 2)
+	if not background or not fillTexture or not highlight then
 		return nil
 	end
 
 	local overlay = {
 		Background = background,
-		Fill = fill,
+		FillTexture = fillTexture,
 		Highlight = highlight,
 	}
 
 	background:SetAllPoints(healthBar)
-	background:Hide()
-
-	if fill.SetBlendMode then
-		fill:SetBlendMode("BLEND")
+	if background.Hide then
+		background:Hide()
 	end
-	fill:Hide()
+
+	if fillTexture.Hide then
+		fillTexture:Hide()
+	end
 
 	if highlight.SetBlendMode then
 		highlight:SetBlendMode("ADD")
 	end
-	highlight:Hide()
+	if highlight.Hide then
+		highlight:Hide()
+	end
 
 	QuestTogether.nameplateHealthOverlayByUnitFrame[unitFrame] = overlay
 	return overlay
@@ -1509,34 +1533,18 @@ local function AnchorQuestHealthFillTexture(texture, anchorTarget)
 	texture:SetPoint("BOTTOMRIGHT", anchorTarget, "BOTTOMRIGHT", 0, 0)
 end
 
-local function ApplyQuestHealthFillGradient(texture, red, green, blue)
-	if not texture then
-		return
+local function GetQuestHealthOverlayAnchorTarget(unitFrame)
+	if not unitFrame or not unitFrame.healthBar then
+		return false
 	end
 
-	if texture.SetTexture then
-		texture:SetTexture("Interface\\Buttons\\WHITE8X8")
+	local healthBar = unitFrame.healthBar
+	local liveFillTexture = healthBar.GetStatusBarTexture and healthBar:GetStatusBarTexture() or nil
+	if not liveFillTexture then
+		return nil
 	end
 
-	local startRed = red * 0.58
-	local startGreen = green * 0.58
-	local startBlue = blue * 0.58
-	local endRed = math.min(1, red * 1.02)
-	local endGreen = math.min(1, green * 1.02)
-	local endBlue = math.min(1, blue * 1.02)
-
-	if texture.SetGradient and CreateColor then
-		texture:SetGradient(
-			"HORIZONTAL",
-			CreateColor(startRed, startGreen, startBlue, 1),
-			CreateColor(endRed, endGreen, endBlue, 1)
-		)
-		return
-	end
-
-	if texture.SetColorTexture then
-		texture:SetColorTexture(red, green, blue, 1)
-	end
+	return liveFillTexture
 end
 
 ApplyQuestIconVisual = function(texture)
@@ -1988,20 +1996,26 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 	end
 
 	local healthBar = unitFrame.healthBar
-	local barTexture = healthBar and healthBar.GetStatusBarTexture and healthBar:GetStatusBarTexture() or nil
-	local anchorTarget = barTexture or healthBar
 	local color = self:GetNameplateQuestHealthColor()
 	local highlightRed = math.min(1, color.r + 0.18)
 	local highlightGreen = math.min(1, color.g + 0.18)
 	local highlightBlue = math.min(1, color.b + 0.12)
-
-	AnchorQuestHealthFillTexture(overlay.Fill, anchorTarget)
+	local anchorTarget = GetQuestHealthOverlayAnchorTarget(unitFrame)
+	if not anchorTarget then
+		self:RestoreNameplateHealthColor(unitFrame)
+		return
+	end
+	AnchorQuestHealthFillTexture(overlay.FillTexture, anchorTarget)
 	AnchorQuestHealthFillTexture(overlay.Highlight, anchorTarget)
 
-	overlay.Background:SetColorTexture(color.r * 0.55, color.g * 0.55, color.b * 0.55, 0.18)
+	overlay.Background:SetVertexColor(color.r * 0.45, color.g * 0.45, color.b * 0.45, 0.16)
 	overlay.Background:Show()
-	ApplyQuestHealthFillGradient(overlay.Fill, color.r, color.g, color.b)
-	overlay.Fill:Show()
+	if overlay.FillTexture then
+		if overlay.FillTexture.SetVertexColor then
+			overlay.FillTexture:SetVertexColor(color.r, color.g, color.b, 1)
+		end
+		overlay.FillTexture:Show()
+	end
 	overlay.Highlight:SetColorTexture(highlightRed, highlightGreen, highlightBlue, 0.14)
 	overlay.Highlight:Show()
 
@@ -2010,8 +2024,8 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 		if overlay.Background.SetAlpha then
 			overlay.Background:SetAlpha(alpha)
 		end
-		if overlay.Fill.SetAlpha then
-			overlay.Fill:SetAlpha(alpha)
+		if overlay.FillTexture and overlay.FillTexture.SetAlpha then
+			overlay.FillTexture:SetAlpha(alpha)
 		end
 		if overlay.Highlight.SetAlpha then
 			overlay.Highlight:SetAlpha(alpha)
@@ -2026,13 +2040,13 @@ function QuestTogether:RestoreNameplateHealthColor(unitFrame)
 
 	local overlay = self.nameplateHealthOverlayByUnitFrame[unitFrame]
 	if overlay then
-		if overlay.Background then
+		if overlay.Background and overlay.Background.Hide then
 			overlay.Background:Hide()
 		end
-		if overlay.Fill then
-			overlay.Fill:Hide()
+		if overlay.FillTexture and overlay.FillTexture.Hide then
+			overlay.FillTexture:Hide()
 		end
-		if overlay.Highlight then
+		if overlay.Highlight and overlay.Highlight.Hide then
 			overlay.Highlight:Hide()
 		end
 	end
@@ -2044,7 +2058,7 @@ function QuestTogether:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObj
 	end
 
 	local unitFrame = namePlateFrameBase.UnitFrame
-	local shouldTint = self.isEnabled and self:GetOption("nameplateQuestHealthColorEnabled") and isQuestObjective
+	local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame)
 	if shouldTint then
 		self:ApplyQuestTintToNameplate(unitFrame)
 	else
@@ -2079,10 +2093,7 @@ function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken)
 			self.nameplateQuestStateByUnitToken[unitToken] = isQuestObjective and true or false
 		end
 
-		local shouldTint = self.isEnabled
-			and not self:IsNameplateAugmentationBlockedInCurrentContext()
-			and self:GetOption("nameplateQuestHealthColorEnabled")
-			and isQuestObjective
+		local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame)
 		if shouldTint then
 			self:ApplyQuestTintToNameplate(unitFrame)
 		else
@@ -2421,6 +2432,11 @@ function QuestTogether:EnableNameplateAugmentation()
 					self:Debugf("nameplate", "Refreshing nameplate augmentation after CVar change=%s", tostring(cvarName))
 					self:ScheduleFullNameplateRefresh(0.05)
 				end
+			elseif eventName == "UNIT_HEALTH" or eventName == "UNIT_MAXHEALTH" or eventName == "UNIT_CONNECTION" then
+				local unitToken = ...
+				if self:IsNameplateUnitToken(unitToken) then
+					self:ScheduleNameplateHealthTintRefresh(unitToken)
+				end
 			elseif eventName == "UNIT_QUEST_LOG_CHANGED" then
 				local unitToken = ...
 				if unitToken == "player" then
@@ -2459,6 +2475,9 @@ function QuestTogether:EnableNameplateAugmentation()
 	RegisterNameplateEvent(self, "QUEST_FINISHED")
 	RegisterNameplateEvent(self, "QUEST_GREETING")
 	RegisterNameplateEvent(self, "UNIT_QUEST_LOG_CHANGED")
+	RegisterNameplateEvent(self, "UNIT_HEALTH")
+	RegisterNameplateEvent(self, "UNIT_MAXHEALTH")
+	RegisterNameplateEvent(self, "UNIT_CONNECTION")
 	RegisterNameplateEvent(self, "PLAYER_ENTERING_WORLD")
 	RegisterNameplateEvent(self, "DISPLAY_SIZE_CHANGED")
 	RegisterNameplateEvent(self, "CVAR_UPDATE")

@@ -520,6 +520,12 @@ QuestTogether.API = QuestTogether.API or {
 	UnitName = function(unitToken)
 		return UnitName(unitToken)
 	end,
+	UnitHealth = function(unitToken)
+		return UnitHealth(unitToken)
+	end,
+	UnitHealthMax = function(unitToken)
+		return UnitHealthMax(unitToken)
+	end,
 	UnitIsDeadOrGhost = function(unitToken)
 		if type(UnitIsDeadOrGhost) == "function" then
 			return UnitIsDeadOrGhost(unitToken)
