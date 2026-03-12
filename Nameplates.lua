@@ -77,6 +77,7 @@ QuestTogether.nameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFr
 QuestTogether.nameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken or {}
 QuestTogether.nameplateHealthTintRefreshPendingByUnitToken =
 	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken or {}
+QuestTogether.nameplateHealthTintRetryCountByUnitToken = QuestTogether.nameplateHealthTintRetryCountByUnitToken or {}
 QuestTogether.nameplateFullRefreshGeneration = QuestTogether.nameplateFullRefreshGeneration or 0
 
 local function GetAnnouncementBubbleLifetimeSeconds()
@@ -1572,8 +1573,15 @@ local function GetQuestHealthOverlayAnchorTarget(unitFrame)
 	end
 
 	local healthBar = unitFrame.healthBar
+	if healthBar.IsShown and not healthBar:IsShown() then
+		return nil
+	end
+
 	local liveFillTexture = healthBar.GetStatusBarTexture and healthBar:GetStatusBarTexture() or nil
 	if not liveFillTexture then
+		return nil
+	end
+	if liveFillTexture.IsShown and not liveFillTexture:IsShown() then
 		return nil
 	end
 
@@ -2020,12 +2028,12 @@ end
 
 function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 	if not unitFrame then
-		return
+		return false
 	end
 
 	local overlay = EnsureQuestHealthOverlay(unitFrame)
 	if not overlay then
-		return
+		return false
 	end
 
 	local healthBar = unitFrame.healthBar
@@ -2036,7 +2044,7 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 	local anchorTarget = GetQuestHealthOverlayAnchorTarget(unitFrame)
 	if not anchorTarget then
 		self:RestoreNameplateHealthColor(unitFrame)
-		return
+		return false
 	end
 	AnchorQuestHealthFillTexture(overlay.FillTexture, anchorTarget)
 	AnchorQuestHealthFillTexture(overlay.Highlight, anchorTarget)
@@ -2059,6 +2067,13 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 			overlay.Highlight:SetAlpha(alpha)
 		end
 	end
+
+	local unitToken = unitFrame.unit or unitFrame.displayedUnit
+	if type(unitToken) == "string" and unitToken ~= "" then
+		self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
+	end
+
+	return true
 end
 
 function QuestTogether:RestoreNameplateHealthColor(unitFrame)
@@ -2083,15 +2098,26 @@ function QuestTogether:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObj
 	end
 
 	local unitFrame = namePlateFrameBase.UnitFrame
+	local unitToken = unitFrame.unit or unitFrame.displayedUnit
 	local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame, isQuestObjective)
 	if shouldTint then
-		self:ApplyQuestTintToNameplate(unitFrame)
+		local applied = self:ApplyQuestTintToNameplate(unitFrame)
+		if not applied and type(unitToken) == "string" and unitToken ~= "" then
+			local retryCount = self.nameplateHealthTintRetryCountByUnitToken[unitToken] or 0
+			if retryCount < 3 then
+				self.nameplateHealthTintRetryCountByUnitToken[unitToken] = retryCount + 1
+				self:ScheduleNameplateHealthTintRefresh(unitToken, 0.05 * (retryCount + 1))
+			end
+		end
 	else
+		if type(unitToken) == "string" and unitToken ~= "" then
+			self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
+		end
 		self:RestoreNameplateHealthColor(unitFrame)
 	end
 end
 
-function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken)
+function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken, delaySeconds)
 	if not self:IsNameplateUnitToken(unitToken) then
 		return
 	end
@@ -2100,7 +2126,7 @@ function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken)
 	end
 
 	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = true
-	self.API.Delay(0, function()
+	self.API.Delay(delaySeconds or 0, function()
 		self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
 		if not self.isEnabled or not C_NamePlate or not C_NamePlate.GetNamePlateForUnit then
 			return
@@ -2165,6 +2191,9 @@ function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 		self.nameplateQuestStateByUnitToken[unitToken] = isQuestObjective and true or false
 	end
 	self:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObjective)
+	if isQuestObjective and type(unitToken) == "string" and unitToken ~= "" then
+		self:ScheduleNameplateHealthTintRefresh(unitToken, 0.05)
+	end
 
 	if shouldShow then
 		if icon then
@@ -2357,6 +2386,7 @@ function QuestTogether:OnNameplateAdded(unitToken)
 	end
 
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
+	self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 
 	self:ScheduleNameplateRefresh(unitToken)
 end
@@ -2369,6 +2399,7 @@ function QuestTogether:OnNameplateRemoved(unitToken)
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
 	self.nameplateRefreshPendingByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
+	self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 
 	local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
 	if namePlateFrameBase then
