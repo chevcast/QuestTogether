@@ -34,8 +34,6 @@ QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR = {
 	b = 0.05,
 }
 QuestTogether.NAMEPLATE_HEALTH_FILL_ATLAS = "UI-HUD-CoolDownManager-Bar"
-QuestTogether.NAMEPLATE_HEALTH_BACKGROUND_ATLAS = "UI-HUD-CoolDownManager-Bar-BG"
-
 QuestTogether.knownNameplateAddons = QuestTogether.knownNameplateAddons or {
 	"Plater",
 	"TidyPlates_ThreatPlates",
@@ -1488,23 +1486,16 @@ local function EnsureQuestHealthOverlay(unitFrame)
 	end
 
 	local healthBar = unitFrame.healthBar
-	local background = QuestTogether:CreateNameplateHealthOverlayTexture(healthBar, "ARTWORK", 0)
-	local fillTexture = QuestTogether:CreateNameplateHealthOverlayTexture(healthBar, "ARTWORK", 1)
-	local highlight = healthBar:CreateTexture(nil, "ARTWORK", nil, 2)
-	if not background or not fillTexture or not highlight then
+	local fillTexture = QuestTogether:CreateNameplateHealthOverlayTexture(healthBar, "ARTWORK", 0)
+	local highlight = healthBar:CreateTexture(nil, "ARTWORK", nil, 1)
+	if not fillTexture or not highlight then
 		return nil
 	end
 
 	local overlay = {
-		Background = background,
 		FillTexture = fillTexture,
 		Highlight = highlight,
 	}
-
-	background:SetAllPoints(healthBar)
-	if background.Hide then
-		background:Hide()
-	end
 
 	if fillTexture.Hide then
 		fillTexture:Hide()
@@ -2008,8 +1999,6 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 	AnchorQuestHealthFillTexture(overlay.FillTexture, anchorTarget)
 	AnchorQuestHealthFillTexture(overlay.Highlight, anchorTarget)
 
-	overlay.Background:SetVertexColor(color.r * 0.45, color.g * 0.45, color.b * 0.45, 0.16)
-	overlay.Background:Show()
 	if overlay.FillTexture then
 		if overlay.FillTexture.SetVertexColor then
 			overlay.FillTexture:SetVertexColor(color.r, color.g, color.b, 1)
@@ -2021,9 +2010,6 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 
 	if healthBar and healthBar.GetAlpha then
 		local alpha = healthBar:GetAlpha() or 1
-		if overlay.Background.SetAlpha then
-			overlay.Background:SetAlpha(alpha)
-		end
 		if overlay.FillTexture and overlay.FillTexture.SetAlpha then
 			overlay.FillTexture:SetAlpha(alpha)
 		end
@@ -2040,9 +2026,6 @@ function QuestTogether:RestoreNameplateHealthColor(unitFrame)
 
 	local overlay = self.nameplateHealthOverlayByUnitFrame[unitFrame]
 	if overlay then
-		if overlay.Background and overlay.Background.Hide then
-			overlay.Background:Hide()
-		end
 		if overlay.FillTexture and overlay.FillTexture.Hide then
 			overlay.FillTexture:Hide()
 		end
