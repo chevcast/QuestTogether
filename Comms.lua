@@ -645,6 +645,14 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId, ext
 	local senderGUID = self.API.UnitGUID and self.API.UnitGUID("player") or ""
 	local sanitizedText = self:SanitizeAnnouncementText(text)
 	local iconAsset, iconKind = self:GetAnnouncementIconInfo(eventType, questId)
+	if type(extraData) == "table" then
+		local overrideIconAsset = tostring(extraData.iconAsset or "")
+		local overrideIconKind = tostring(extraData.iconKind or "")
+		if overrideIconAsset ~= "" then
+			iconAsset = overrideIconAsset
+			iconKind = overrideIconKind ~= "" and overrideIconKind or iconKind
+		end
+	end
 	local locationInfo = self.GetPlayerAnnouncementLocationInfo and self:GetPlayerAnnouncementLocationInfo() or nil
 	local numericCoordX = locationInfo and self.SafeToNumber and self:SafeToNumber(locationInfo.coordX) or nil
 	local numericCoordY = locationInfo and self.SafeToNumber and self:SafeToNumber(locationInfo.coordY) or nil

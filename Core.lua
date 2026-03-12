@@ -40,6 +40,7 @@ QuestTogether.pendingQuestCompareRequests = QuestTogether.pendingQuestCompareReq
 -- Work queues / state tables used by event handlers.
 QuestTogether.onQuestLogUpdate = QuestTogether.onQuestLogUpdate or {}
 QuestTogether.questsCompleted = QuestTogether.questsCompleted or {}
+QuestTogether.pendingQuestRemovals = QuestTogether.pendingQuestRemovals or {}
 QuestTogether.worldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID or {}
 QuestTogether.bonusObjectiveAreaStateByQuestID = QuestTogether.bonusObjectiveAreaStateByQuestID or {}
 
@@ -1671,6 +1672,37 @@ function QuestTogether:GetQuestStatusAnnouncementEventType(questId)
 	return "QUEST_PROGRESS"
 end
 
+function QuestTogether:GetTrackedQuestAnnouncementIcon(questData)
+	if type(questData) ~= "table" then
+		return nil, nil
+	end
+
+	local iconAsset = tostring(questData.iconAsset or "")
+	if iconAsset == "" then
+		return nil, nil
+	end
+
+	local iconKind = tostring(questData.iconKind or "")
+	if iconKind == "" then
+		iconKind = nil
+	end
+
+	return iconAsset, iconKind
+end
+
+function QuestTogether:RefreshTrackedQuestAnnouncementIcon(questId, questData, eventType)
+	local numericQuestId = tonumber(questId)
+	if not numericQuestId or type(questData) ~= "table" then
+		return nil, nil
+	end
+
+	local resolvedEventType = eventType or self:GetQuestStatusAnnouncementEventType(numericQuestId)
+	local iconAsset, iconKind = self:GetAnnouncementIconInfo(resolvedEventType, numericQuestId)
+	questData.iconAsset = iconAsset or nil
+	questData.iconKind = iconKind or nil
+	return iconAsset, iconKind
+end
+
 function QuestTogether:PrintQuestStatus(questId, fallbackTitle)
 	local message = self:BuildQuestStatusMessage(questId, fallbackTitle)
 	local eventType = self:GetQuestStatusAnnouncementEventType(questId)
@@ -2874,6 +2906,7 @@ function QuestTogether:WatchQuest(questId, questInfo)
 
 	tracker[questId] = {
 		title = questTitle,
+		taskAnnouncementType = self:GetTaskAnnouncementType(questId),
 		objectives = {},
 		-- Cached numeric objective values used to gate progress announcements.
 		-- This avoids noisy chat lines caused by text-only objective rewrites.
@@ -2881,6 +2914,7 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		isComplete = C_QuestLog.IsComplete(questId) and true or false,
 		isReadyForTurnIn = C_QuestLog.ReadyForTurnIn and C_QuestLog.ReadyForTurnIn(questId) and true or false,
 	}
+	self:RefreshTrackedQuestAnnouncementIcon(questId, tracker[questId])
 	self:DebugState("quest", "trackedQuest", tracker[questId])
 
 	if not questLogIndex then

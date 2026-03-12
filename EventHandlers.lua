@@ -75,29 +75,36 @@ function QuestTogether:PlayLocalCompletionEmote(emoteToken)
 	return true
 end
 
-function QuestTogether:HandleQuestCompleted(questTitle, questId)
+function QuestTogether:HandleQuestCompleted(questTitle, questId, extraData)
 	self:Debugf("quest", "Quest completed questId=%s title=%s", tostring(questId), tostring(questTitle))
 	local completionEmote = self:PickRandomCompletionEmote()
+	local announcementExtraData = {}
+	if type(extraData) == "table" then
+		for key, value in pairs(extraData) do
+			announcementExtraData[key] = value
+		end
+	end
+	announcementExtraData.emoteToken = completionEmote
 	if questId and self:IsWorldQuest(questId) then
 		self:PublishAnnouncementEvent(
 			"WORLD_QUEST_COMPLETED",
 			"World Quest Completed: " .. tostring(questTitle),
 			questId,
-			{ emoteToken = completionEmote }
+			announcementExtraData
 		)
 	elseif questId and self:IsBonusObjective(questId) then
 		self:PublishAnnouncementEvent(
 			"BONUS_OBJECTIVE_COMPLETED",
 			"Bonus Objective Completed: " .. tostring(questTitle),
 			questId,
-			{ emoteToken = completionEmote }
+			announcementExtraData
 		)
 	else
 		self:PublishAnnouncementEvent(
 			"QUEST_COMPLETED",
 			"Quest Completed: " .. tostring(questTitle),
 			questId,
-			{ emoteToken = completionEmote }
+			announcementExtraData
 		)
 	end
 
@@ -121,6 +128,83 @@ function QuestTogether:GetTaskAnnouncementType(questId)
 		return "bonus"
 	end
 	return nil
+end
+
+function QuestTogether:BuildTrackedQuestRemovalData(questId)
+	local tracker = self:GetPlayerTracker()
+	local trackedQuest = tracker[questId]
+	if not trackedQuest then
+		return nil
+	end
+
+	local iconAsset, iconKind = self:GetTrackedQuestAnnouncementIcon(trackedQuest)
+	return {
+		questId = questId,
+		title = trackedQuest.title or ("Quest " .. tostring(questId)),
+		taskAnnouncementType = trackedQuest.taskAnnouncementType or self:GetTaskAnnouncementType(questId),
+		iconAsset = iconAsset,
+		iconKind = iconKind,
+	}
+end
+
+function QuestTogether:BuildTrackedQuestCompletionData(questId)
+	local completionData = self:BuildTrackedQuestRemovalData(questId) or {
+		questId = questId,
+		title = self:GetQuestTitle(questId),
+		taskAnnouncementType = self:GetTaskAnnouncementType(questId),
+	}
+
+	local iconAsset, iconKind = self:GetAnnouncementIconInfo("QUEST_READY_TO_TURN_IN", questId)
+	if type(iconAsset) == "string" and iconAsset ~= "" then
+		completionData.iconAsset = iconAsset
+		completionData.iconKind = iconKind
+	end
+
+	return completionData
+end
+
+function QuestTogether:ClearTrackedQuestState(questId)
+	local tracker = self:GetPlayerTracker()
+	self.worldQuestAreaStateByQuestID[questId] = nil
+	self.bonusObjectiveAreaStateByQuestID[questId] = nil
+	tracker[questId] = nil
+	self.pendingQuestRemovals[questId] = nil
+	self.questsCompleted[questId] = nil
+	self:RefreshTaskAreaStates(true)
+end
+
+function QuestTogether:ResolvePendingQuestRemoval(questId)
+	local removalData = self.pendingQuestRemovals[questId]
+	if not removalData then
+		return false
+	end
+
+	local completionData = self.questsCompleted[questId]
+	local completed = completionData ~= nil
+	local questTitle = removalData.title or (completionData and completionData.title) or ("Quest " .. tostring(questId))
+	local iconAsset = (completionData and completionData.iconAsset) or removalData.iconAsset
+	local iconKind = (completionData and completionData.iconKind) or removalData.iconKind
+
+	self:Debugf(
+		"quest",
+		"Resolving removal questId=%s title=%s taskType=%s completed=%s",
+		tostring(questId),
+		tostring(questTitle),
+		tostring(removalData.taskAnnouncementType),
+		tostring(completed)
+	)
+
+	if completed then
+		self:HandleQuestCompleted(questTitle, questId, {
+			iconAsset = iconAsset,
+			iconKind = iconKind,
+		})
+	elseif not removalData.taskAnnouncementType then
+		self:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: " .. tostring(questTitle), questId)
+	end
+
+	self:ClearTrackedQuestState(questId)
+	return true
 end
 
 function QuestTogether:HandleGroupRosterChanged(reason)
@@ -227,7 +311,7 @@ function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
 
 	for questId, previousTitle in pairs(previousState) do
 		if not currentState[questId] then
-			local wasCompleted = self.questsCompleted[questId] == true
+			local wasCompleted = self.questsCompleted[questId] ~= nil
 			if shouldAnnounce and not wasCompleted then
 				local questTitle = previousTitle or self:GetQuestTitle(questId)
 				self:Debugf(
@@ -304,46 +388,25 @@ end
 
 function QuestTogether:QUEST_TURNED_IN(_, questId)
 	self:Debugf("events", "QUEST_TURNED_IN questId=%s", tostring(questId))
-	self.questsCompleted[questId] = true
+	local completionData = self:BuildTrackedQuestCompletionData(questId)
+	self.questsCompleted[questId] = completionData
+	if self.pendingQuestRemovals[questId] then
+		self:ResolvePendingQuestRemoval(questId)
+	end
 end
 
 function QuestTogether:QUEST_REMOVED(_, questId)
 	self:Debugf("events", "QUEST_REMOVED questId=%s", tostring(questId))
+	local removalData = self:BuildTrackedQuestRemovalData(questId)
+	if not removalData then
+		return
+	end
 
-	self:QueueQuestLogTask(function()
-		self.API.Delay(0.5, function()
-			local tracker = self:GetPlayerTracker()
-			local trackedQuest = tracker[questId]
-			if not trackedQuest then
-				return
-			end
-
-			local questTitle = trackedQuest.title or ("Quest " .. tostring(questId))
-			local taskAnnouncementType = self:GetTaskAnnouncementType(questId)
-			local questWasCompleted = self.questsCompleted[questId] == true
-			self:Debugf(
-				"quest",
-				"Processing removal questId=%s title=%s taskType=%s completed=%s",
-				tostring(questId),
-				tostring(questTitle),
-				tostring(taskAnnouncementType),
-				tostring(questWasCompleted)
-			)
-
-			if questWasCompleted then
-				self:HandleQuestCompleted(questTitle, questId)
-			elseif not taskAnnouncementType then
-				self:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: " .. tostring(questTitle), questId)
-			end
-
-			self.worldQuestAreaStateByQuestID[questId] = nil
-			self.bonusObjectiveAreaStateByQuestID[questId] = nil
-			tracker[questId] = nil
-			self:RefreshTaskAreaStates(true)
-			if questWasCompleted then
-				self.questsCompleted[questId] = nil
-			end
-		end)
+	self.pendingQuestRemovals[questId] = removalData
+	self.API.Delay(0, function()
+		if QuestTogether.pendingQuestRemovals and QuestTogether.pendingQuestRemovals[questId] then
+			QuestTogether:ResolvePendingQuestRemoval(questId)
+		end
 	end)
 end
 
@@ -440,6 +503,7 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 				local completionChanged = questData.isComplete ~= currentIsComplete
 				if completionChanged then
 					questData.isComplete = currentIsComplete
+					self:RefreshTrackedQuestAnnouncementIcon(questId, questData)
 					self:Debugf(
 						"quest",
 						"Completion state changed questId=%s isComplete=%s",
@@ -453,6 +517,7 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 				local readyForTurnInChanged = questData.isReadyForTurnIn ~= currentReadyForTurnIn
 				if readyForTurnInChanged then
 					questData.isReadyForTurnIn = currentReadyForTurnIn
+					self:RefreshTrackedQuestAnnouncementIcon(questId, questData)
 					self:Debugf(
 						"quest",
 						"Ready for turn-in state changed questId=%s ready=%s",

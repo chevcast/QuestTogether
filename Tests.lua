@@ -92,6 +92,7 @@ local function WithIsolatedState(testFn)
 	local originalAnnouncementChannelLocalID = QuestTogether.announcementChannelLocalID
 	local originalPendingPingRequests = QuestTogether.pendingPingRequests
 	local originalPendingQuestCompareRequests = QuestTogether.pendingQuestCompareRequests
+	local originalPendingQuestRemovals = QuestTogether.pendingQuestRemovals
 	local originalIsLoggingOut = QuestTogether.isLoggingOut
 	local originalQuestLogChatFrameID = QuestTogether.db.global.questLogChatFrameID
 
@@ -123,6 +124,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.announcementChannelLocalID = nil
 	QuestTogether.pendingPingRequests = {}
 	QuestTogether.pendingQuestCompareRequests = {}
+	QuestTogether.pendingQuestRemovals = {}
 	QuestTogether.isLoggingOut = false
 
 	local ok, err = pcall(testFn)
@@ -163,6 +165,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.announcementChannelLocalID = originalAnnouncementChannelLocalID
 	QuestTogether.pendingPingRequests = originalPendingPingRequests
 	QuestTogether.pendingQuestCompareRequests = originalPendingQuestCompareRequests
+	QuestTogether.pendingQuestRemovals = originalPendingQuestRemovals
 	QuestTogether.isLoggingOut = originalIsLoggingOut
 
 	if originalIsEnabled then
@@ -279,6 +282,208 @@ QuestTogether:RegisterTest("quest completion publishes and plays the same emote 
 	AssertEquals(published.questId, 12345)
 	AssertEquals(published.extraData.emoteToken, "cheer")
 	AssertEquals(played, "cheer")
+end)
+
+QuestTogether:RegisterTest("quest completion preserves cached quest icon metadata", function()
+	local published = nil
+
+	WithPatchedMethod(QuestTogether, "PickRandomCompletionEmote", function()
+		return "cheer"
+	end, function()
+		WithPatchedMethod(QuestTogether, "PublishAnnouncementEvent", function(_, eventType, text, questId, extraData)
+			published = {
+				eventType = eventType,
+				text = text,
+				questId = questId,
+				extraData = extraData,
+			}
+		end, function()
+			QuestTogether:HandleQuestCompleted("Test Quest", 12345, {
+				iconAsset = "CampaignCompletedQuestIcon",
+				iconKind = "atlas",
+			})
+		end)
+	end)
+
+	AssertEquals(published.eventType, "QUEST_COMPLETED")
+	AssertEquals(published.questId, 12345)
+	AssertEquals(published.extraData.iconAsset, "CampaignCompletedQuestIcon")
+	AssertEquals(published.extraData.iconKind, "atlas")
+	AssertEquals(published.extraData.emoteToken, "cheer")
+end)
+
+QuestTogether:RegisterTest("quest turn in followed by removal announces completion once", function()
+	local delayed = {}
+	local completed = nil
+	local removed = nil
+	local refreshCalls = 0
+
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(_, callback)
+			delayed[#delayed + 1] = callback
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetPlayerName", function()
+		return "Tester"
+	end, function()
+		local tracker = QuestTogether:GetPlayerTracker()
+		tracker[12345] = {
+			title = "Test Quest",
+			iconAsset = "CampaignActiveQuestIcon",
+			iconKind = "atlas",
+		}
+
+		WithPatchedMethod(QuestTogether, "HandleQuestCompleted", function(_, questTitle, questId, extraData)
+			completed = {
+				questTitle = questTitle,
+				questId = questId,
+				extraData = extraData,
+			}
+		end, function()
+			WithPatchedMethod(QuestTogether, "PublishAnnouncementEvent", function(_, eventType, text, questId)
+				removed = {
+					eventType = eventType,
+					text = text,
+					questId = questId,
+				}
+			end, function()
+				WithPatchedMethod(QuestTogether, "RefreshTaskAreaStates", function()
+					refreshCalls = refreshCalls + 1
+				end, function()
+					WithPatchedMethod(QuestTogether, "GetAnnouncementIconInfo", function(_, eventType, questId)
+						AssertEquals(eventType, "QUEST_READY_TO_TURN_IN")
+						AssertEquals(questId, 12345)
+						return "CampaignTurnInQuestIcon", "atlas"
+					end, function()
+						QuestTogether:QUEST_TURNED_IN(nil, 12345)
+						QuestTogether:QUEST_REMOVED(nil, 12345)
+						AssertEquals(#delayed, 1)
+						delayed[1]()
+					end)
+				end)
+			end)
+		end)
+
+		AssertTrue(completed ~= nil)
+		AssertEquals(completed.questTitle, "Test Quest")
+		AssertEquals(completed.questId, 12345)
+		AssertEquals(completed.extraData.iconAsset, "CampaignTurnInQuestIcon")
+		AssertEquals(completed.extraData.iconKind, "atlas")
+		AssertEquals(removed, nil)
+		AssertEquals(tracker[12345], nil)
+		AssertEquals(QuestTogether.pendingQuestRemovals[12345], nil)
+		AssertEquals(QuestTogether.questsCompleted[12345], nil)
+		AssertEquals(refreshCalls, 1)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest removal before turn in still resolves as completion", function()
+	local delayed = {}
+	local completed = nil
+	local removed = nil
+
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(_, callback)
+			delayed[#delayed + 1] = callback
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetPlayerName", function()
+		return "Tester"
+	end, function()
+		local tracker = QuestTogether:GetPlayerTracker()
+		tracker[12345] = {
+			title = "Test Quest",
+			iconAsset = "CampaignActiveQuestIcon",
+			iconKind = "atlas",
+		}
+
+		WithPatchedMethod(QuestTogether, "HandleQuestCompleted", function(_, questTitle, questId, extraData)
+			completed = {
+				questTitle = questTitle,
+				questId = questId,
+				extraData = extraData,
+			}
+		end, function()
+			WithPatchedMethod(QuestTogether, "PublishAnnouncementEvent", function(_, eventType)
+				removed = eventType
+			end, function()
+				WithPatchedMethod(QuestTogether, "RefreshTaskAreaStates", function() end, function()
+					QuestTogether:QUEST_REMOVED(nil, 12345)
+					AssertEquals(#delayed, 1)
+					AssertTrue(QuestTogether.pendingQuestRemovals[12345] ~= nil)
+					WithPatchedMethod(QuestTogether, "GetAnnouncementIconInfo", function(_, eventType, questId)
+						AssertEquals(eventType, "QUEST_READY_TO_TURN_IN")
+						AssertEquals(questId, 12345)
+						return "CampaignTurnInQuestIcon", "atlas"
+					end, function()
+						QuestTogether:QUEST_TURNED_IN(nil, 12345)
+					end)
+					AssertTrue(completed ~= nil)
+					AssertEquals(completed.questTitle, "Test Quest")
+					AssertEquals(completed.questId, 12345)
+					AssertEquals(completed.extraData.iconAsset, "CampaignTurnInQuestIcon")
+					AssertEquals(completed.extraData.iconKind, "atlas")
+					AssertEquals(QuestTogether.pendingQuestRemovals[12345], nil)
+					delayed[1]()
+				end)
+			end)
+		end)
+
+		AssertEquals(removed, nil)
+		AssertEquals(tracker[12345], nil)
+		AssertEquals(QuestTogether.questsCompleted[12345], nil)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest removal without turn in announces removal", function()
+	local delayed = {}
+	local completed = nil
+	local removed = nil
+
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(_, callback)
+			delayed[#delayed + 1] = callback
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetPlayerName", function()
+		return "Tester"
+	end, function()
+		local tracker = QuestTogether:GetPlayerTracker()
+		tracker[12345] = {
+			title = "Test Quest",
+			iconAsset = "CampaignActiveQuestIcon",
+			iconKind = "atlas",
+		}
+
+		WithPatchedMethod(QuestTogether, "HandleQuestCompleted", function()
+			completed = true
+		end, function()
+			WithPatchedMethod(QuestTogether, "PublishAnnouncementEvent", function(_, eventType, text, questId)
+				removed = {
+					eventType = eventType,
+					text = text,
+					questId = questId,
+				}
+			end, function()
+				WithPatchedMethod(QuestTogether, "RefreshTaskAreaStates", function() end, function()
+					QuestTogether:QUEST_REMOVED(nil, 12345)
+					AssertEquals(#delayed, 1)
+					delayed[1]()
+				end)
+			end)
+		end)
+
+		AssertEquals(completed, nil)
+		AssertTrue(removed ~= nil)
+		AssertEquals(removed.eventType, "QUEST_REMOVED")
+		AssertTrue(string.find(removed.text, "Test Quest", 1, true) ~= nil)
+		AssertEquals(removed.questId, 12345)
+		AssertEquals(tracker[12345], nil)
+		AssertEquals(QuestTogether.pendingQuestRemovals[12345], nil)
+	end)
 end)
 
 QuestTogether:RegisterTest("chat bubble option validation rejects unknown values", function()
@@ -1102,6 +1307,28 @@ QuestTogether:RegisterTest("local announcement event includes resolved icon meta
 		local eventData = QuestTogether:BuildLocalAnnouncementEvent("QUEST_PROGRESS", "1/3 Objectives", 12345)
 		AssertEquals(eventData.questId, "12345")
 		AssertEquals(eventData.iconAsset, "CampaignInProgressQuestIcon")
+		AssertEquals(eventData.iconKind, "atlas")
+	end)
+end)
+
+QuestTogether:RegisterTest("local announcement event prefers provided icon metadata overrides", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		UnitGUID = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Player-1-ABC"
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetAnnouncementIconInfo", function(_, eventType, questId)
+		AssertEquals(eventType, "QUEST_COMPLETED")
+		AssertEquals(questId, 12345)
+		return "QuestNormal", "texture"
+	end, function()
+		local eventData = QuestTogether:BuildLocalAnnouncementEvent("QUEST_COMPLETED", "Quest Completed: Test Quest", 12345, {
+			iconAsset = "CampaignCompletedQuestIcon",
+			iconKind = "atlas",
+		})
+		AssertEquals(eventData.iconAsset, "CampaignCompletedQuestIcon")
 		AssertEquals(eventData.iconKind, "atlas")
 	end)
 end)
