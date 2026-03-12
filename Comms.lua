@@ -193,6 +193,7 @@ function QuestTogether:EncodePingResponsePayload(responseData)
 		self:EscapePayload(responseData.coordY or ""),
 		self:EscapePayload(responseData.warMode or ""),
 		self:EscapePayload(responseData.mapID or ""),
+		self:EscapePayload(responseData.addonVersion or ""),
 	}
 
 	return table.concat(fields, ",")
@@ -221,6 +222,7 @@ function QuestTogether:DecodePingResponsePayload(payload)
 	local coordY = self:UnescapePayload(fields[11] or "")
 	local warMode = self:UnescapePayload(fields[12] or "")
 	local mapID = self:UnescapePayload(fields[13] or "")
+	local addonVersion = self:UnescapePayload(fields[14] or "")
 	if requestId == "" or senderName == "" then
 		return nil
 	end
@@ -239,6 +241,7 @@ function QuestTogether:DecodePingResponsePayload(payload)
 		coordY = coordY,
 		warMode = warMode,
 		mapID = mapID,
+		addonVersion = addonVersion,
 	}
 end
 
@@ -616,6 +619,7 @@ function QuestTogether:GetPlayerPingMetadata()
 		raceName = tostring(raceName or ""),
 		classFile = tostring(classFile or ""),
 		className = tostring(className or ""),
+		addonVersion = tostring(self:GetAddonVersion() or ""),
 		level = level and tostring(level) or "",
 		zoneName = locationInfo and tostring(locationInfo.zoneName or "") or "",
 		coordX = numericCoordX and string.format("%.1f", numericCoordX) or "",

@@ -620,6 +620,15 @@ QuestTogether.API = QuestTogether.API or {
 		end
 		return IsAddOnLoaded(addonName)
 	end,
+	GetAddOnMetadata = function(addonName, fieldName)
+		if C_AddOns and C_AddOns.GetAddOnMetadata then
+			return C_AddOns.GetAddOnMetadata(addonName, fieldName)
+		end
+		if type(GetAddOnMetadata) == "function" then
+			return GetAddOnMetadata(addonName, fieldName)
+		end
+		return nil
+	end,
 	UnitInParty = function(unitToken)
 		return UnitInParty(unitToken)
 	end,
@@ -1210,6 +1219,20 @@ function QuestTogether:GetPlayerClassFile()
 	return classFile or "PRIEST"
 end
 
+function QuestTogether:GetAddonVersion()
+	local metadata = self.API and self.API.GetAddOnMetadata and self.API.GetAddOnMetadata(self.addonName, "Version")
+	if type(metadata) ~= "string" then
+		return ""
+	end
+
+	local version = metadata:gsub("^%s+", ""):gsub("%s+$", "")
+	if version == "" then
+		return ""
+	end
+
+	return version
+end
+
 function QuestTogether:GetShortDisplayName(name)
 	if not name or name == "" then
 		return "Unknown"
@@ -1774,6 +1797,10 @@ function QuestTogether:BuildPingResponseMessage(pongData)
 	end
 	if className ~= "" then
 		parts[#parts + 1] = className
+	end
+	local addonVersion = tostring(pongData.addonVersion or "")
+	if addonVersion ~= "" then
+		parts[#parts + 1] = "QT v" .. addonVersion
 	end
 
 	local locationBits = {}

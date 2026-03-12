@@ -584,6 +584,78 @@ QuestTogether:RegisterTest("open ping waypoint prefers TomTom and falls back to 
 	AssertEquals(calls[3], "track:true")
 end)
 
+QuestTogether:RegisterTest("ping response message includes addon version when available", function()
+	local message = QuestTogether:BuildPingResponseMessage({
+		senderName = "Remote-Realm",
+		classFile = "MAGE",
+		className = "Mage",
+		level = "80",
+		realmName = "Realm",
+		addonVersion = "3.0.0",
+	})
+
+	AssertTrue(string.find(message, "Remote", 1, true) ~= nil)
+	AssertTrue(string.find(message, "QT v3.0.0", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("player ping metadata includes addon version", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		GetAddOnMetadata = function(addonName, fieldName)
+			AssertEquals(addonName, QuestTogether.addonName)
+			AssertEquals(fieldName, "Version")
+			return " 3.0.0 "
+		end,
+		UnitFullName = function()
+			return "Local", "Realm"
+		end,
+		GetRealmName = function()
+			return "Realm"
+		end,
+		UnitClass = function()
+			return "Mage", "MAGE"
+		end,
+		UnitRace = function()
+			return "Human"
+		end,
+		UnitLevel = function()
+			return 80
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetPlayerFullName", function()
+		return "Local-Realm"
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetPlayerAnnouncementLocationInfo", function()
+			return {}
+		end, function()
+			local metadata = QuestTogether:GetPlayerPingMetadata()
+			AssertEquals(metadata.addonVersion, "3.0.0")
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("ping response payload round trip preserves addon version", function()
+	local payload = QuestTogether:EncodePingResponsePayload({
+		requestId = "req-1",
+		senderName = "Remote-Realm",
+		realmName = "Realm",
+		raceName = "Human",
+		classFile = "MAGE",
+		className = "Mage",
+		level = "80",
+		zoneName = "Stormwind",
+		coordX = "12.3",
+		coordY = "45.6",
+		warMode = "0",
+		mapID = "84",
+		addonVersion = "3.0.0",
+	})
+	local decoded = QuestTogether:DecodePingResponsePayload(payload)
+
+	AssertTrue(decoded ~= nil)
+	AssertEquals(decoded.addonVersion, "3.0.0")
+end)
+
 QuestTogether:RegisterTest("announcement decode rejects nonnumeric version without raw tonumber fallback", function()
 	WithPatchedMethod(QuestTogether, "SafeToNumber", function(_, value)
 		AssertEquals(value, "secret")
