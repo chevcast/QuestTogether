@@ -1632,6 +1632,68 @@ QuestTogether:RegisterTest("nameplate health tint hides overlay when live fill t
 	AssertEquals(restoredUnitFrame, unitFrame)
 end)
 
+QuestTogether:RegisterTest("nameplate health tint uses resolved quest state from icon refresh", function()
+	local appliedUnitFrame = nil
+	local namePlateFrameBase = {
+		GetUnit = function()
+			return "nameplate1"
+		end,
+		UnitFrame = {
+			unit = "nameplate1",
+			healthBar = {},
+		},
+	}
+
+	WithPatchedMethod(QuestTogether, "ShouldShowQuestNameplateIcon", function(_, unitToken, unitFrame)
+		AssertEquals(unitToken, "nameplate1")
+		AssertEquals(unitFrame, namePlateFrameBase.UnitFrame)
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsQuestObjectiveNameplate", function(_, unitToken, unitFrame)
+			AssertEquals(unitToken, "nameplate1")
+			AssertEquals(unitFrame, namePlateFrameBase.UnitFrame)
+			return true
+		end, function()
+			WithPatchedMethod(QuestTogether, "ApplyQuestTintToNameplate", function(_, unitFrame)
+				appliedUnitFrame = unitFrame
+			end, function()
+				WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+					return true
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
+						return false
+					end, function()
+						WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
+							return true
+						end, function()
+							WithPatchedMethod(QuestTogether, "IsNameplateUnitConnected", function()
+								return true
+							end, function()
+								WithPatchedMethod(QuestTogether, "IsNameplateUnitDead", function()
+									return false
+								end, function()
+									WithPatchedMethod(QuestTogether, "IsNameplateUnitTapDenied", function()
+										return false
+									end, function()
+										WithPatchedMethod(QuestTogether, "IsQuestObjectiveUnit", function()
+											return false
+										end, function()
+											QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
+										end)
+									end)
+								end)
+							end)
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+
+	AssertEquals(appliedUnitFrame, namePlateFrameBase.UnitFrame)
+	AssertEquals(QuestTogether.nameplateQuestStateByUnitToken["nameplate1"], true)
+end)
+
 QuestTogether:RegisterTest("separate chat window inherits main chat font size when enabled", function()
 	local appliedFontSize = nil
 	local fakeMainFrame = {

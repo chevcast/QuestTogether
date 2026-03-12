@@ -1336,7 +1336,7 @@ function QuestTogether:IsQuestObjectiveNameplate(unitToken, unitFrame)
 end
 
 -- Keep tinting conservative so we do not override important Blizzard states.
-function QuestTogether:ShouldApplyQuestHealthTint(frame)
+function QuestTogether:ShouldApplyQuestHealthTint(frame, isQuestObjective)
 	if not self.isEnabled then
 		return false
 	end
@@ -1383,7 +1383,16 @@ function QuestTogether:ShouldApplyQuestHealthTint(frame)
 		return false
 	end
 
-	return self:IsQuestObjectiveUnit(frame.unit, frame)
+	if isQuestObjective ~= nil then
+		return isQuestObjective == true
+	end
+
+	local cachedQuestObjective = self.nameplateQuestStateByUnitToken[frame.unit]
+	if cachedQuestObjective ~= nil then
+		return cachedQuestObjective == true
+	end
+
+	return self:IsQuestObjectiveNameplate(frame.unit, frame)
 end
 
 local function GetIconBarAnchor(unitFrame)
@@ -2041,7 +2050,7 @@ function QuestTogether:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObj
 	end
 
 	local unitFrame = namePlateFrameBase.UnitFrame
-	local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame)
+	local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame, isQuestObjective)
 	if shouldTint then
 		self:ApplyQuestTintToNameplate(unitFrame)
 	else
@@ -2076,7 +2085,7 @@ function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken)
 			self.nameplateQuestStateByUnitToken[unitToken] = isQuestObjective and true or false
 		end
 
-		local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame)
+		local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame, isQuestObjective)
 		if shouldTint then
 			self:ApplyQuestTintToNameplate(unitFrame)
 		else
