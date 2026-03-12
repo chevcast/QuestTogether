@@ -1125,15 +1125,48 @@ function QuestTogether:SetCachedQuestObjectiveResult(guid, value)
 	}
 end
 
-function QuestTogether:IsQuestObjectiveViaTooltip(unitToken)
+function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
+	local plateFrame = unitFrame and unitFrame.PlateFrame or nil
+	local candidateGuids = {
+		unitFrame and unitFrame.namePlateUnitGUID or nil,
+		unitFrame and unitFrame.qtTooltipScanGuid or nil,
+		plateFrame and plateFrame.namePlateUnitGUID or nil,
+		plateFrame and plateFrame.qtTooltipScanGuid or nil,
+	}
+
+	for index = 1, #candidateGuids do
+		local candidateGuid = candidateGuids[index]
+		if type(candidateGuid) == "string" and candidateGuid ~= "" and not self:IsSecretValue(candidateGuid) then
+			return candidateGuid
+		end
+	end
+
+	local liveGuid = self:GetNameplateUnitGuid(unitToken)
+	if type(liveGuid) == "string" and liveGuid ~= "" then
+		if unitFrame then
+			unitFrame.qtTooltipScanGuid = liveGuid
+		end
+		if plateFrame then
+			plateFrame.qtTooltipScanGuid = liveGuid
+		end
+		return liveGuid
+	end
+
+	return nil
+end
+
+function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 	if not unitToken or not self:DoesNameplateUnitExist(unitToken) then
 		return false
 	end
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
 		return false
 	end
+	if self:IsNameplateUnitPlayer(unitToken) or not self:CanPlayerAttackNameplateUnit(unitToken) then
+		return false
+	end
 
-	local unitGuid = self:GetNameplateUnitGuid(unitToken)
+	local unitGuid = self:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 	if not unitGuid or unitGuid == "" then
 		return false
 	end
@@ -1266,7 +1299,7 @@ function QuestTogether:IsQuestObjectiveUnit(unitToken, unitFrame)
 		end
 	end
 
-	if self:IsQuestObjectiveViaTooltip(unitToken) then
+	if self:IsQuestObjectiveViaTooltip(unitToken, unitFrame) then
 		return true
 	end
 

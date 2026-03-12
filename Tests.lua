@@ -567,6 +567,7 @@ end)
 
 QuestTogether:RegisterTest("quest objective detection falls back to tooltip parsing after API misses", function()
 	local tooltipChecked = false
+	local unitFrame = {}
 
 	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function(_, unitToken)
 		AssertEquals(unitToken, "nameplate1")
@@ -578,15 +579,16 @@ QuestTogether:RegisterTest("quest objective detection falls back to tooltip pars
 			WithPatchedMethod(QuestTogether, "GetPlayerTracker", function()
 				return {}
 			end, function()
-				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function(_, unitToken)
+				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function(_, unitToken, candidateFrame)
 					AssertEquals(unitToken, "nameplate1")
+					AssertEquals(candidateFrame, unitFrame)
 					tooltipChecked = true
 					return true
 				end, function()
 					WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function()
 						return false
 					end, function()
-						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate1", {}))
+						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate1", unitFrame))
 					end)
 				end)
 			end)
@@ -594,6 +596,21 @@ QuestTogether:RegisterTest("quest objective detection falls back to tooltip pars
 	end)
 
 	AssertTrue(tooltipChecked)
+end)
+
+QuestTogether:RegisterTest("tooltip quest detection prefers frame guid over live UnitGUID lookup", function()
+	local unitFrame = {
+		namePlateUnitGUID = "Creature-0-0-0-0-12345-0000000000",
+	}
+
+	WithPatchedMethod(QuestTogether, "GetNameplateUnitGuid", function()
+		error("should not fall back to UnitGUID when frame guid is available")
+	end, function()
+		AssertEquals(
+			QuestTogether:GetNameplateTooltipScanGuid("nameplate1", unitFrame),
+			"Creature-0-0-0-0-12345-0000000000"
+		)
+	end)
 end)
 
 QuestTogether:RegisterTest("personal bubble anchor persists per character and resets to defaults", function()
