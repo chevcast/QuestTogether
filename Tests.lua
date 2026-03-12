@@ -88,7 +88,7 @@ local function WithIsolatedState(testFn)
 	local originalNameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken
 	local originalNameplateHealthTintRefreshPendingByUnitToken =
 		QuestTogether.nameplateHealthTintRefreshPendingByUnitToken
-	local originalPrototypeBubbleScreenHostFrame = QuestTogether.prototypeBubbleScreenHostFrame
+	local originalAnnouncementBubbleScreenHostFrame = QuestTogether.announcementBubbleScreenHostFrame
 	local originalAnnouncementChannelLocalID = QuestTogether.announcementChannelLocalID
 	local originalPendingPingRequests = QuestTogether.pendingPingRequests
 	local originalPendingQuestCompareRequests = QuestTogether.pendingQuestCompareRequests
@@ -119,7 +119,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.nameplateBubbleByUnitFrame = setmetatable({}, { __mode = "k" })
 	QuestTogether.nameplateRefreshPendingByUnitToken = {}
 	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken = {}
-	QuestTogether.prototypeBubbleScreenHostFrame = nil
+	QuestTogether.announcementBubbleScreenHostFrame = nil
 	QuestTogether.announcementChannelLocalID = nil
 	QuestTogether.pendingPingRequests = {}
 	QuestTogether.pendingQuestCompareRequests = {}
@@ -159,7 +159,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.nameplateRefreshPendingByUnitToken = originalNameplateRefreshPendingByUnitToken
 	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken =
 		originalNameplateHealthTintRefreshPendingByUnitToken
-	QuestTogether.prototypeBubbleScreenHostFrame = originalPrototypeBubbleScreenHostFrame
+	QuestTogether.announcementBubbleScreenHostFrame = originalAnnouncementBubbleScreenHostFrame
 	QuestTogether.announcementChannelLocalID = originalAnnouncementChannelLocalID
 	QuestTogether.pendingPingRequests = originalPendingPingRequests
 	QuestTogether.pendingQuestCompareRequests = originalPendingQuestCompareRequests
@@ -389,6 +389,17 @@ QuestTogether:RegisterTest("personal bubble anchor persists per character and re
 	end)
 end)
 
+QuestTogether:RegisterTest("announcement bubbles are blocked in instance contexts", function()
+	WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+		return true
+	end, function()
+		local ok = QuestTogether:ShowAnnouncementBubbleOnNameplate({
+			UnitFrame = {},
+		}, "Test bubble")
+		AssertFalse(ok)
+	end)
+end)
+
 QuestTogether:RegisterTest("console announcement message includes icon and player name", function()
 	local message = QuestTogether:BuildConsoleAnnouncementMessage("MyPlayer-Realm", "hello there", "MAGE")
 	AssertTrue(string.find(message, "|T" .. QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE, 1, true) ~= nil)
@@ -469,6 +480,58 @@ QuestTogether:RegisterTest("chat log quest link handler prints local quest statu
 	AssertTrue(string.find(printed[1] or "", "Ready to Turn In", 1, true) ~= nil)
 	AssertTrue(string.find(printed[1] or "", "Quest Status:", 1, true) ~= nil)
 	AssertTrue(string.find(printed[1] or "", "Shareable: Yes", 1, true) ~= nil)
+end)
+
+QuestTogether:RegisterTest("chat log quest link handler falls back to clicked quest title text", function()
+	local printed = {}
+	QuestTogether.PrintChatLogRaw = function(_, message)
+		printed[#printed + 1] = message
+	end
+
+	QuestTogether.API = CreateApiWithOverrides({
+		IsQuestFlaggedCompleted = function(questId)
+			AssertEquals(questId, 28831)
+			return false
+		end,
+		IsQuestReadyForTurnIn = function(questId)
+			AssertEquals(questId, 28831)
+			return false
+		end,
+		GetQuestLogIndexForQuestID = function(questId)
+			AssertEquals(questId, 28831)
+			return nil
+		end,
+		IsOnQuest = function(questId)
+			AssertEquals(questId, 28831)
+			return false
+		end,
+		IsQuestComplete = function(questId)
+			AssertEquals(questId, 28831)
+			return false
+		end,
+		IsPushableQuest = function(questId)
+			AssertEquals(questId, 28831)
+			return false
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetQuestTitle", function(_, questId)
+		AssertEquals(questId, 28831)
+		return "Quest 28831"
+	end, function()
+		local response = QuestTogether:HandleChatLogQuestLink(
+			nil,
+			"[Damn You, Frostilicus]",
+			{ options = "28831" },
+			{ frame = "ChatFrame1" }
+		)
+		AssertEquals(response, LinkProcessorResponse.Handled)
+	end)
+
+	AssertEquals(#printed, 1)
+	AssertTrue(string.find(printed[1] or "", "Damn You, Frostilicus", 1, true) ~= nil)
+	AssertFalse(string.find(printed[1] or "", "Quest 28831", 1, true) ~= nil)
+	AssertTrue(string.find(printed[1] or "", "Not Started", 1, true) ~= nil)
 end)
 
 QuestTogether:RegisterTest("chat log coord link handler opens ping waypoint", function()
@@ -664,8 +727,16 @@ end)
 
 QuestTogether:RegisterTest("request quest compare sends compare request for remote speaker", function()
 	local sent = {}
+	local startedWith = nil
+	local startedClass = nil
 
 	QuestTogether.isEnabled = true
+	QuestTogether.partyMembers = {
+		["Remote-Realm"] = {
+			fullName = "Remote-Realm",
+			classFile = "DRUID",
+		},
+	}
 	QuestTogether.API = CreateApiWithOverrides({
 		GetChannelName = function(channelName)
 			AssertEquals(channelName, QuestTogether.announcementChannelName)
@@ -686,14 +757,15 @@ QuestTogether:RegisterTest("request quest compare sends compare request for remo
 		end,
 	})
 
-	local startedWith = nil
-	WithPatchedMethod(QuestTogether, "PrintQuestCompareStart", function(_, remoteName)
+	WithPatchedMethod(QuestTogether, "PrintQuestCompareStart", function(_, remoteName, classFile)
 		startedWith = remoteName
+		startedClass = classFile
 	end, function()
 		AssertTrue(QuestTogether:RequestQuestCompare("Remote-Realm"))
 	end)
 
 	AssertEquals(startedWith, "Remote-Realm")
+	AssertEquals(startedClass, "DRUID")
 	AssertEquals(#sent, 1)
 	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
 	AssertEquals(sent[1].channel, "CHANNEL")
@@ -739,11 +811,12 @@ QuestTogether:RegisterTest("quest compare entry prints local status and shareabl
 			questTitle = "Test Quest",
 			isComplete = true,
 			isPushable = true,
-		})
+		}, "WARRIOR")
 	end)
 
 	AssertEquals(#printed, 1)
 	AssertEquals(printed[1].targetName, "Remote-Realm")
+	AssertEquals(printed[1].classFile, "WARRIOR")
 	AssertEquals(printed[1].eventType, "QUEST_COMPLETED")
 	AssertTrue(string.find(printed[1].message, "Test Quest", 1, true) ~= nil)
 	AssertTrue(string.find(printed[1].message, "Them: Complete", 1, true) ~= nil)
@@ -756,6 +829,7 @@ QuestTogether:RegisterTest("quest compare response prints entries and clears pen
 	QuestTogether.pendingQuestCompareRequests = {
 		["qcmp-123"] = {
 			targetName = "Remote-Realm",
+			classFile = nil,
 			count = 0,
 		},
 	}
@@ -789,6 +863,7 @@ QuestTogether:RegisterTest("quest compare response prints entries and clears pen
 		AssertTrue(QuestTogether:HandleQuestCompareEntry({
 			requestId = "qcmp-123",
 			senderName = "Remote-Realm",
+			classFile = "WARRIOR",
 			questId = "12345",
 			questTitle = "Remote Quest",
 			isComplete = false,
@@ -797,15 +872,18 @@ QuestTogether:RegisterTest("quest compare response prints entries and clears pen
 		AssertTrue(QuestTogether:HandleQuestCompareDone({
 			requestId = "qcmp-123",
 			senderName = "Remote-Realm",
+			classFile = "",
 			count = 1,
 		}))
 	end)
 
 	AssertEquals(#printed, 2)
 	AssertEquals(printed[1].targetName, "Remote-Realm")
+	AssertEquals(printed[1].classFile, "WARRIOR")
 	AssertEquals(printed[1].eventType, "QUEST_PROGRESS")
 	AssertTrue(string.find(printed[1].message, "Remote Quest", 1, true) ~= nil)
 	AssertEquals(printed[2].targetName, "Remote-Realm")
+	AssertEquals(printed[2].classFile, "WARRIOR")
 	AssertEquals(printed[2].eventType, "QUEST_COMPLETED")
 	AssertTrue(string.find(printed[2].message, "Finished comparing quests", 1, true) ~= nil)
 	AssertEquals(QuestTogether.pendingQuestCompareRequests["qcmp-123"], nil)
@@ -1283,6 +1361,46 @@ QuestTogether:RegisterTest("publish announcement sends even when local option is
 	AssertEquals(#printed, 0)
 end)
 
+QuestTogether:RegisterTest("publish announcement is suppressed while player is dead", function()
+	local sent = 0
+	local handled = 0
+
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		GetChannelName = function()
+			return 4
+		end,
+		SendAddonMessage = function()
+			sent = sent + 1
+			return 0
+		end,
+		UnitFullName = function()
+			return "MyPlayer", "Realm"
+		end,
+		UnitClass = function()
+			return "Mage", "MAGE"
+		end,
+		UnitGUID = function()
+			return "Player-1-ABC"
+		end,
+		UnitIsDeadOrGhost = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return true
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "HandleAnnouncementEvent", function()
+		handled = handled + 1
+		return true
+	end, function()
+		local success = QuestTogether:PublishAnnouncementEvent("WORLD_QUEST_ENTERED", "World Quest Entered: Test Quest", 12345)
+		AssertFalse(success)
+	end)
+
+	AssertEquals(sent, 0)
+	AssertEquals(handled, 0)
+end)
+
 QuestTogether:RegisterTest("announcement channel chat filter hides QuestTogether channel messages", function()
 	AssertTrue(
 		QuestTogether:AnnouncementChannelChatFilter(
@@ -1554,7 +1672,7 @@ QuestTogether:RegisterTest("remote nearby sender shows bubble and chat log for p
 		AssertEquals(senderName, "Nearby-Realm")
 		return nearbyFrame
 	end, function()
-		WithPatchedMethod(QuestTogether, "ShowPrototypeBubbleOnNameplate", function(_, frame, text)
+		WithPatchedMethod(QuestTogether, "ShowAnnouncementBubbleOnNameplate", function(_, frame, text)
 			AssertTrue(frame == nearbyFrame)
 			bubbleText = text
 			return true
@@ -1807,7 +1925,7 @@ QuestTogether:RegisterTest("dev log all announcements prints remote sender witho
 		printed[#printed + 1] = message
 	end
 
-	WithPatchedMethod(QuestTogether, "ShowPrototypeBubbleOnNameplate", function()
+	WithPatchedMethod(QuestTogether, "ShowAnnouncementBubbleOnNameplate", function()
 		bubbleCalls = bubbleCalls + 1
 		return true
 	end, function()
@@ -1838,7 +1956,7 @@ QuestTogether:RegisterTest("local announcement hides own bubble when configured"
 		printed[#printed + 1] = message
 	end
 
-	WithPatchedMethod(QuestTogether, "ShowPrototypeBubbleOnUnitNameplate", function()
+	WithPatchedMethod(QuestTogether, "ShowAnnouncementBubbleOnUnitNameplate", function()
 		bubbleCalls = bubbleCalls + 1
 		return true
 	end, function()

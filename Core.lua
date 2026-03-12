@@ -519,6 +519,15 @@ QuestTogether.API = QuestTogether.API or {
 	UnitName = function(unitToken)
 		return UnitName(unitToken)
 	end,
+	UnitIsDeadOrGhost = function(unitToken)
+		if type(UnitIsDeadOrGhost) == "function" then
+			return UnitIsDeadOrGhost(unitToken)
+		end
+		if type(UnitIsDead) == "function" then
+			return UnitIsDead(unitToken)
+		end
+		return false
+	end,
 	UnitIsPlayer = function(unitToken)
 		return UnitIsPlayer(unitToken)
 	end,
@@ -1593,13 +1602,29 @@ function QuestTogether:GetQuestShareableStatusLabel(questId)
 	return "No"
 end
 
-function QuestTogether:BuildQuestStatusMessage(questId)
+function QuestTogether:NormalizeQuestLinkTitleText(titleText)
+	local normalizedText = tostring(titleText or "")
+	normalizedText = normalizedText:gsub("^%s+", ""):gsub("%s+$", "")
+	if normalizedText:match("^%[.+%]$") then
+		normalizedText = normalizedText:sub(2, -2)
+	end
+	return normalizedText
+end
+
+function QuestTogether:BuildQuestStatusMessage(questId, fallbackTitle)
 	local numericQuestId = tonumber(questId)
 	if not numericQuestId then
 		return "Quest status unavailable."
 	end
 
 	local questTitle = self:GetQuestTitle(numericQuestId)
+	local normalizedFallbackTitle = self:NormalizeQuestLinkTitleText(fallbackTitle)
+	if
+		normalizedFallbackTitle ~= ""
+		and (questTitle == nil or questTitle == "" or questTitle == ("Quest " .. tostring(numericQuestId)))
+	then
+		questTitle = normalizedFallbackTitle
+	end
 	local statusLabel = self:GetQuestStatusLabel(numericQuestId)
 	local shareableLabel = self:GetQuestShareableStatusLabel(numericQuestId)
 	return "Quest Status: " .. tostring(questTitle) .. " - " .. tostring(statusLabel) .. " | Shareable: " .. tostring(shareableLabel)
@@ -1623,8 +1648,8 @@ function QuestTogether:GetQuestStatusAnnouncementEventType(questId)
 	return "QUEST_PROGRESS"
 end
 
-function QuestTogether:PrintQuestStatus(questId)
-	local message = self:BuildQuestStatusMessage(questId)
+function QuestTogether:PrintQuestStatus(questId, fallbackTitle)
+	local message = self:BuildQuestStatusMessage(questId, fallbackTitle)
 	local eventType = self:GetQuestStatusAnnouncementEventType(questId)
 	self:PrintConsoleAnnouncement(message, nil, nil, eventType)
 end
@@ -1679,7 +1704,7 @@ function QuestTogether:BuildQuestCompareMessage(remoteName, compareEntry)
 		.. tostring(shareableLabel)
 end
 
-function QuestTogether:PrintQuestCompareMessage(remoteName, compareEntry)
+function QuestTogether:PrintQuestCompareMessage(remoteName, compareEntry, classFile)
 	local eventType = compareEntry and compareEntry.isComplete and "QUEST_COMPLETED" or "QUEST_PROGRESS"
 	local locationInfo = {
 		questId = compareEntry and compareEntry.questId or nil,
@@ -1687,7 +1712,7 @@ function QuestTogether:PrintQuestCompareMessage(remoteName, compareEntry)
 	self:PrintConsoleAnnouncement(
 		self:BuildQuestCompareMessage(remoteName, compareEntry),
 		remoteName,
-		nil,
+		classFile,
 		eventType,
 		nil,
 		nil,
@@ -1695,17 +1720,17 @@ function QuestTogether:PrintQuestCompareMessage(remoteName, compareEntry)
 	)
 end
 
-function QuestTogether:PrintQuestCompareStart(remoteName)
-	self:PrintConsoleAnnouncement("Comparing quests...", remoteName, nil, "QUEST_PROGRESS")
+function QuestTogether:PrintQuestCompareStart(remoteName, classFile)
+	self:PrintConsoleAnnouncement("Comparing quests...", remoteName, classFile, "QUEST_PROGRESS")
 end
 
-function QuestTogether:PrintQuestCompareDone(remoteName, count)
+function QuestTogether:PrintQuestCompareDone(remoteName, count, classFile)
 	local suffix = ""
 	local numericCount = self:SafeToNumber(count)
 	if numericCount then
 		suffix = string.format(" (%d quests)", numericCount)
 	end
-	self:PrintConsoleAnnouncement("Finished comparing quests" .. suffix .. ".", remoteName, nil, "QUEST_COMPLETED")
+	self:PrintConsoleAnnouncement("Finished comparing quests" .. suffix .. ".", remoteName, classFile, "QUEST_COMPLETED")
 end
 
 function QuestTogether:BuildConsoleAnnouncementMessage(targetName, message, classFile, eventType, iconAsset, iconKind, locationInfo)
@@ -1853,12 +1878,23 @@ end
 
 function QuestTogether:PrintConsoleAnnouncement(message, targetName, classFile, eventType, iconAsset, iconKind, locationInfo)
 	local speakerName = targetName
+	local isRemoteSpeaker = false
 	if speakerName == nil or speakerName == "" then
 		speakerName = self:GetPlayerName()
 	end
 	local resolvedClassFile = classFile
 	if not resolvedClassFile or resolvedClassFile == "" then
-		resolvedClassFile = self:GetPlayerClassFile()
+		if speakerName ~= nil and speakerName ~= "" and self.NormalizeMemberName then
+			local normalizedSpeaker = self:NormalizeMemberName(speakerName)
+			local normalizedPlayer = self:NormalizeMemberName(self:GetPlayerFullName() or self:GetPlayerName() or "")
+			isRemoteSpeaker = normalizedSpeaker and normalizedPlayer and normalizedSpeaker ~= normalizedPlayer and true or false
+			if isRemoteSpeaker then
+				resolvedClassFile = self.GetGroupedSenderClassFile and self:GetGroupedSenderClassFile(speakerName) or nil
+			end
+		end
+		if (not resolvedClassFile or resolvedClassFile == "") and not isRemoteSpeaker then
+			resolvedClassFile = self:GetPlayerClassFile()
+		end
 	end
 	self:PrintChatLogRaw(
 		self:BuildConsoleAnnouncementMessage(
@@ -2023,7 +2059,7 @@ function QuestTogether:HandleChatLogQuestLink(link, text, linkData, contextData)
 		return LinkProcessorResponse.Handled
 	end
 
-	self:PrintQuestStatus(questId)
+	self:PrintQuestStatus(questId, text)
 	return LinkProcessorResponse.Handled
 end
 
@@ -2340,8 +2376,8 @@ function QuestTogether:SetOption(key, value)
 		or key == "chatBubbleSize"
 		or key == "chatBubbleDuration"
 	then
-		if self.RefreshActivePrototypeBubbles then
-			self:RefreshActivePrototypeBubbles()
+		if self.RefreshActiveAnnouncementBubbles then
+			self:RefreshActiveAnnouncementBubbles()
 		end
 		if self.RefreshPersonalBubbleAnchorVisualState then
 			self:RefreshPersonalBubbleAnchorVisualState()

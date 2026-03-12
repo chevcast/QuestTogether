@@ -284,6 +284,7 @@ function QuestTogether:EncodeQuestCompareEntryPayload(entryData)
 		tostring(QUEST_COMPARE_ENTRY_VERSION),
 		self:EscapePayload(entryData.requestId or ""),
 		self:EscapePayload(entryData.senderName or ""),
+		self:EscapePayload(entryData.classFile or ""),
 		self:EscapePayload(entryData.questId or ""),
 		self:EscapePayload(entryData.questTitle or ""),
 		self:EscapePayload(entryData.isComplete and "1" or "0"),
@@ -306,10 +307,24 @@ function QuestTogether:DecodeQuestCompareEntryPayload(payload)
 
 	local requestId = self:UnescapePayload(fields[2] or "")
 	local senderName = self:UnescapePayload(fields[3] or "")
-	local questId = self:UnescapePayload(fields[4] or "")
-	local questTitle = self:UnescapePayload(fields[5] or "")
-	local isComplete = self:UnescapePayload(fields[6] or "") == "1"
-	local isPushable = self:UnescapePayload(fields[7] or "") == "1"
+	local classFile = ""
+	local questId = ""
+	local questTitle = ""
+	local isComplete = false
+	local isPushable = false
+
+	if fields[8] ~= nil then
+		classFile = self:UnescapePayload(fields[4] or "")
+		questId = self:UnescapePayload(fields[5] or "")
+		questTitle = self:UnescapePayload(fields[6] or "")
+		isComplete = self:UnescapePayload(fields[7] or "") == "1"
+		isPushable = self:UnescapePayload(fields[8] or "") == "1"
+	else
+		questId = self:UnescapePayload(fields[4] or "")
+		questTitle = self:UnescapePayload(fields[5] or "")
+		isComplete = self:UnescapePayload(fields[6] or "") == "1"
+		isPushable = self:UnescapePayload(fields[7] or "") == "1"
+	end
 	if requestId == "" or senderName == "" or questId == "" then
 		return nil
 	end
@@ -318,6 +333,7 @@ function QuestTogether:DecodeQuestCompareEntryPayload(payload)
 		version = version,
 		requestId = requestId,
 		senderName = senderName,
+		classFile = classFile,
 		questId = questId,
 		questTitle = questTitle,
 		isComplete = isComplete,
@@ -330,6 +346,7 @@ function QuestTogether:EncodeQuestCompareDonePayload(doneData)
 		tostring(QUEST_COMPARE_DONE_VERSION),
 		self:EscapePayload(doneData.requestId or ""),
 		self:EscapePayload(doneData.senderName or ""),
+		self:EscapePayload(doneData.classFile or ""),
 		self:EscapePayload(doneData.count or ""),
 	}
 
@@ -349,7 +366,14 @@ function QuestTogether:DecodeQuestCompareDonePayload(payload)
 
 	local requestId = self:UnescapePayload(fields[2] or "")
 	local senderName = self:UnescapePayload(fields[3] or "")
-	local count = self:UnescapePayload(fields[4] or "")
+	local classFile = ""
+	local count = ""
+	if fields[5] ~= nil then
+		classFile = self:UnescapePayload(fields[4] or "")
+		count = self:UnescapePayload(fields[5] or "")
+	else
+		count = self:UnescapePayload(fields[4] or "")
+	end
 	if requestId == "" or senderName == "" then
 		return nil
 	end
@@ -358,6 +382,7 @@ function QuestTogether:DecodeQuestCompareDonePayload(payload)
 		version = version,
 		requestId = requestId,
 		senderName = senderName,
+		classFile = classFile,
 		count = SafeNumber(self, count) or 0,
 	}
 end
@@ -717,6 +742,7 @@ function QuestTogether:SendQuestCompareEntry(requestId, entryData)
 		self:EncodeQuestCompareEntryPayload({
 			requestId = requestId,
 			senderName = self:GetPlayerFullName() or self:GetPlayerName() or "",
+			classFile = self:GetPlayerClassFile() or "",
 			questId = entryData.questId or "",
 			questTitle = entryData.questTitle or "",
 			isComplete = entryData.isComplete and true or false,
@@ -737,6 +763,7 @@ function QuestTogether:SendQuestCompareDone(requestId, count)
 		self:EncodeQuestCompareDonePayload({
 			requestId = requestId,
 			senderName = self:GetPlayerFullName() or self:GetPlayerName() or "",
+			classFile = self:GetPlayerClassFile() or "",
 			count = SafeNumber(self, count) or 0,
 		})
 	)
@@ -783,9 +810,12 @@ function QuestTogether:HandleQuestCompareEntry(entryData)
 		return false
 	end
 
+	if type(entryData.classFile) == "string" and entryData.classFile ~= "" then
+		pending.classFile = entryData.classFile
+	end
 	pending.count = (pending.count or 0) + 1
 	if self.PrintQuestCompareMessage then
-		self:PrintQuestCompareMessage(senderName, entryData)
+		self:PrintQuestCompareMessage(senderName, entryData, pending.classFile)
 	end
 	return true
 end
@@ -806,9 +836,12 @@ function QuestTogether:HandleQuestCompareDone(doneData)
 		return false
 	end
 
+	if type(doneData.classFile) == "string" and doneData.classFile ~= "" then
+		pending.classFile = doneData.classFile
+	end
 	self.pendingQuestCompareRequests[doneData.requestId] = nil
 	if self.PrintQuestCompareDone then
-		self:PrintQuestCompareDone(senderName, doneData.count)
+		self:PrintQuestCompareDone(senderName, doneData.count, pending.classFile)
 	end
 	return true
 end
@@ -820,7 +853,7 @@ function QuestTogether:RequestQuestCompare(speakerName)
 	end
 
 	if self.PrintQuestCompareStart then
-		self:PrintQuestCompareStart(targetName)
+		self:PrintQuestCompareStart(targetName, self:GetGroupedSenderClassFile(targetName))
 	end
 
 	local playerName = self:GetPlayerFullName() or self:GetPlayerName() or ""
@@ -829,11 +862,11 @@ function QuestTogether:RequestQuestCompare(speakerName)
 		local localEntries = self:BuildQuestCompareEntries()
 		for _, entryData in ipairs(localEntries) do
 			if self.PrintQuestCompareMessage then
-				self:PrintQuestCompareMessage(targetName, entryData)
+				self:PrintQuestCompareMessage(targetName, entryData, self:GetPlayerClassFile())
 			end
 		end
 		if self.PrintQuestCompareDone then
-			self:PrintQuestCompareDone(targetName, #localEntries)
+			self:PrintQuestCompareDone(targetName, #localEntries, self:GetPlayerClassFile())
 		end
 		return true
 	end
@@ -846,6 +879,7 @@ function QuestTogether:RequestQuestCompare(speakerName)
 	self.pendingQuestCompareRequests = self.pendingQuestCompareRequests or {}
 	self.pendingQuestCompareRequests[requestId] = {
 		targetName = targetName,
+		classFile = self:GetGroupedSenderClassFile(targetName),
 		count = 0,
 	}
 	self.API.Delay(QUEST_COMPARE_TIMEOUT_SECONDS, function()
@@ -1215,9 +1249,9 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 
 	if self:GetOption("showChatBubbles") then
 		if isLocal then
-			if not self:GetOption("hideMyOwnChatBubbles") and self.ShowPrototypeBubbleOnUnitNameplate then
+			if not self:GetOption("hideMyOwnChatBubbles") and self.ShowAnnouncementBubbleOnUnitNameplate then
 				self:Debug("Showing local personal bubble", "bubble")
-				self:ShowPrototypeBubbleOnUnitNameplate(
+				self:ShowAnnouncementBubbleOnUnitNameplate(
 					"player",
 					eventData.text,
 					eventData.eventType,
@@ -1227,9 +1261,9 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 			else
 				self:Debug("Skipped local personal bubble due to hideMyOwnChatBubbles or unavailable renderer", "bubble")
 			end
-		elseif allowRemoteDisplay and hasNearbyNameplate and self.ShowPrototypeBubbleOnNameplate then
+		elseif allowRemoteDisplay and hasNearbyNameplate and self.ShowAnnouncementBubbleOnNameplate then
 			self:Debugf("bubble", "Showing remote nearby bubble sender=%s", tostring(senderName))
-			self:ShowPrototypeBubbleOnNameplate(
+			self:ShowAnnouncementBubbleOnNameplate(
 				nearbyNameplate,
 				eventData.text,
 				eventData.eventType,
@@ -1247,6 +1281,11 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 end
 
 function QuestTogether:PublishAnnouncementEvent(eventType, text, questId, extraData)
+	if self.API.UnitIsDeadOrGhost and self.API.UnitIsDeadOrGhost("player") then
+		self:Debugf("comms", "PublishAnnouncementEvent suppressed while dead eventType=%s", tostring(eventType))
+		return false
+	end
+
 	local eventData = self:BuildLocalAnnouncementEvent(eventType, text, questId, extraData)
 	if not eventData then
 		self:Debugf("comms", "PublishAnnouncementEvent dropped eventType=%s due to empty payload", tostring(eventType))

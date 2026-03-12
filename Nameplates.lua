@@ -13,9 +13,9 @@ Design constraints:
 
 local QuestTogether = _G.QuestTogether
 local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
-local PROTOTYPE_BUBBLE_Y_OFFSET = 22
-local PROTOTYPE_BUBBLE_FADE_IN_SECONDS = 0.2
-local PROTOTYPE_BUBBLE_FADE_OUT_SECONDS = 0.4
+local ANNOUNCEMENT_BUBBLE_Y_OFFSET = 22
+local ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS = 0.2
+local ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS = 0.4
 local PERSONAL_BUBBLE_SETTINGS_DIALOG_WIDTH = 380
 local PERSONAL_BUBBLE_SETTINGS_DIALOG_HEIGHT = 220
 local ApplyQuestIconVisual
@@ -79,7 +79,7 @@ QuestTogether.nameplateHealthTintRefreshPendingByUnitToken =
 	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken or {}
 QuestTogether.nameplateFullRefreshGeneration = QuestTogether.nameplateFullRefreshGeneration or 0
 
-local function GetPrototypeBubbleLifetimeSeconds()
+local function GetAnnouncementBubbleLifetimeSeconds()
 	local configuredDuration = QuestTogether:NormalizeChatBubbleDurationValue(QuestTogether:GetOption("chatBubbleDuration"))
 	if not configuredDuration or configuredDuration <= 0 then
 		configuredDuration = QuestTogether.DEFAULTS.profile.chatBubbleDuration
@@ -87,7 +87,7 @@ local function GetPrototypeBubbleLifetimeSeconds()
 	return configuredDuration
 end
 
-local function GetPrototypeBubbleUnitFrame(hostFrame)
+local function GetAnnouncementBubbleUnitFrame(hostFrame)
 	if not hostFrame then
 		return nil
 	end
@@ -120,7 +120,7 @@ local function GetPersonalBubbleAnchorFontDefinition()
 	return STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", ""
 end
 
-local function GetPrototypeBubbleVisualConfig()
+local function GetAnnouncementBubbleVisualConfig()
 	local configuredSize = QuestTogether:NormalizeChatBubbleSizeValue(QuestTogether:GetOption("chatBubbleSize"))
 		or QuestTogether.DEFAULTS.profile.chatBubbleSize
 	local sizeScale = configuredSize / 100
@@ -520,9 +520,9 @@ local function EnsurePersonalBubbleEditModeDialog()
 	return dialog
 end
 
-local function GetPrototypeBubbleScreenHostFrame()
-	if QuestTogether.prototypeBubbleScreenHostFrame then
-		return QuestTogether.prototypeBubbleScreenHostFrame
+local function GetAnnouncementBubbleScreenHostFrame()
+	if QuestTogether.announcementBubbleScreenHostFrame then
+		return QuestTogether.announcementBubbleScreenHostFrame
 	end
 
 	local parentFrame = UIParent or (C_UI and C_UI.GetUIParent and C_UI.GetUIParent()) or nil
@@ -594,7 +594,7 @@ local function GetPrototypeBubbleScreenHostFrame()
 		QuestTogether:AttachPersonalBubbleEditModeDialog()
 	end)
 
-	QuestTogether.prototypeBubbleScreenHostFrame = hostFrame
+	QuestTogether.announcementBubbleScreenHostFrame = hostFrame
 	QuestTogether:ApplySavedPersonalBubbleAnchor()
 	QuestTogether:RefreshPersonalBubbleAnchorVisualState()
 	hostFrame:Show()
@@ -607,7 +607,7 @@ function QuestTogether:IsPersonalBubbleAnchorInEditMode()
 end
 
 function QuestTogether:ApplySavedPersonalBubbleAnchor()
-	local hostFrame = self.prototypeBubbleScreenHostFrame
+	local hostFrame = self.announcementBubbleScreenHostFrame
 	if not hostFrame then
 		return
 	end
@@ -658,7 +658,7 @@ function QuestTogether:SavePersonalBubbleAnchorFromFrame(hostFrame)
 end
 
 function QuestTogether:AttachPersonalBubbleEditModeDialog()
-	local hostFrame = self.prototypeBubbleScreenHostFrame
+	local hostFrame = self.announcementBubbleScreenHostFrame
 	local dialog = self.personalBubbleEditModeDialog
 	if not hostFrame or not dialog then
 		return
@@ -762,7 +762,7 @@ function QuestTogether:SelectPersonalBubbleAnchor()
 
 	EnsurePersonalBubbleEditSession()
 
-	local hostFrame = GetPrototypeBubbleScreenHostFrame()
+	local hostFrame = GetAnnouncementBubbleScreenHostFrame()
 	if not hostFrame then
 		return
 	end
@@ -792,7 +792,7 @@ function QuestTogether:DeselectPersonalBubbleAnchor()
 end
 
 function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
-	local hostFrame = self.prototypeBubbleScreenHostFrame
+	local hostFrame = self.announcementBubbleScreenHostFrame
 	if not hostFrame then
 		return
 	end
@@ -801,7 +801,7 @@ function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
 
 	local editModeActive = self:IsPersonalBubbleAnchorInEditMode()
 	if editModeActive then
-		local visualConfig = GetPrototypeBubbleVisualConfig()
+		local visualConfig = GetAnnouncementBubbleVisualConfig()
 		local fontPath, fontFlags = GetPersonalBubbleAnchorFontDefinition()
 		hostFrame.EditLabel:SetFont(fontPath, visualConfig.fontSize, fontFlags)
 		hostFrame.EditLabel:SetWidth(0)
@@ -877,7 +877,7 @@ function QuestTogether:TryInstallPersonalBubbleEditModeHooks()
 		return
 	end
 
-	GetPrototypeBubbleScreenHostFrame()
+	GetAnnouncementBubbleScreenHostFrame()
 	EnsurePersonalBubbleEditModeDialog()
 
 	EditModeManagerFrame:HookScript("OnShow", function()
@@ -892,7 +892,7 @@ function QuestTogether:TryInstallPersonalBubbleEditModeHooks()
 	end)
 
 	hooksecurefunc(EditModeManagerFrame, "SelectSystem", function(_, systemFrame)
-		local hostFrame = QuestTogether.prototypeBubbleScreenHostFrame
+		local hostFrame = QuestTogether.announcementBubbleScreenHostFrame
 		if hostFrame and systemFrame ~= hostFrame then
 			QuestTogether:DeselectPersonalBubbleAnchor()
 		end
@@ -1496,7 +1496,7 @@ local function ApplyAnnouncementIconVisual(texture, eventType, iconAsset, iconKi
 	ApplyQuestIconVisual(texture)
 end
 
-local function CreatePrototypeBubbleFrame(parentFrame)
+local function CreateAnnouncementBubbleFrame(parentFrame)
 	local ok, bubble = pcall(CreateFrame, "Frame", nil, parentFrame, "ChatBubbleTemplate")
 	if ok and bubble then
 		return bubble
@@ -1528,8 +1528,8 @@ local function CreatePrototypeBubbleFrame(parentFrame)
 	return fallbackBubble
 end
 
-local function EnsurePrototypeBubble(hostFrame)
-	local unitFrame = GetPrototypeBubbleUnitFrame(hostFrame)
+local function EnsureAnnouncementBubble(hostFrame)
+	local unitFrame = GetAnnouncementBubbleUnitFrame(hostFrame)
 	if not hostFrame or not unitFrame then
 		return nil
 	end
@@ -1539,7 +1539,7 @@ local function EnsurePrototypeBubble(hostFrame)
 		return existingBubble
 	end
 
-	local bubble = CreatePrototypeBubbleFrame(hostFrame)
+	local bubble = CreateAnnouncementBubbleFrame(hostFrame)
 	if not bubble or not bubble.String then
 		return nil
 	end
@@ -1576,19 +1576,24 @@ local function EnsurePrototypeBubble(hostFrame)
 	local animationGroup = bubble:CreateAnimationGroup()
 	local fadeIn = animationGroup:CreateAnimation("Alpha")
 	fadeIn:SetOrder(1)
-	fadeIn:SetDuration(PROTOTYPE_BUBBLE_FADE_IN_SECONDS)
+	fadeIn:SetDuration(ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS)
 	fadeIn:SetFromAlpha(0)
 	fadeIn:SetToAlpha(1)
 
 	local hold = animationGroup:CreateAnimation("Alpha")
 	hold:SetOrder(2)
-	hold:SetDuration(math.max(0, GetPrototypeBubbleLifetimeSeconds() - PROTOTYPE_BUBBLE_FADE_IN_SECONDS - PROTOTYPE_BUBBLE_FADE_OUT_SECONDS))
+	hold:SetDuration(
+		math.max(
+			0,
+			GetAnnouncementBubbleLifetimeSeconds() - ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS - ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS
+		)
+	)
 	hold:SetFromAlpha(1)
 	hold:SetToAlpha(1)
 
 	local fadeOut = animationGroup:CreateAnimation("Alpha")
 	fadeOut:SetOrder(3)
-	fadeOut:SetDuration(PROTOTYPE_BUBBLE_FADE_OUT_SECONDS)
+	fadeOut:SetDuration(ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS)
 	fadeOut:SetFromAlpha(1)
 	fadeOut:SetToAlpha(0)
 
@@ -1609,8 +1614,8 @@ local function EnsurePrototypeBubble(hostFrame)
 	return bubble
 end
 
-function QuestTogether:HidePrototypeBubble(hostFrame)
-	local unitFrame = GetPrototypeBubbleUnitFrame(hostFrame)
+function QuestTogether:HideAnnouncementBubble(hostFrame)
+	local unitFrame = GetAnnouncementBubbleUnitFrame(hostFrame)
 	if not hostFrame or not unitFrame then
 		return
 	end
@@ -1629,18 +1634,31 @@ function QuestTogether:HidePrototypeBubble(hostFrame)
 	end
 end
 
-function QuestTogether:RefreshActivePrototypeBubbles()
+function QuestTogether:RefreshActiveAnnouncementBubbles()
 	local activeCount = 0
 	for _ in pairs(self.nameplateBubbleByUnitFrame) do
 		activeCount = activeCount + 1
 	end
 	self:Debugf("bubble", "Refreshing active bubbles count=%d", activeCount)
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
+		for _, bubble in pairs(self.nameplateBubbleByUnitFrame) do
+			if bubble then
+				if bubble.animationGroup and bubble.animationGroup:IsPlaying() then
+					bubble.animationGroup:Stop()
+				else
+					bubble:SetAlpha(0)
+					bubble:Hide()
+				end
+			end
+		end
+		return
+	end
 	for unitFrame, bubble in pairs(self.nameplateBubbleByUnitFrame) do
 		if bubble and bubble.qtCurrentText and bubble.qtCurrentText ~= "" then
 			local hostFrame = bubble.qtHostFrame
 			if hostFrame and self:GetOption("showChatBubbles") then
-				if hostFrame == self.prototypeBubbleScreenHostFrame or (hostFrame.IsShown and hostFrame:IsShown()) then
-					self:ShowPrototypeBubbleOnNameplate(
+				if hostFrame == self.announcementBubbleScreenHostFrame or (hostFrame.IsShown and hostFrame:IsShown()) then
+					self:ShowAnnouncementBubbleOnNameplate(
 						hostFrame,
 						bubble.qtCurrentText,
 						bubble.qtCurrentEventType,
@@ -1648,10 +1666,10 @@ function QuestTogether:RefreshActivePrototypeBubbles()
 						bubble.qtCurrentIconKind
 					)
 				else
-					self:HidePrototypeBubble(hostFrame)
+					self:HideAnnouncementBubble(hostFrame)
 				end
 			elseif hostFrame then
-				self:HidePrototypeBubble(hostFrame)
+				self:HideAnnouncementBubble(hostFrame)
 			elseif unitFrame then
 				self.nameplateBubbleByUnitFrame[unitFrame] = nil
 			end
@@ -1659,10 +1677,10 @@ function QuestTogether:RefreshActivePrototypeBubbles()
 	end
 end
 
-function QuestTogether:GetPrototypeBubbleHostFrameForUnit(unitToken)
+function QuestTogether:GetAnnouncementBubbleHostFrameForUnit(unitToken)
 	if unitToken == "player" then
 		self:Debug("Resolved player bubble host to personal screen anchor", "bubble")
-		return GetPrototypeBubbleScreenHostFrame()
+		return GetAnnouncementBubbleScreenHostFrame()
 	end
 
 	local namePlateFrameBase = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit(unitToken, false)
@@ -1674,10 +1692,10 @@ function QuestTogether:GetPrototypeBubbleHostFrameForUnit(unitToken)
 	return nil
 end
 
-function QuestTogether:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text, eventType, iconAsset, iconKind)
-	local hostFrame = self:GetPrototypeBubbleHostFrameForUnit(unitToken)
+function QuestTogether:TryShowAnnouncementBubbleOnUnitNameplate(unitToken, text, eventType, iconAsset, iconKind)
+	local hostFrame = self:GetAnnouncementBubbleHostFrameForUnit(unitToken)
 	if hostFrame then
-		if not self:ShowPrototypeBubbleOnNameplate(hostFrame, text, eventType, iconAsset, iconKind) then
+		if not self:ShowAnnouncementBubbleOnNameplate(hostFrame, text, eventType, iconAsset, iconKind) then
 			self:Debugf("bubble", "Failed to show bubble on host for unit=%s", tostring(unitToken))
 			return false, "Unable to show a bubble on that nameplate."
 		end
@@ -1692,9 +1710,13 @@ function QuestTogether:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text, ev
 	return false, "Your personal bubble anchor is unavailable."
 end
 
-function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, eventType, iconAsset, iconKind)
-	local unitFrame = GetPrototypeBubbleUnitFrame(namePlateFrameBase)
+function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, text, eventType, iconAsset, iconKind)
+	local unitFrame = GetAnnouncementBubbleUnitFrame(namePlateFrameBase)
 	if not namePlateFrameBase or not unitFrame then
+		return false
+	end
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
+		self:Debug("Skipping announcement bubble in blocked nameplate context", "bubble")
 		return false
 	end
 
@@ -1706,7 +1728,7 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, 
 		return false
 	end
 
-	local bubble = EnsurePrototypeBubble(namePlateFrameBase)
+	local bubble = EnsureAnnouncementBubble(namePlateFrameBase)
 	if not bubble or not bubble.String then
 		self:Debug("Failed to create or resolve bubble frame", "bubble")
 		return false
@@ -1718,7 +1740,7 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, 
 	bubble.qtHostFrame = namePlateFrameBase
 
 	local anchorFrame = unitFrame.HealthBarsContainer or unitFrame
-	local visualConfig = GetPrototypeBubbleVisualConfig()
+	local visualConfig = GetAnnouncementBubbleVisualConfig()
 	local inset = visualConfig.inset or 16
 
 	if bubble.animationGroup and bubble.animationGroup:IsPlaying() then
@@ -1728,7 +1750,9 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, 
 	if bubble.holdAnimation then
 		local holdSeconds = math.max(
 			0,
-			GetPrototypeBubbleLifetimeSeconds() - PROTOTYPE_BUBBLE_FADE_IN_SECONDS - PROTOTYPE_BUBBLE_FADE_OUT_SECONDS
+			GetAnnouncementBubbleLifetimeSeconds()
+				- ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS
+				- ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS
 		)
 		bubble.holdAnimation:SetDuration(holdSeconds)
 	end
@@ -1763,12 +1787,12 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, 
 		bubbleWidth,
 		bubbleHeight,
 		visualConfig.fontSize,
-		GetPrototypeBubbleLifetimeSeconds(),
+		GetAnnouncementBubbleLifetimeSeconds(),
 		tostring(message)
 	)
 
 	bubble:ClearAllPoints()
-	bubble:SetPoint("BOTTOM", anchorFrame, "TOP", 0, PROTOTYPE_BUBBLE_Y_OFFSET)
+	bubble:SetPoint("BOTTOM", anchorFrame, "TOP", 0, ANNOUNCEMENT_BUBBLE_Y_OFFSET)
 	bubble:SetSize(bubbleWidth, bubbleHeight)
 
 	if bubble.Icon then
@@ -1798,9 +1822,12 @@ function QuestTogether:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text, 
 	return true
 end
 
-function QuestTogether:ShowPrototypeBubbleOnUnitNameplate(unitToken, text, eventType, iconAsset, iconKind)
+function QuestTogether:ShowAnnouncementBubbleOnUnitNameplate(unitToken, text, eventType, iconAsset, iconKind)
 	if type(unitToken) ~= "string" or unitToken == "" then
 		return false, "No unit token was provided."
+	end
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
+		return false, "Nameplate augmentation is unavailable in instances."
 	end
 
 	if not C_NamePlate or not C_NamePlate.GetNamePlateForUnit then
@@ -1809,10 +1836,14 @@ function QuestTogether:ShowPrototypeBubbleOnUnitNameplate(unitToken, text, event
 		end
 	end
 
-	return self:TryShowPrototypeBubbleOnUnitNameplate(unitToken, text, eventType, iconAsset, iconKind)
+	return self:TryShowAnnouncementBubbleOnUnitNameplate(unitToken, text, eventType, iconAsset, iconKind)
 end
 
-function QuestTogether:ShowPrototypeBubbleOnRandomVisiblePlayer(text)
+function QuestTogether:ShowAnnouncementBubbleOnRandomVisiblePlayer(text)
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
+		return false, "Nameplate augmentation is unavailable in instances."
+	end
+
 	local candidateNameplates = {}
 
 	self:ForEachVisibleNamePlate(function(frame)
@@ -1840,7 +1871,7 @@ function QuestTogether:ShowPrototypeBubbleOnRandomVisiblePlayer(text)
 
 	local randomIndex = self.API.Random(1, #candidateNameplates)
 	local namePlateFrameBase = candidateNameplates[randomIndex]
-	if not self:ShowPrototypeBubbleOnNameplate(namePlateFrameBase, text) then
+	if not self:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, text) then
 		return false, "Unable to show a bubble on the selected nameplate."
 	end
 
@@ -2044,7 +2075,7 @@ function QuestTogether:HideNameplateIcon(namePlateFrameBase)
 	if icon then
 		icon:Hide()
 	end
-	self:HidePrototypeBubble(namePlateFrameBase)
+	self:HideAnnouncementBubble(namePlateFrameBase)
 	self:RestoreNameplateHealthColor(namePlateFrameBase.UnitFrame)
 end
 
@@ -2161,6 +2192,7 @@ function QuestTogether:RefreshNameplateAugmentation()
 		self:ForEachVisibleNamePlate(function(frame)
 			self:HideNameplateIcon(frame)
 		end)
+		self:RefreshActiveAnnouncementBubbles()
 		return
 	end
 
