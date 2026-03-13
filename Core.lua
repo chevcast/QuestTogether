@@ -701,29 +701,31 @@ QuestTogether.API = QuestTogether.API or {
 	end,
 }
 
-function QuestTogether:IsSecretValue(value)
-	if type(issecretvalue) ~= "function" then
-		return false
-	end
-
-	local ok, result = pcall(issecretvalue, value)
-	return ok and result and true or false
+function QuestTogether:IsSecretValue(_)
+	-- Intentionally avoid probing with issecretvalue() from addon code.
+	-- Probing can taint secret values that Blizzard later reuses internally.
+	return false
 end
 
 function QuestTogether:SafeToNumber(value)
-	if self:IsSecretValue(value) then
+	local ok, numericValue = pcall(tonumber, value)
+	if not ok then
 		return nil
 	end
 
-	return tonumber(value)
+	return numericValue
 end
 
 function QuestTogether:SafeToString(value, fallback)
-	if self:IsSecretValue(value) then
-		return fallback or "<secret>"
+	local ok, stringValue = pcall(tostring, value)
+	if ok then
+		return stringValue
 	end
 
-	return tostring(value)
+	if fallback ~= nil then
+		return fallback
+	end
+	return "<secret>"
 end
 
 -- Deep copy helper used for defaults merging and tests.

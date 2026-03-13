@@ -29,21 +29,16 @@ local ANNOUNCEMENT_CHANNEL_FILTER_EVENTS = {
 	"CHAT_MSG_CHANNEL_NOTICE_USER",
 }
 
-local function IsSecretValue(value)
-	if type(issecretvalue) ~= "function" then
-		return false
-	end
-
-	local ok, result = pcall(issecretvalue, value)
-	return ok and result and true or false
-end
-
 local function SafeDebugString(value)
-	if IsSecretValue(value) then
-		return "<secret>"
+	if QuestTogether and QuestTogether.SafeToString then
+		return QuestTogether:SafeToString(value, "<secret>")
 	end
 
-	return tostring(value)
+	local ok, stringValue = pcall(tostring, value)
+	if ok then
+		return stringValue
+	end
+	return "<secret>"
 end
 
 local function SafeChannelNumber(addon, value)
@@ -51,11 +46,12 @@ local function SafeChannelNumber(addon, value)
 		return addon:SafeToNumber(value)
 	end
 
-	if IsSecretValue(value) then
+	local ok, numberValue = pcall(tonumber, value)
+	if not ok then
 		return nil
 	end
 
-	return tonumber(value)
+	return numberValue
 end
 
 local function MatchesAnnouncementChannelName(addon, value)
@@ -100,7 +96,12 @@ local function SafeNumber(addon, value)
 		return addon:SafeToNumber(value)
 	end
 
-	return tonumber(value)
+	local ok, numberValue = pcall(tonumber, value)
+	if not ok then
+		return nil
+	end
+
+	return numberValue
 end
 
 function QuestTogether:EscapePayload(value)
@@ -464,11 +465,9 @@ function QuestTogether:GetAnnouncementChannelLocalID()
 	end
 
 	local localID = self.API.GetChannelName(self.announcementChannelName)
-	if IsSecretValue(localID) then
-		return nil
-	end
-	if type(localID) == "number" and localID > 0 then
-		return localID
+	local numericLocalID = SafeChannelNumber(self, localID)
+	if numericLocalID and numericLocalID > 0 then
+		return numericLocalID
 	end
 
 	return nil

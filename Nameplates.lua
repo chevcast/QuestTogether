@@ -57,11 +57,10 @@ local function ClampColorComponent(value, fallback)
 	return numberValue
 end
 
-local function IsSecretValue(value)
-	if type(issecretvalue) ~= "function" then
-		return false
-	end
-	local ok, result = pcall(issecretvalue, value)
+local function IsNonEmptyString(value)
+	local ok, result = pcall(function()
+		return type(value) == "string" and value ~= ""
+	end)
 	return ok and result and true or false
 end
 
@@ -931,8 +930,8 @@ function QuestTogether:DoesNameplateUnitExist(unitToken)
 end
 
 function QuestTogether:GetNameplateUnitGuid(unitToken)
-	local unitGuid = UnitGUID(unitToken)
-	if not unitGuid or IsSecretValue(unitGuid) then
+	local ok, unitGuid = pcall(UnitGUID, unitToken)
+	if not ok or not IsNonEmptyString(unitGuid) then
 		return nil
 	end
 	return unitGuid
@@ -1137,13 +1136,13 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 
 	for index = 1, #candidateGuids do
 		local candidateGuid = candidateGuids[index]
-		if type(candidateGuid) == "string" and candidateGuid ~= "" and not self:IsSecretValue(candidateGuid) then
+		if IsNonEmptyString(candidateGuid) then
 			return candidateGuid
 		end
 	end
 
 	local liveGuid = self:GetNameplateUnitGuid(unitToken)
-	if type(liveGuid) == "string" and liveGuid ~= "" then
+	if IsNonEmptyString(liveGuid) then
 		if unitFrame then
 			unitFrame.qtTooltipScanGuid = liveGuid
 		end
@@ -1168,10 +1167,7 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 	end
 
 	local unitGuid = self:GetNameplateTooltipScanGuid(unitToken, unitFrame)
-	if not unitGuid or unitGuid == "" then
-		return false
-	end
-	if self:IsSecretValue(unitGuid) then
+	if not IsNonEmptyString(unitGuid) then
 		return false
 	end
 
@@ -1193,7 +1189,13 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 		return false
 	end
 
-	local tooltipData = C_TooltipInfo.GetHyperlink("unit:" .. unitGuid)
+	local okTooltip, tooltipData = pcall(function()
+		return C_TooltipInfo.GetHyperlink("unit:" .. unitGuid)
+	end)
+	if not okTooltip then
+		self:SetCachedQuestObjectiveResult(unitGuid, false)
+		return false
+	end
 	if not tooltipData or type(tooltipData.lines) ~= "table" then
 		self:SetCachedQuestObjectiveResult(unitGuid, false)
 		return false
@@ -1201,21 +1203,17 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 
 	local scanLines = {}
 	for _, lineData in ipairs(tooltipData.lines) do
-		local lineType = lineData and lineData.type
-		if self:IsSecretValue(lineType) then
-			break
-		end
+		local lineType = self:SafeToNumber(lineData and lineData.type)
 
 		if
 			lineType == Enum.TooltipDataLineType.QuestObjective
 			or lineType == Enum.TooltipDataLineType.QuestTitle
 			or lineType == Enum.TooltipDataLineType.QuestPlayer
 		then
-			local leftText = lineData.leftText or ""
-			if self:IsSecretValue(leftText) then
-				break
+			local leftText = self:SafeToString(lineData and lineData.leftText, "")
+			if IsNonEmptyString(leftText) then
+				scanLines[#scanLines + 1] = leftText
 			end
-			scanLines[#scanLines + 1] = tostring(leftText)
 		end
 	end
 
