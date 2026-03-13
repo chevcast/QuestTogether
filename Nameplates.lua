@@ -1275,13 +1275,13 @@ end
 -- The C_QuestLog calls provide robust fallback on default Blizzard nameplates.
 function QuestTogether:IsQuestObjectiveUnit(unitToken, unitFrame)
 	local directFlag = GetBooleanFieldIfPresent(unitFrame, "namePlateIsQuestObjective")
-	if directFlag ~= nil then
-		return directFlag
+	if directFlag == true then
+		return true
 	end
 
 	local alternateFlag = GetBooleanFieldIfPresent(unitFrame, "isQuestObjective")
-	if alternateFlag ~= nil then
-		return alternateFlag
+	if alternateFlag == true then
+		return true
 	end
 
 	if not unitToken or not self:DoesNameplateUnitExist(unitToken) then

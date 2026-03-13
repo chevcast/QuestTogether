@@ -700,6 +700,42 @@ QuestTogether:RegisterTest("quest objective detection falls back to tooltip pars
 	AssertTrue(tooltipChecked)
 end)
 
+QuestTogether:RegisterTest("quest objective detection does not short-circuit on false frame flags", function()
+	local tooltipChecked = false
+	local unitFrame = {
+		namePlateIsQuestObjective = false,
+		isQuestObjective = false,
+	}
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function(_, unitToken)
+		AssertEquals(unitToken, "nameplate1")
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetPlayerTracker", function()
+				return {}
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function(_, unitToken, candidateFrame)
+					AssertEquals(unitToken, "nameplate1")
+					AssertEquals(candidateFrame, unitFrame)
+					tooltipChecked = true
+					return true
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function()
+						return false
+					end, function()
+						AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate1", unitFrame))
+					end)
+				end)
+			end)
+		end)
+	end)
+
+	AssertTrue(tooltipChecked)
+end)
+
 QuestTogether:RegisterTest("tooltip quest detection prefers frame guid over live UnitGUID lookup", function()
 	local unitFrame = {
 		namePlateUnitGUID = "Creature-0-0-0-0-12345-0000000000",
