@@ -34,6 +34,8 @@ QuestTogether.ANNOUNCEMENT_NEARBY_RADIUS = 5
 QuestTogether.isInitialized = QuestTogether.isInitialized or false
 QuestTogether.hasLoggedIn = QuestTogether.hasLoggedIn or false
 QuestTogether.isEnabled = QuestTogether.isEnabled or false
+QuestTogether.activeProfileKey = QuestTogether.activeProfileKey or nil
+QuestTogether.activeCharacterKey = QuestTogether.activeCharacterKey or nil
 QuestTogether.pendingPingRequests = QuestTogether.pendingPingRequests or {}
 QuestTogether.pendingQuestCompareRequests = QuestTogether.pendingQuestCompareRequests or {}
 
@@ -45,7 +47,6 @@ QuestTogether.worldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateBy
 QuestTogether.bonusObjectiveAreaStateByQuestID = QuestTogether.bonusObjectiveAreaStateByQuestID or {}
 
 -- Default settings for SavedVariables.
--- We keep the old profile/global shape so existing logic and future migration are simple.
 QuestTogether.DEFAULTS = {
 	profile = {
 		enabled = true,
@@ -81,10 +82,13 @@ QuestTogether.DEFAULTS = {
 			g = 0.45,
 			b = 0.05,
 		},
+		-- Stored per profile so each character/profile can pick its own chat tab.
+		questLogChatFrameID = nil,
 	},
 	global = {
 		questTrackers = {},
 		personalBubbleAnchors = {},
+		-- Legacy location kept for migration from older versions.
 		questLogChatFrameID = nil,
 	},
 }
@@ -804,6 +808,258 @@ function QuestTogether:ApplyDefaults(destination, defaults)
 	end
 end
 
+local function NormalizeProfileKey(profileKey)
+	if type(profileKey) ~= "string" then
+		return nil
+	end
+
+	local trimmed = tostring(profileKey):gsub("^%s+", ""):gsub("%s+$", "")
+	if trimmed == "" then
+		return nil
+	end
+	return trimmed
+end
+
+function QuestTogether:GetCurrentCharacterKey()
+	local fullName = self.GetPlayerFullName and self:GetPlayerFullName() or nil
+	if type(fullName) == "string" and fullName ~= "" then
+		return fullName
+	end
+
+	local playerName = self:GetPlayerName() or "Unknown"
+	if string.find(playerName, "-", 1, true) then
+		return playerName
+	end
+
+	local realmName = tostring(self.API.GetRealmName and self.API.GetRealmName() or ""):gsub("%s+", "")
+	if realmName ~= "" then
+		return playerName .. "-" .. realmName
+	end
+
+	return playerName
+end
+
+function QuestTogether:EnsureProfileStorage()
+	if not self.db then
+		return false
+	end
+
+	if type(self.db.profiles) ~= "table" then
+		self.db.profiles = {}
+	end
+	if type(self.db.profileKeys) ~= "table" then
+		self.db.profileKeys = {}
+	end
+
+	return true
+end
+
+function QuestTogether:GetCurrentProfileKey()
+	return self.activeProfileKey
+end
+
+function QuestTogether:GetProfileKeys()
+	if not self.db then
+		return {}
+	end
+	self:EnsureProfileStorage()
+
+	local keys = {}
+	for profileKey, profileData in pairs(self.db.profiles) do
+		if type(profileKey) == "string" and type(profileData) == "table" then
+			keys[#keys + 1] = profileKey
+		end
+	end
+	table.sort(keys, function(left, right)
+		return tostring(left) < tostring(right)
+	end)
+	return keys
+end
+
+function QuestTogether:EnsureProfile(profileKey, sourceProfile)
+	if not self.db or not self:EnsureProfileStorage() then
+		return nil, nil
+	end
+
+	local normalizedKey = NormalizeProfileKey(profileKey)
+	if not normalizedKey then
+		return nil, nil
+	end
+
+	if type(self.db.profiles[normalizedKey]) ~= "table" then
+		self.db.profiles[normalizedKey] = self:DeepCopy(sourceProfile or self.DEFAULTS.profile)
+	end
+	self:ApplyDefaults(self.db.profiles[normalizedKey], self.DEFAULTS.profile)
+	return normalizedKey, self.db.profiles[normalizedKey]
+end
+
+function QuestTogether:ApplyActiveProfileState(changeReason)
+	if not self.db or not self.db.profile then
+		return false
+	end
+
+	self:NormalizeAnnouncementDisplayOptions()
+	self:NormalizeNameplateOptions()
+
+	if self.db.profile.chatLogDestination == "separate" then
+		local chatFrame = self:EnsureQuestLogChatFrame()
+		if chatFrame then
+			self:ApplyMainChatFontSizeToChatFrame(chatFrame)
+		end
+	else
+		self:CloseQuestLogChatFrame()
+	end
+
+	if self.hasLoggedIn then
+		if self.db.profile.enabled then
+			self:Enable()
+		else
+			self:Disable()
+		end
+	end
+
+	if self.RefreshPartyRoster then
+		self:RefreshPartyRoster()
+	end
+	if self.RefreshNameplateAugmentation then
+		self:RefreshNameplateAugmentation()
+	end
+	if self.RefreshActiveAnnouncementBubbles then
+		self:RefreshActiveAnnouncementBubbles()
+	end
+	if self.RefreshPersonalBubbleAnchorVisualState then
+		self:RefreshPersonalBubbleAnchorVisualState()
+	end
+	if self.RefreshPersonalBubbleEditModeDialog then
+		self:RefreshPersonalBubbleEditModeDialog()
+	end
+	if self.RefreshOptionsWindow then
+		self:RefreshOptionsWindow()
+	end
+	if self.RefreshProfilesWindow then
+		self:RefreshProfilesWindow()
+	end
+
+	self:Debugf(
+		"profile",
+		"Applied active profile state reason=%s character=%s profile=%s",
+		tostring(changeReason or "unknown"),
+		tostring(self.activeCharacterKey),
+		tostring(self.activeProfileKey)
+	)
+	return true
+end
+
+function QuestTogether:SetActiveProfile(profileKey)
+	if not self.db or not self:EnsureProfileStorage() then
+		return false, "Profile database is unavailable."
+	end
+
+	local normalizedKey, profileData = self:EnsureProfile(profileKey)
+	if not normalizedKey or not profileData then
+		return false, "Profile name cannot be empty."
+	end
+
+	local characterKey = self.activeCharacterKey or self:GetCurrentCharacterKey()
+	self.activeCharacterKey = characterKey
+	self.activeProfileKey = normalizedKey
+	self.db.profileKeys[characterKey] = normalizedKey
+	self.db.profile = profileData
+
+	self:ApplyActiveProfileState("switch")
+	return true
+end
+
+function QuestTogether:CreateProfile(profileKey, sourceProfileKey)
+	if not self.db or not self:EnsureProfileStorage() then
+		return false, "Profile database is unavailable."
+	end
+
+	local normalizedKey = NormalizeProfileKey(profileKey)
+	if not normalizedKey then
+		return false, "Profile name cannot be empty."
+	end
+	if type(self.db.profiles[normalizedKey]) == "table" then
+		return false, "A profile with that name already exists."
+	end
+
+	local sourceProfile = self.db.profile
+	local normalizedSource = NormalizeProfileKey(sourceProfileKey)
+	if normalizedSource and type(self.db.profiles[normalizedSource]) == "table" then
+		sourceProfile = self.db.profiles[normalizedSource]
+	end
+
+	self.db.profiles[normalizedKey] = self:DeepCopy(sourceProfile or self.DEFAULTS.profile)
+	self:ApplyDefaults(self.db.profiles[normalizedKey], self.DEFAULTS.profile)
+	return true
+end
+
+function QuestTogether:CopyProfileIntoActiveProfile(sourceProfileKey)
+	if not self.db or not self:EnsureProfileStorage() then
+		return false, "Profile database is unavailable."
+	end
+
+	local sourceKey = NormalizeProfileKey(sourceProfileKey)
+	if not sourceKey then
+		return false, "Profile name cannot be empty."
+	end
+	if type(self.db.profiles[sourceKey]) ~= "table" then
+		return false, "Profile not found: " .. tostring(sourceKey)
+	end
+	if not self.activeProfileKey then
+		return false, "No active profile is set."
+	end
+
+	self.db.profiles[self.activeProfileKey] = self:DeepCopy(self.db.profiles[sourceKey])
+	self:ApplyDefaults(self.db.profiles[self.activeProfileKey], self.DEFAULTS.profile)
+	self.db.profile = self.db.profiles[self.activeProfileKey]
+	self:ApplyActiveProfileState("copy")
+	return true
+end
+
+function QuestTogether:ResetActiveProfile()
+	if not self.db or not self:EnsureProfileStorage() then
+		return false, "Profile database is unavailable."
+	end
+	if not self.activeProfileKey then
+		return false, "No active profile is set."
+	end
+
+	self.db.profiles[self.activeProfileKey] = self:DeepCopy(self.DEFAULTS.profile)
+	self.db.profile = self.db.profiles[self.activeProfileKey]
+	self:ApplyActiveProfileState("reset")
+	return true
+end
+
+function QuestTogether:DeleteProfile(profileKey)
+	if not self.db or not self:EnsureProfileStorage() then
+		return false, "Profile database is unavailable."
+	end
+
+	local normalizedKey = NormalizeProfileKey(profileKey)
+	if not normalizedKey then
+		return false, "Profile name cannot be empty."
+	end
+	if normalizedKey == self.activeProfileKey then
+		return false, "You cannot delete the active profile."
+	end
+	if type(self.db.profiles[normalizedKey]) ~= "table" then
+		return false, "Profile not found: " .. tostring(normalizedKey)
+	end
+
+	self.db.profiles[normalizedKey] = nil
+
+	for characterKey, mappedProfileKey in pairs(self.db.profileKeys) do
+		if mappedProfileKey == normalizedKey then
+			local fallbackProfileKey = NormalizeProfileKey(characterKey) or tostring(characterKey)
+			self.db.profileKeys[characterKey] = fallbackProfileKey
+			self:EnsureProfile(fallbackProfileKey, self.DEFAULTS.profile)
+		end
+	end
+
+	return true
+end
+
 function QuestTogether:Print(message)
 	local text = "|cff33ff99QuestTogether|r: " .. self:SafeToString(message)
 	local chatFrame = self:GetChatLogFrame()
@@ -833,11 +1089,15 @@ function QuestTogether:GetMainChatFrame()
 end
 
 function QuestTogether:GetConfiguredQuestLogChatFrameID()
-	if not self.db or not self.db.global then
+	if not self.db then
 		return nil
 	end
 
-	local configuredID = tonumber(self.db.global.questLogChatFrameID)
+	local configuredID = tonumber(self.db.profile and self.db.profile.questLogChatFrameID)
+	if not configuredID and self.db.global then
+		-- Legacy fallback for migration from pre-profile versions.
+		configuredID = tonumber(self.db.global.questLogChatFrameID)
+	end
 	if configuredID and configuredID > 0 then
 		return configuredID
 	end
@@ -846,14 +1106,23 @@ function QuestTogether:GetConfiguredQuestLogChatFrameID()
 end
 
 function QuestTogether:SetConfiguredQuestLogChatFrameID(chatFrameID)
-	if not self.db or not self.db.global then
+	if not self.db then
 		return false
 	end
 
 	local numericID = tonumber(chatFrameID)
 	if numericID and numericID > 0 then
-		self.db.global.questLogChatFrameID = numericID
+		if self.db.profile then
+			self.db.profile.questLogChatFrameID = numericID
+		end
 	else
+		if self.db.profile then
+			self.db.profile.questLogChatFrameID = nil
+		end
+	end
+
+	-- Always clear legacy global storage so this stays profile-scoped.
+	if self.db.global then
 		self.db.global.questLogChatFrameID = nil
 	end
 
@@ -2504,10 +2773,62 @@ function QuestTogether:InitializeDatabase()
 		_G.QuestTogetherDB = {}
 	end
 	self.db = _G.QuestTogetherDB
-	self:ApplyDefaults(self.db, self.DEFAULTS)
+
+	if type(self.db.global) ~= "table" then
+		self.db.global = {}
+	end
+	self:ApplyDefaults(self.db.global, self.DEFAULTS.global)
+	self:EnsureProfileStorage()
+
+	local legacyProfile = nil
+	if type(self.db.profile) == "table" then
+		legacyProfile = self:DeepCopy(self.db.profile)
+	end
+
+	local hasExistingProfiles = false
+	for _, profileData in pairs(self.db.profiles) do
+		if type(profileData) == "table" then
+			hasExistingProfiles = true
+			break
+		end
+	end
+
+	local characterKey = self:GetCurrentCharacterKey()
+	local defaultProfileKey = NormalizeProfileKey(characterKey) or "Character"
+	local assignedProfileKey = NormalizeProfileKey(self.db.profileKeys[characterKey])
+	if not assignedProfileKey then
+		assignedProfileKey = defaultProfileKey
+		self.db.profileKeys[characterKey] = assignedProfileKey
+	end
+
+	if type(self.db.profiles[assignedProfileKey]) ~= "table" then
+		if legacyProfile and not hasExistingProfiles then
+			self.db.profiles[assignedProfileKey] = legacyProfile
+		else
+			self.db.profiles[assignedProfileKey] = self:DeepCopy(self.DEFAULTS.profile)
+		end
+	end
+
+	self.activeCharacterKey = characterKey
+	self.activeProfileKey = assignedProfileKey
+	self.db.profile = self.db.profiles[assignedProfileKey]
+	self:ApplyDefaults(self.db.profile, self.DEFAULTS.profile)
+
+	if self.db.profile.questLogChatFrameID == nil and self.db.global.questLogChatFrameID ~= nil then
+		self.db.profile.questLogChatFrameID = self.db.global.questLogChatFrameID
+	end
+	self.db.global.questLogChatFrameID = nil
+
 	self:NormalizeAnnouncementDisplayOptions()
 	self:NormalizeNameplateOptions()
 	self:DebugState("core", "db.profile", self.db.profile)
+	self:Debugf(
+		"profile",
+		"Initialized profile database character=%s profile=%s profiles=%d",
+		tostring(self.activeCharacterKey),
+		tostring(self.activeProfileKey),
+		#self:GetProfileKeys()
+	)
 end
 
 function QuestTogether:RegisterRuntimeEvents()

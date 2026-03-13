@@ -69,6 +69,10 @@ local function WithIsolatedState(testFn)
 
 	local originalProfile = QuestTogether:DeepCopy(QuestTogether.db.profile)
 	local originalGlobal = QuestTogether:DeepCopy(QuestTogether.db.global)
+	local originalProfiles = QuestTogether:DeepCopy(QuestTogether.db.profiles or {})
+	local originalProfileKeys = QuestTogether:DeepCopy(QuestTogether.db.profileKeys or {})
+	local originalActiveProfileKey = QuestTogether.activeProfileKey
+	local originalActiveCharacterKey = QuestTogether.activeCharacterKey
 	local originalAPI = QuestTogether.API
 	local originalPrint = QuestTogether.Print
 	local originalPrintRaw = QuestTogether.PrintRaw
@@ -95,7 +99,7 @@ local function WithIsolatedState(testFn)
 	local originalPendingQuestCompareRequests = QuestTogether.pendingQuestCompareRequests
 	local originalPendingQuestRemovals = QuestTogether.pendingQuestRemovals
 	local originalIsLoggingOut = QuestTogether.isLoggingOut
-	local originalQuestLogChatFrameID = QuestTogether.db.global.questLogChatFrameID
+	local originalQuestLogChatFrameID = QuestTogether.db.profile.questLogChatFrameID
 
 	if QuestTogether.UnregisterRuntimeEvents then
 		QuestTogether:UnregisterRuntimeEvents()
@@ -106,6 +110,14 @@ local function WithIsolatedState(testFn)
 
 	QuestTogether.db.profile = QuestTogether:DeepCopy(QuestTogether.DEFAULTS.profile)
 	QuestTogether.db.global = QuestTogether:DeepCopy(QuestTogether.DEFAULTS.global)
+	QuestTogether.db.profiles = {
+		["MyPlayer-Realm"] = QuestTogether.db.profile,
+	}
+	QuestTogether.db.profileKeys = {
+		["MyPlayer-Realm"] = "MyPlayer-Realm",
+	}
+	QuestTogether.activeCharacterKey = "MyPlayer-Realm"
+	QuestTogether.activeProfileKey = "MyPlayer-Realm"
 	QuestTogether.db.profile.debugMode = false
 	QuestTogether.db.profile.enabled = false
 	QuestTogether.isEnabled = false
@@ -132,8 +144,8 @@ local function WithIsolatedState(testFn)
 	local ok, err = pcall(testFn)
 
 	local createdQuestLogChatFrameID = QuestTogether.db
-		and QuestTogether.db.global
-		and QuestTogether.db.global.questLogChatFrameID
+		and QuestTogether.db.profile
+		and QuestTogether.db.profile.questLogChatFrameID
 	if
 		createdQuestLogChatFrameID
 		and createdQuestLogChatFrameID ~= originalQuestLogChatFrameID
@@ -142,8 +154,20 @@ local function WithIsolatedState(testFn)
 		pcall(QuestTogether.CloseQuestLogChatFrame, QuestTogether)
 	end
 
-	QuestTogether.db.profile = originalProfile
 	QuestTogether.db.global = originalGlobal
+	QuestTogether.db.profiles = originalProfiles
+	QuestTogether.db.profileKeys = originalProfileKeys
+	QuestTogether.activeProfileKey = originalActiveProfileKey
+	QuestTogether.activeCharacterKey = originalActiveCharacterKey
+	if
+		originalActiveProfileKey
+		and QuestTogether.db.profiles
+		and type(QuestTogether.db.profiles[originalActiveProfileKey]) == "table"
+	then
+		QuestTogether.db.profile = QuestTogether.db.profiles[originalActiveProfileKey]
+	else
+		QuestTogether.db.profile = originalProfile
+	end
 	QuestTogether.API = originalAPI
 	QuestTogether.Print = originalPrint
 	QuestTogether.PrintRaw = originalPrintRaw
@@ -151,7 +175,9 @@ local function WithIsolatedState(testFn)
 	QuestTogether.partyMembers = originalPartyMembers
 	QuestTogether.partyMemberOrder = originalPartyMemberOrder
 	QuestTogether.partyRosterFingerprint = originalPartyRosterFingerprint
-	QuestTogether.db.profile.enabled = originalProfileEnabled
+	if QuestTogether.db.profile then
+		QuestTogether.db.profile.enabled = originalProfileEnabled
+	end
 	QuestTogether.isEnabled = originalIsEnabled
 	QuestTogether.worldQuestAreaStateByQuestID = originalWorldQuestAreaStateByQuestID
 	QuestTogether.bonusObjectiveAreaStateByQuestID = originalBonusObjectiveAreaStateByQuestID
@@ -234,6 +260,79 @@ QuestTogether:RegisterTest("default profile contains new announcement display op
 	AssertTrue(QuestTogether.DEFAULTS.profile.emoteOnNearbyPlayerQuestCompletion ~= nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.primaryChannel == nil)
 	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel == nil)
+end)
+
+QuestTogether:RegisterTest("profile assignment is stored per character key", function()
+	QuestTogether.db.profiles = {}
+	QuestTogether.db.profileKeys = {}
+	QuestTogether.activeCharacterKey = "Alpha-Realm"
+	QuestTogether.activeProfileKey = nil
+
+	local applyCalls = 0
+	WithPatchedMethod(QuestTogether, "ApplyActiveProfileState", function()
+		applyCalls = applyCalls + 1
+		return true
+	end, function()
+		local okAlpha, errAlpha = QuestTogether:SetActiveProfile("Alpha-Realm")
+		AssertTrue(okAlpha, errAlpha)
+		AssertEquals(QuestTogether.db.profileKeys["Alpha-Realm"], "Alpha-Realm")
+
+		QuestTogether.activeCharacterKey = "Beta-Realm"
+		local okBeta, errBeta = QuestTogether:SetActiveProfile("Beta-Realm")
+		AssertTrue(okBeta, errBeta)
+		AssertEquals(QuestTogether.db.profileKeys["Beta-Realm"], "Beta-Realm")
+	end)
+
+	AssertTrue(QuestTogether.db.profiles["Alpha-Realm"] ~= nil)
+	AssertTrue(QuestTogether.db.profiles["Beta-Realm"] ~= nil)
+	AssertEquals(applyCalls, 2)
+end)
+
+QuestTogether:RegisterTest("profile operations support create, copy, reset, and delete", function()
+	QuestTogether.db.profiles = {
+		["MyPlayer-Realm"] = QuestTogether:DeepCopy(QuestTogether.DEFAULTS.profile),
+		Template = QuestTogether:DeepCopy(QuestTogether.DEFAULTS.profile),
+	}
+	QuestTogether.db.profileKeys = {
+		["MyPlayer-Realm"] = "MyPlayer-Realm",
+	}
+	QuestTogether.activeCharacterKey = "MyPlayer-Realm"
+	QuestTogether.activeProfileKey = "MyPlayer-Realm"
+	QuestTogether.db.profile = QuestTogether.db.profiles["MyPlayer-Realm"]
+
+	QuestTogether.db.profiles.Template.showChatLogs = false
+	QuestTogether.db.profiles.Template.showChatBubbles = false
+	QuestTogether.db.profile.showChatLogs = true
+	QuestTogether.db.profile.showChatBubbles = true
+
+	local applyCalls = 0
+	WithPatchedMethod(QuestTogether, "ApplyActiveProfileState", function()
+		applyCalls = applyCalls + 1
+		return true
+	end, function()
+		local createOk, createErr = QuestTogether:CreateProfile("Disposable", "Template")
+		AssertTrue(createOk, createErr)
+		AssertTrue(QuestTogether.db.profiles.Disposable ~= nil)
+
+		local copyOk, copyErr = QuestTogether:CopyProfileIntoActiveProfile("Template")
+		AssertTrue(copyOk, copyErr)
+		AssertFalse(QuestTogether.db.profile.showChatLogs)
+		AssertFalse(QuestTogether.db.profile.showChatBubbles)
+
+		QuestTogether.db.profile.showChatLogs = false
+		local resetOk, resetErr = QuestTogether:ResetActiveProfile()
+		AssertTrue(resetOk, resetErr)
+		AssertEquals(QuestTogether.db.profile.showChatLogs, QuestTogether.DEFAULTS.profile.showChatLogs)
+
+		local deleteActiveOk = QuestTogether:DeleteProfile("MyPlayer-Realm")
+		AssertFalse(deleteActiveOk)
+
+		local deleteOk, deleteErr = QuestTogether:DeleteProfile("Disposable")
+		AssertTrue(deleteOk, deleteErr)
+		AssertEquals(QuestTogether.db.profiles.Disposable, nil)
+	end)
+
+	AssertEquals(applyCalls, 2)
 end)
 
 QuestTogether:RegisterTest("quest status uses ready to turn in announcement event", function()
@@ -1848,7 +1947,7 @@ QuestTogether:RegisterTest("switching chat logs back to main closes QuestTogethe
 	}
 
 	QuestTogether.db.profile.chatLogDestination = "separate"
-	QuestTogether.db.global.questLogChatFrameID = 3
+	QuestTogether.db.profile.questLogChatFrameID = 3
 	QuestTogether.API = CreateApiWithOverrides({
 		GetChatFrameByID = function(chatFrameID)
 			if chatFrameID == 3 then
@@ -1870,7 +1969,7 @@ QuestTogether:RegisterTest("switching chat logs back to main closes QuestTogethe
 	AssertTrue(QuestTogether:SetOption("chatLogDestination", "main"))
 	AssertEquals(#closeCalls, 1)
 	AssertEquals(closeCalls[1], 3)
-	AssertEquals(QuestTogether.db.global.questLogChatFrameID, nil)
+	AssertEquals(QuestTogether.db.profile.questLogChatFrameID, nil)
 end)
 
 QuestTogether:RegisterTest("closing QuestTogether chat window reverts chat log destination to main", function()
@@ -1882,7 +1981,7 @@ QuestTogether:RegisterTest("closing QuestTogether chat window reverts chat log d
 	}
 
 	QuestTogether.db.profile.chatLogDestination = "separate"
-	QuestTogether.db.global.questLogChatFrameID = 3
+	QuestTogether.db.profile.questLogChatFrameID = 3
 	QuestTogether.API = CreateApiWithOverrides({
 		Delay = function(_, callback)
 			callback()
@@ -1911,7 +2010,7 @@ QuestTogether:RegisterTest("closing QuestTogether chat window reverts chat log d
 	end)
 
 	AssertEquals(QuestTogether:GetOption("chatLogDestination"), "main")
-	AssertEquals(QuestTogether.db.global.questLogChatFrameID, nil)
+	AssertEquals(QuestTogether.db.profile.questLogChatFrameID, nil)
 	AssertEquals(refreshed, 1)
 end)
 
@@ -1930,7 +2029,7 @@ QuestTogether:RegisterTest("login adopts visible QuestTogether chat window as se
 	}
 
 	QuestTogether.db.profile.chatLogDestination = "main"
-	QuestTogether.db.global.questLogChatFrameID = nil
+	QuestTogether.db.profile.questLogChatFrameID = nil
 
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumChatWindows = function()
@@ -1957,7 +2056,7 @@ QuestTogether:RegisterTest("login adopts visible QuestTogether chat window as se
 	end)
 
 	AssertEquals(QuestTogether:GetOption("chatLogDestination"), "separate")
-	AssertEquals(QuestTogether.db.global.questLogChatFrameID, 4)
+	AssertEquals(QuestTogether.db.profile.questLogChatFrameID, 4)
 	AssertEquals(refreshed, 1)
 end)
 

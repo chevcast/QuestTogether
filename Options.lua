@@ -5,6 +5,8 @@ QuestTogether Options Panel (Esc > Options > AddOns)
 local QuestTogether = _G.QuestTogether
 
 QuestTogether.optionControls = QuestTogether.optionControls or {}
+QuestTogether.profileControls = QuestTogether.profileControls or {}
+QuestTogether.profileUIState = QuestTogether.profileUIState or {}
 
 local function CreateSectionLabel(parent, text, x, y)
 	local label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -397,6 +399,293 @@ function QuestTogether:RefreshOptionsWindow()
 	controls.chatLogDestinationDropdown.title:SetAlpha(showChatLogControls and 1 or 0.5)
 end
 
+local function BuildProfileKeyList(excludedKey)
+	local profileKeys = QuestTogether:GetProfileKeys()
+	local filtered = {}
+	for _, profileKey in ipairs(profileKeys) do
+		if profileKey ~= excludedKey then
+			filtered[#filtered + 1] = profileKey
+		end
+	end
+	return filtered
+end
+
+function QuestTogether:RefreshProfilesWindow()
+	if not self.profilesFrame then
+		return
+	end
+
+	local controls = self.profileControls
+	local uiState = self.profileUIState or {}
+	self.profileUIState = uiState
+
+	local currentProfileKey = self:GetCurrentProfileKey()
+	local allProfileKeys = self:GetProfileKeys()
+	local nonActiveProfileKeys = BuildProfileKeyList(currentProfileKey)
+
+	if not uiState.copyFromProfileKey or uiState.copyFromProfileKey == currentProfileKey then
+		uiState.copyFromProfileKey = nonActiveProfileKeys[1]
+	end
+	if not uiState.deleteProfileKey or uiState.deleteProfileKey == currentProfileKey then
+		uiState.deleteProfileKey = nonActiveProfileKeys[1]
+	end
+
+	RefreshDropdownControl(controls.currentProfileDropdown, currentProfileKey or "None")
+	RefreshDropdownControl(controls.copyFromProfileDropdown, uiState.copyFromProfileKey or "No Other Profiles")
+	RefreshDropdownControl(controls.deleteProfileDropdown, uiState.deleteProfileKey or "No Other Profiles")
+
+	local canCopy = uiState.copyFromProfileKey ~= nil
+	local canDelete = uiState.deleteProfileKey ~= nil
+
+	if UIDropDownMenu_EnableDropDown and UIDropDownMenu_DisableDropDown then
+		if canCopy then
+			UIDropDownMenu_EnableDropDown(controls.copyFromProfileDropdown)
+		else
+			UIDropDownMenu_DisableDropDown(controls.copyFromProfileDropdown)
+		end
+
+		if canDelete then
+			UIDropDownMenu_EnableDropDown(controls.deleteProfileDropdown)
+		else
+			UIDropDownMenu_DisableDropDown(controls.deleteProfileDropdown)
+		end
+	end
+
+	controls.copyButton:SetEnabled(canCopy)
+	controls.deleteButton:SetEnabled(canDelete)
+
+	local characterKey = tostring(self.activeCharacterKey or self:GetCurrentCharacterKey() or "Unknown")
+	controls.profileSummary:SetText(
+		string.format("Character: %s\nActive profile: %s\nSaved profiles: %d", characterKey, tostring(currentProfileKey), #allProfileKeys)
+	)
+end
+
+function QuestTogether:InitializeProfilesWindow(parentCategory)
+	if self.profilesFrame then
+		return
+	end
+
+	local frame = CreateFrame("Frame", "QuestTogetherProfilesPanel")
+	frame.name = "Profiles"
+	frame.parent = "QuestTogether"
+
+	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16)
+	title:SetText("QuestTogether Profiles")
+
+	local description = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+	description:SetWidth(640)
+	description:SetJustifyH("LEFT")
+	description:SetText(
+		"QuestTogether now defaults each character to its own profile. Use this page to switch, copy, create, reset, or delete profiles."
+	)
+
+	local currentProfileDropdown = CreateDropdown(
+		frame,
+		"Current Profile",
+		"Switch this character to another profile.",
+		16,
+		-92,
+		240,
+		function(_, level)
+			local currentProfileKey = QuestTogether:GetCurrentProfileKey()
+			for _, profileKey in ipairs(QuestTogether:GetProfileKeys()) do
+				local info = UIDropDownMenu_CreateInfo()
+				info.text = profileKey
+				info.checked = profileKey == currentProfileKey
+				info.func = function()
+					local ok, err = QuestTogether:SetActiveProfile(profileKey)
+					if not ok then
+						QuestTogether:Print(tostring(err))
+					end
+					QuestTogether:RefreshProfilesWindow()
+					CloseDropDownMenus()
+				end
+				UIDropDownMenu_AddButton(info, level)
+			end
+		end
+	)
+
+	local copyFromDropdown = CreateDropdown(
+		frame,
+		"Copy Into Current Profile",
+		"Pick another profile, then click Copy.",
+		16,
+		-160,
+		240,
+		function(_, level)
+			local currentProfileKey = QuestTogether:GetCurrentProfileKey()
+			for _, profileKey in ipairs(BuildProfileKeyList(currentProfileKey)) do
+				local info = UIDropDownMenu_CreateInfo()
+				info.text = profileKey
+				info.checked = QuestTogether.profileUIState.copyFromProfileKey == profileKey
+				info.func = function()
+					QuestTogether.profileUIState.copyFromProfileKey = profileKey
+					QuestTogether:RefreshProfilesWindow()
+					CloseDropDownMenus()
+				end
+				UIDropDownMenu_AddButton(info, level)
+			end
+		end
+	)
+
+	local copyButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	copyButton:SetSize(90, 22)
+	copyButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 280, -186)
+	copyButton:SetText("Copy")
+	copyButton:SetScript("OnClick", function()
+		local sourceProfileKey = QuestTogether.profileUIState.copyFromProfileKey
+		local ok, err = QuestTogether:CopyProfileIntoActiveProfile(sourceProfileKey)
+		if not ok then
+			QuestTogether:Print(tostring(err))
+			return
+		end
+		QuestTogether:Print("Copied profile settings from " .. tostring(sourceProfileKey) .. ".")
+		QuestTogether:RefreshProfilesWindow()
+	end)
+
+	local createProfileTitle = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	createProfileTitle:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -240)
+	createProfileTitle:SetText("Create And Switch To New Profile")
+
+	local createProfileEdit = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+	createProfileEdit:SetAutoFocus(false)
+	createProfileEdit:SetSize(240, 24)
+	createProfileEdit:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -264)
+	createProfileEdit:SetTextInsets(6, 6, 0, 0)
+
+	local createProfileButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	createProfileButton:SetSize(90, 22)
+	createProfileButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 280, -266)
+	createProfileButton:SetText("Create")
+
+	local function CreateAndActivateProfile()
+		local requestedProfileName = createProfileEdit:GetText() or ""
+		local ok, err = QuestTogether:CreateProfile(requestedProfileName, QuestTogether:GetCurrentProfileKey())
+		if not ok then
+			QuestTogether:Print(tostring(err))
+			return
+		end
+
+		local switchOk, switchErr = QuestTogether:SetActiveProfile(requestedProfileName)
+		if not switchOk then
+			QuestTogether:Print(tostring(switchErr))
+			return
+		end
+
+		createProfileEdit:SetText("")
+		QuestTogether:Print("Created and switched to profile " .. tostring(QuestTogether:GetCurrentProfileKey()) .. ".")
+		QuestTogether:RefreshProfilesWindow()
+	end
+
+	createProfileButton:SetScript("OnClick", CreateAndActivateProfile)
+	createProfileEdit:SetScript("OnEnterPressed", function(self)
+		CreateAndActivateProfile()
+		self:ClearFocus()
+	end)
+
+	local resetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	resetButton:SetSize(180, 22)
+	resetButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -314)
+	resetButton:SetText("Reset Active Profile")
+	resetButton:SetScript("OnClick", function()
+		local ok, err = QuestTogether:ResetActiveProfile()
+		if not ok then
+			QuestTogether:Print(tostring(err))
+			return
+		end
+		QuestTogether:Print("Reset profile " .. tostring(QuestTogether:GetCurrentProfileKey()) .. " to defaults.")
+		QuestTogether:RefreshProfilesWindow()
+	end)
+
+	local deleteProfileDropdown = CreateDropdown(
+		frame,
+		"Delete Profile",
+		"Pick another profile, then click Delete.",
+		16,
+		-370,
+		240,
+		function(_, level)
+			local currentProfileKey = QuestTogether:GetCurrentProfileKey()
+			for _, profileKey in ipairs(BuildProfileKeyList(currentProfileKey)) do
+				local info = UIDropDownMenu_CreateInfo()
+				info.text = profileKey
+				info.checked = QuestTogether.profileUIState.deleteProfileKey == profileKey
+				info.func = function()
+					QuestTogether.profileUIState.deleteProfileKey = profileKey
+					QuestTogether:RefreshProfilesWindow()
+					CloseDropDownMenus()
+				end
+				UIDropDownMenu_AddButton(info, level)
+			end
+		end
+	)
+
+	local deleteButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	deleteButton:SetSize(90, 22)
+	deleteButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 280, -396)
+	deleteButton:SetText("Delete")
+	deleteButton:SetScript("OnClick", function()
+		local deleteProfileKey = QuestTogether.profileUIState.deleteProfileKey
+		local ok, err = QuestTogether:DeleteProfile(deleteProfileKey)
+		if not ok then
+			QuestTogether:Print(tostring(err))
+			return
+		end
+		QuestTogether:Print("Deleted profile " .. tostring(deleteProfileKey) .. ".")
+		QuestTogether.profileUIState.deleteProfileKey = nil
+		QuestTogether.profileUIState.copyFromProfileKey = nil
+		QuestTogether:RefreshProfilesWindow()
+	end)
+
+	local profileSummary = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	profileSummary:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -448)
+	profileSummary:SetWidth(640)
+	profileSummary:SetJustifyH("LEFT")
+	profileSummary:SetText("")
+
+	self.profileControls = {
+		currentProfileDropdown = currentProfileDropdown,
+		copyFromProfileDropdown = copyFromDropdown,
+		copyButton = copyButton,
+		createProfileEdit = createProfileEdit,
+		createProfileButton = createProfileButton,
+		resetButton = resetButton,
+		deleteProfileDropdown = deleteProfileDropdown,
+		deleteButton = deleteButton,
+		profileSummary = profileSummary,
+	}
+	self.profilesFrame = frame
+
+	frame:SetScript("OnShow", function()
+		QuestTogether:RefreshProfilesWindow()
+	end)
+
+	local profileCategory = nil
+	if Settings and Settings.RegisterCanvasLayoutSubcategory and parentCategory then
+		local ok, categoryOrError = pcall(Settings.RegisterCanvasLayoutSubcategory, parentCategory, frame, frame.name, frame.name)
+		if ok then
+			profileCategory = categoryOrError
+		end
+		if not profileCategory then
+			ok, categoryOrError = pcall(Settings.RegisterCanvasLayoutSubcategory, parentCategory, frame, frame.name)
+			if ok then
+				profileCategory = categoryOrError
+			end
+		end
+	end
+	if not profileCategory and Settings and Settings.RegisterCanvasLayoutCategory then
+		profileCategory = Settings.RegisterCanvasLayoutCategory(frame, "QuestTogether Profiles", "QuestTogether Profiles")
+	end
+	if profileCategory and Settings and Settings.RegisterAddOnCategory then
+		Settings.RegisterAddOnCategory(profileCategory)
+	end
+
+	self.profilesCategory = profileCategory
+	self:RefreshProfilesWindow()
+end
+
 function QuestTogether:OpenOptionsWindow()
 	if not self.optionsCategory and not self.optionsFrame then
 		self:InitializeOptionsWindow()
@@ -636,6 +925,8 @@ function QuestTogether:InitializeOptionsWindow()
 	local category = Settings.RegisterCanvasLayoutCategory(frame, frame.name, frame.name)
 	Settings.RegisterAddOnCategory(category)
 	self.optionsCategory = category
+	self:InitializeProfilesWindow(category)
 
 	self:RefreshOptionsWindow()
+	self:RefreshProfilesWindow()
 end
