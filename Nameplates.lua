@@ -192,23 +192,11 @@ local function EnsurePersonalBubbleAnchorSelection(hostFrame)
 	return selection
 end
 
-local function GetPersonalBubbleAnchorDialogAttachPoint(hostFrame)
-	local parentFrame = hostFrame and hostFrame:GetParent() or UIParent
-	if not hostFrame or not parentFrame or not hostFrame.GetCenter or not parentFrame.GetCenter then
-		return "TOPLEFT", hostFrame, "TOPRIGHT", 24, 12
+local function GetPersonalBubbleAnchorDialogAttachPoint()
+	if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
+		return "TOPLEFT", EditModeManagerFrame, "TOPRIGHT", 16, -40
 	end
-
-	local hostCenterX, hostCenterY = hostFrame:GetCenter()
-	local parentCenterX, parentCenterY = parentFrame:GetCenter()
-	if not hostCenterX or not hostCenterY or not parentCenterX or not parentCenterY then
-		return "TOPLEFT", hostFrame, "TOPRIGHT", 24, 12
-	end
-
-	local horizontalPoint = hostCenterX < parentCenterX and "TOPLEFT" or "TOPRIGHT"
-	local relativeHorizontalPoint = hostCenterX < parentCenterX and "TOPRIGHT" or "TOPLEFT"
-	local horizontalOffset = hostCenterX < parentCenterX and 24 or -24
-	local verticalOffset = hostCenterY < parentCenterY and 36 or 12
-	return horizontalPoint, hostFrame, relativeHorizontalPoint, horizontalOffset, verticalOffset
+	return "CENTER", UIParent, "CENTER", 420, 40
 end
 
 local function SavePersonalBubbleDialogPosition(dialog)
@@ -668,9 +656,8 @@ function QuestTogether:SavePersonalBubbleAnchorFromFrame(hostFrame)
 end
 
 function QuestTogether:AttachPersonalBubbleEditModeDialog()
-	local hostFrame = self.announcementBubbleScreenHostFrame
 	local dialog = self.personalBubbleEditModeDialog
-	if not hostFrame or not dialog then
+	if not dialog then
 		return
 	end
 
@@ -687,7 +674,7 @@ function QuestTogether:AttachPersonalBubbleEditModeDialog()
 		return
 	end
 
-	local point, relativeTo, relativePoint, offsetX, offsetY = GetPersonalBubbleAnchorDialogAttachPoint(hostFrame)
+	local point, relativeTo, relativePoint, offsetX, offsetY = GetPersonalBubbleAnchorDialogAttachPoint()
 	self:Debugf(
 		"editmode",
 		"Attaching personal bubble dialog point=%s relativePoint=%s x=%s y=%s",
