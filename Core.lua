@@ -409,6 +409,7 @@ QuestTogether.runtimeEvents = {
 	"ZONE_CHANGED",
 	"ZONE_CHANGED_INDOORS",
 	"ZONE_CHANGED_NEW_AREA",
+	"PLAYER_REGEN_ENABLED",
 	"PLAYER_ENTERING_WORLD",
 	"SUPER_TRACKING_CHANGED",
 	"GROUP_JOINED",
@@ -490,6 +491,12 @@ QuestTogether.API = QuestTogether.API or {
 	IsInInstance = function()
 		local inInstance = IsInInstance()
 		return inInstance and true or false
+	end,
+	InCombatLockdown = function()
+		if InCombatLockdown then
+			return InCombatLockdown() and true or false
+		end
+		return false
 	end,
 	DoEmote = function(emoteToken, target)
 		DoEmote(emoteToken, target)

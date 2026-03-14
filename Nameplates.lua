@@ -1102,6 +1102,11 @@ function QuestTogether:RebuildNameplateQuestTitleCache()
 	end
 
 	-- Include world quest titles similarly to how Plater seeds its cache.
+	if self.API and self.API.InCombatLockdown and self.API.InCombatLockdown() then
+		self:Debug("Skipping world quest title cache refresh during combat", "nameplate")
+		return
+	end
+
 	if C_Map and C_Map.GetBestMapForUnit and C_TaskQuest and C_TaskQuest.GetQuestInfoByQuestID then
 		local mapId = C_Map.GetBestMapForUnit("player")
 		if mapId then

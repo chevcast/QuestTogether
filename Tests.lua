@@ -389,7 +389,44 @@ QuestTogether:RegisterTest("profile operations support create, copy, reset, and 
 		AssertEquals(QuestTogether.db.profiles.Disposable, nil)
 	end)
 
-	AssertEquals(applyCalls, 2)
+AssertEquals(applyCalls, 2)
+end)
+
+QuestTogether:RegisterTest("task area refresh defers during combat and resumes on regen", function()
+	local refreshCalls = {}
+	QuestTogether.pendingTaskAreaRefresh = nil
+	QuestTogether.pendingTaskAreaRefreshShouldAnnounce = nil
+
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return true
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshWorldQuestAreaState", function(_, shouldAnnounce)
+		refreshCalls[#refreshCalls + 1] = "world:" .. tostring(shouldAnnounce)
+	end, function()
+		WithPatchedMethod(QuestTogether, "RefreshBonusObjectiveAreaState", function(_, shouldAnnounce)
+			refreshCalls[#refreshCalls + 1] = "bonus:" .. tostring(shouldAnnounce)
+		end, function()
+			AssertFalse(QuestTogether:RefreshTaskAreaStates(true))
+			AssertEquals(#refreshCalls, 0)
+			AssertTrue(QuestTogether.pendingTaskAreaRefresh)
+			AssertTrue(QuestTogether.pendingTaskAreaRefreshShouldAnnounce)
+
+			QuestTogether.API = CreateApiWithOverrides({
+				InCombatLockdown = function()
+					return false
+				end,
+			})
+
+			QuestTogether:PLAYER_REGEN_ENABLED()
+			AssertEquals(refreshCalls[1], "world:true")
+			AssertEquals(refreshCalls[2], "bonus:true")
+			AssertFalse(QuestTogether.pendingTaskAreaRefresh)
+			AssertFalse(QuestTogether.pendingTaskAreaRefreshShouldAnnounce)
+		end)
+	end)
 end)
 
 QuestTogether:RegisterTest("quest status uses ready to turn in announcement event", function()

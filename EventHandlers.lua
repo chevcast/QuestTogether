@@ -338,8 +338,36 @@ function QuestTogether:RefreshBonusObjectiveAreaState(shouldAnnounce)
 end
 
 function QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
-	self:RefreshWorldQuestAreaState(shouldAnnounce)
-	self:RefreshBonusObjectiveAreaState(shouldAnnounce)
+	local inCombatLockdown = self.API and self.API.InCombatLockdown and self.API.InCombatLockdown()
+	if inCombatLockdown then
+		self.pendingTaskAreaRefresh = true
+		if shouldAnnounce then
+			self.pendingTaskAreaRefreshShouldAnnounce = true
+		end
+		self:Debugf("quest", "Deferring task area refresh during combat announce=%s", tostring(shouldAnnounce))
+		return false
+	end
+
+	local resolvedShouldAnnounce = shouldAnnounce
+	if self.pendingTaskAreaRefreshShouldAnnounce then
+		resolvedShouldAnnounce = true
+	end
+	self.pendingTaskAreaRefresh = false
+	self.pendingTaskAreaRefreshShouldAnnounce = false
+
+	self:RefreshWorldQuestAreaState(resolvedShouldAnnounce)
+	self:RefreshBonusObjectiveAreaState(resolvedShouldAnnounce)
+	return true
+end
+
+function QuestTogether:PLAYER_REGEN_ENABLED()
+	if self.pendingTaskAreaRefresh then
+		local shouldAnnounce = self.pendingTaskAreaRefreshShouldAnnounce and true or false
+		self:Debugf("quest", "Resuming deferred task area refresh announce=%s", tostring(shouldAnnounce))
+		self.pendingTaskAreaRefresh = false
+		self.pendingTaskAreaRefreshShouldAnnounce = false
+		self:RefreshTaskAreaStates(shouldAnnounce)
+	end
 end
 
 -- QUEST_ACCEPTED fires early; defer reads until QUEST_LOG_UPDATE.
