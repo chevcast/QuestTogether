@@ -712,7 +712,19 @@ function QuestTogether:IsSecretValue(_)
 end
 
 function QuestTogether:SafeToNumber(value)
-	local ok, numericValue = pcall(tonumber, value)
+	if type(value) == "number" then
+		return value
+	end
+	if type(value) ~= "string" then
+		return nil
+	end
+
+	local trimmedValue = value:gsub("^%s+", ""):gsub("%s+$", "")
+	if trimmedValue == "" then
+		return nil
+	end
+
+	local ok, numericValue = pcall(tonumber, trimmedValue)
 	if not ok then
 		return nil
 	end

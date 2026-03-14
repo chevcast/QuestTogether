@@ -262,6 +262,13 @@ QuestTogether:RegisterTest("default profile contains new announcement display op
 	AssertTrue(QuestTogether.DEFAULTS.profile.fallbackChannel == nil)
 end)
 
+QuestTogether:RegisterTest("SafeToNumber accepts numeric values without conversion", function()
+	AssertEquals(QuestTogether:SafeToNumber(42), 42)
+	AssertEquals(QuestTogether:SafeToNumber(" 42 "), 42)
+	AssertEquals(QuestTogether:SafeToNumber(""), nil)
+	AssertEquals(QuestTogether:SafeToNumber({}), nil)
+end)
+
 QuestTogether:RegisterTest("profile assignment is stored per character key", function()
 	QuestTogether.db.profiles = {}
 	QuestTogether.db.profileKeys = {}
