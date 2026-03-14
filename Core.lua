@@ -624,6 +624,7 @@ QuestTogether.API = QuestTogether.API or {
 	end,
 	AddOrDelIgnore = function(name)
 		if C_FriendList and C_FriendList.AddOrDelIgnore then
+			-- Ignore-list APIs can throw for invalid names; keep menu actions non-fatal.
 			local ok, result = pcall(C_FriendList.AddOrDelIgnore, name)
 			return ok and result or nil
 		end
@@ -631,6 +632,7 @@ QuestTogether.API = QuestTogether.API or {
 	end,
 	IsOnIgnoredList = function(name)
 		if C_FriendList and C_FriendList.IsOnIgnoredList then
+			-- Ignore-list lookups can throw on malformed names; treat as "not ignored".
 			local ok, result = pcall(C_FriendList.IsOnIgnoredList, name)
 			return ok and result or false
 		end
@@ -728,6 +730,7 @@ function QuestTogether:SafeToNumber(value)
 		return nil
 	end
 
+	-- tostring can throw on protected/userdata values; conversion must stay non-fatal.
 	local okText, textValue = pcall(tostring, value)
 	if not okText then
 		return nil
@@ -737,6 +740,7 @@ function QuestTogether:SafeToNumber(value)
 		return nil
 	end
 
+	-- Trim operations are guarded because protected strings can error on pattern APIs.
 	local okLeadingTrim, trimmedValue = pcall(string.gsub, textValue, "^%s+", "")
 	if not okLeadingTrim then
 		return nil
@@ -750,6 +754,7 @@ function QuestTogether:SafeToNumber(value)
 		return nil
 	end
 
+	-- tonumber may throw on protected values; return nil instead of propagating here.
 	local ok, numericValue = pcall(tonumber, trimmedValue)
 	if not ok then
 		return nil
@@ -759,6 +764,7 @@ function QuestTogether:SafeToNumber(value)
 end
 
 function QuestTogether:SafeToString(value, fallback)
+	-- String coercion is intentionally shielded so debug/log paths never trigger taint errors.
 	local ok, stringValue = pcall(tostring, value)
 	if ok then
 		return stringValue
@@ -777,6 +783,7 @@ function QuestTogether:SafeTrimString(value, fallback)
 		return fallbackValue
 	end
 
+	-- Guard trim calls for protected string values.
 	local okLeadingTrim, trimmedValue = pcall(string.gsub, textValue, "^%s+", "")
 	if not okLeadingTrim then
 		return fallbackValue
@@ -796,6 +803,7 @@ function QuestTogether:SafeStripWhitespace(value, fallback)
 		return fallbackValue
 	end
 
+	-- Guard whitespace stripping for protected string values.
 	local ok, stripped = pcall(string.gsub, textValue, "%s+", "")
 	if not ok then
 		return fallbackValue
@@ -1447,6 +1455,7 @@ function QuestTogether:CloseQuestLogChatFrame()
 
 	if self.API.CloseChatWindow then
 		self.suppressQuestLogChatCloseHook = true
+		-- Closing chat windows can fail in restricted UI states; keep close flow resilient.
 		local ok, closeError = pcall(self.API.CloseChatWindow, chatFrame)
 		self.suppressQuestLogChatCloseHook = false
 		if not ok then
@@ -1617,6 +1626,7 @@ function QuestTogether:GetQuestTagInfo(questId)
 		return nil
 	end
 
+	-- Blizzard quest metadata calls can throw on stale quest IDs.
 	local ok, tagInfo = pcall(C_QuestLog.GetQuestTagInfo, numericQuestId)
 	if not ok or type(tagInfo) ~= "table" then
 		return nil
@@ -1631,6 +1641,7 @@ function QuestTogether:GetQuestDetailsThemePoiIcon(questId)
 		return nil
 	end
 
+	-- Blizzard quest metadata calls can throw on stale quest IDs.
 	local ok, theme = pcall(C_QuestLog.GetQuestDetailsTheme, numericQuestId)
 	if not ok or type(theme) ~= "table" then
 		return nil
@@ -1649,6 +1660,7 @@ function QuestTogether:GetQuestTagAtlas(tagID, worldQuestType)
 		return nil
 	end
 
+	-- Atlas resolver can throw for unknown combinations; fail soft to default icons.
 	local ok, atlas = pcall(QuestUtils_GetQuestTagAtlas, tagID, worldQuestType)
 	if not ok or type(atlas) ~= "string" or atlas == "" then
 		return nil
@@ -1663,6 +1675,7 @@ function QuestTogether:GetWorldQuestAtlasInfo(questId, tagInfo, inProgress)
 		return nil
 	end
 
+	-- Atlas resolver can throw for quest states that are mid-refresh.
 	local ok, atlas = pcall(QuestUtil.GetWorldQuestAtlasInfo, numericQuestId, tagInfo, inProgress and true or false)
 	if not ok or type(atlas) ~= "string" or atlas == "" then
 		return nil
@@ -2242,6 +2255,7 @@ function QuestTogether:CreateTomTomWaypoint(mapID, coordX, coordY)
 		return false
 	end
 
+	-- TomTom may reject waypoint creation during transient map states; keep fallback path alive.
 	local ok = pcall(tomTom.AddWaypoint, tomTom, numericMapID, numericX / 100, numericY / 100, {
 		title = string.format("QuestTogether %.1f, %.1f", numericX, numericY),
 		from = "QuestTogether/ping",
@@ -2403,6 +2417,7 @@ function QuestTogether:PopulateChatLogSpeakerMenu(rootDescription, ownerFrame, s
 	local shortName = self:GetShortDisplayName(fullName)
 	local isSeparate = self:GetOption("chatLogDestination") == "separate"
 	local isIgnored = false
+	-- Context menus should stay usable even if ignored-list lookups fail for edge-case names.
 	local ignoredOk, ignoredResult = pcall(function()
 		return self:IsIgnoredPlayerName(fullName)
 	end)
@@ -2541,6 +2556,7 @@ function QuestTogether:Debugf(category, formatString, ...)
 		return false
 	end
 
+	-- Debug formatting should never crash addon logic due to bad format strings.
 	local ok, formatted = pcall(string.format, tostring(formatString), ...)
 	if not ok then
 		formatted = tostring(formatString)
@@ -2619,6 +2635,7 @@ function QuestTogether:IsWorldQuest(questId)
 		return false
 	end
 
+	-- Quest APIs may throw on IDs that disappear mid-update; treat as false.
 	local ok, isWorldQuest = pcall(C_QuestLog.IsWorldQuest, questId)
 	return ok and isWorldQuest and true or false
 end
@@ -2628,6 +2645,7 @@ function QuestTogether:IsBonusObjective(questId)
 		return false
 	end
 
+	-- Quest APIs may throw on IDs that disappear mid-update; treat as false.
 	local ok, isTaskQuest = pcall(C_QuestLog.IsQuestTask, questId)
 	if not (ok and isTaskQuest) then
 		return false
@@ -2663,6 +2681,7 @@ function QuestTogether:StripTrailingParentheticalPercent(objectiveText)
 		return objectiveText
 	end
 
+	-- Objective text can occasionally contain protected values; strip safely.
 	local ok, strippedText = pcall(string.gsub, objectiveText, "%s*%(%d+%%%s*%)%s*$", "")
 	if not ok then
 		return objectiveText
@@ -2910,6 +2929,7 @@ function QuestTogether:RegisterRuntimeEvents()
 	wipe(self.registeredRuntimeEvents)
 
 	for _, eventName in ipairs(self.runtimeEvents) do
+		-- Event lists vary slightly by client flavor/build; register best-effort.
 		local ok = pcall(self.eventFrame.RegisterEvent, self.eventFrame, eventName)
 		if ok then
 			self.registeredRuntimeEvents[eventName] = true
@@ -2922,6 +2942,7 @@ end
 
 function QuestTogether:UnregisterRuntimeEvents()
 	for eventName in pairs(self.registeredRuntimeEvents or {}) do
+		-- Unregister should not block disable if Blizzard already removed an event.
 		pcall(self.eventFrame.UnregisterEvent, self.eventFrame, eventName)
 		self:Debugf("events", "Unregistered runtime event=%s", tostring(eventName))
 	end
@@ -3014,6 +3035,7 @@ end
 function QuestTogether:OpenHudEditMode()
 	if not EditModeManagerFrame then
 		self:Debug("Blizzard_EditMode not loaded; attempting to load it", "editmode")
+		-- Loading Blizzard UI modules can fail if unavailable; we handle the missing panel below.
 		pcall(UIParentLoadAddOn, "Blizzard_EditMode")
 	end
 

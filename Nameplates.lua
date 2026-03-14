@@ -59,10 +59,7 @@ local function ClampColorComponent(value, fallback)
 end
 
 local function IsNonEmptyString(value)
-	local ok, result = pcall(function()
-		return type(value) == "string" and value ~= ""
-	end)
-	return ok and result and true or false
+	return type(value) == "string" and value ~= ""
 end
 
 SafeUiNumber = function(value, fallback)
@@ -155,6 +152,7 @@ local function EnsurePersonalBubbleAnchorSelection(hostFrame)
 		return nil
 	end
 
+	-- EditMode templates can be unavailable on some clients/states; fail soft and skip selection chrome.
 	local ok, selection = pcall(CreateFrame, "Frame", nil, hostFrame, "EditModeSystemSelectionTemplate")
 	if not ok or not selection then
 		return nil
@@ -943,6 +941,7 @@ function QuestTogether:DoesNameplateUnitExist(unitToken)
 end
 
 function QuestTogether:GetNameplateUnitGuid(unitToken)
+	-- Nameplate unit tokens can disappear between frames; guard transient UnitGUID errors.
 	local ok, unitGuid = pcall(UnitGUID, unitToken)
 	if not ok or not IsNonEmptyString(unitGuid) then
 		return nil
@@ -959,6 +958,7 @@ function QuestTogether:IsNameplateUnitRelatedToActiveQuest(unitToken)
 	if not C_QuestLog or not C_QuestLog.UnitIsRelatedToActiveQuest then
 		return false
 	end
+	-- Blizzard quest APIs can throw on transient/invalid unit tokens; treat as "not related".
 	local ok, isRelated = pcall(C_QuestLog.UnitIsRelatedToActiveQuest, unitToken)
 	return ok and isRelated and true or false
 end
@@ -967,6 +967,7 @@ function QuestTogether:IsNameplateUnitOnQuest(unitToken, questId)
 	if not C_QuestLog or not C_QuestLog.IsUnitOnQuest then
 		return false
 	end
+	-- Blizzard quest APIs can throw on transient/invalid unit tokens; treat as "not on quest".
 	local ok, isOnQuest = pcall(C_QuestLog.IsUnitOnQuest, unitToken, questId)
 	return ok and isOnQuest and true or false
 end
@@ -1216,6 +1217,7 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 		return false
 	end
 
+	-- Tooltip retrieval can throw for stale GUID hyperlinks; skip tooltip fallback on failure.
 	local okTooltip, tooltipData = pcall(function()
 		return C_TooltipInfo.GetHyperlink("unit:" .. unitGuid)
 	end)
@@ -1668,6 +1670,7 @@ local function ApplyAnnouncementIconVisual(texture, eventType, iconAsset, iconKi
 end
 
 local function CreateAnnouncementBubbleFrame(parentFrame)
+	-- ChatBubbleTemplate is not guaranteed in all UI states; degrade to a plain frame bubble.
 	local ok, bubble = pcall(CreateFrame, "Frame", nil, parentFrame, "ChatBubbleTemplate")
 	if ok and bubble then
 		return bubble
@@ -2537,6 +2540,7 @@ function QuestTogether:EnableNameplateAugmentation()
 	end
 
 	local function RegisterNameplateEvent(addon, eventName)
+		-- Event availability differs by client build; keep registration best-effort.
 		local ok = pcall(addon.nameplateEventFrame.RegisterEvent, addon.nameplateEventFrame, eventName)
 		if ok then
 			addon.nameplateRegisteredEvents[eventName] = true
@@ -2579,6 +2583,7 @@ function QuestTogether:DisableNameplateAugmentation()
 	self:Debug("Disabling nameplate augmentation", "nameplate")
 
 	for eventName in pairs(self.nameplateRegisteredEvents or {}) do
+		-- Unregister should never break disable flow if an event was already invalidated.
 		pcall(self.nameplateEventFrame.UnregisterEvent, self.nameplateEventFrame, eventName)
 		self:Debugf("nameplate", "Unregistered augmentation event=%s", tostring(eventName))
 	end

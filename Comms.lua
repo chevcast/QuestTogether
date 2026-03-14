@@ -34,6 +34,7 @@ local function SafeDebugString(value)
 		return QuestTogether:SafeToString(value, "<secret>")
 	end
 
+	-- Debug logging must never throw when formatting potentially protected values.
 	local ok, stringValue = pcall(tostring, value)
 	if ok then
 		return stringValue
@@ -46,6 +47,7 @@ local function SafeChannelNumber(addon, value)
 		return addon:SafeToNumber(value)
 	end
 
+	-- Fallback numeric coercion should never throw on protected values.
 	local ok, numberValue = pcall(tonumber, value)
 	if not ok then
 		return nil
@@ -96,6 +98,7 @@ local function SafeNumber(addon, value)
 		return addon:SafeToNumber(value)
 	end
 
+	-- Fallback numeric coercion should never throw on protected values.
 	local ok, numberValue = pcall(tonumber, value)
 	if not ok then
 		return nil
@@ -112,6 +115,7 @@ local function NormalizeRealmName(addon, realmName)
 	if addon and addon.SafeStripWhitespace then
 		return addon:SafeStripWhitespace(sourceRealm, "")
 	end
+	-- Realm normalization is called from chat/nameplate paths; keep failures non-fatal.
 	local okText, textValue = pcall(tostring, sourceRealm)
 	if not okText then
 		return ""
@@ -577,6 +581,7 @@ function QuestTogether:HideAnnouncementChannelFromChatWindows()
 	for chatFrameID = 1, maxWindows do
 		local chatFrame = self.API.GetChatFrameByID(chatFrameID)
 		if chatFrame then
+			-- Some chat frames reject channel removal in edge states; keep cleanup best-effort.
 			pcall(self.API.RemoveChatWindowChannel, chatFrame, self.announcementChannelName)
 		end
 	end
@@ -632,6 +637,7 @@ end
 function QuestTogether:LeaveAnnouncementChannel()
 	if self.API and self.API.LeaveChannelByName then
 		self:Debugf("comms", "Leaving announcement channel name=%s", tostring(self.announcementChannelName))
+		-- Channel leave can fail if Blizzard already removed it; no need to hard fail disable.
 		pcall(self.API.LeaveChannelByName, self.announcementChannelName)
 	end
 	self.announcementChannelLocalID = nil

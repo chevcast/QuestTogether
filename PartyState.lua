@@ -20,6 +20,7 @@ local function NormalizeRealmName(addon, realmName)
 	if addon and addon.SafeStripWhitespace then
 		return addon:SafeStripWhitespace(realmName, "")
 	end
+	-- Realm values can come from protected APIs; keep fallback normalization non-fatal.
 	local okText, textValue = pcall(tostring, realmName)
 	if not okText then
 		return ""

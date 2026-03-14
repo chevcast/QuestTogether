@@ -664,11 +664,13 @@ function QuestTogether:InitializeProfilesWindow(parentCategory)
 
 	local profileCategory = nil
 	if Settings and Settings.RegisterCanvasLayoutSubcategory and parentCategory then
+		-- API signatures differ across client versions; probe both safely.
 		local ok, categoryOrError = pcall(Settings.RegisterCanvasLayoutSubcategory, parentCategory, frame, frame.name, frame.name)
 		if ok then
 			profileCategory = categoryOrError
 		end
 		if not profileCategory then
+			-- Older signatures omit the extra name parameter.
 			ok, categoryOrError = pcall(Settings.RegisterCanvasLayoutSubcategory, parentCategory, frame, frame.name)
 			if ok then
 				profileCategory = categoryOrError
