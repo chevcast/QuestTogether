@@ -764,32 +764,34 @@ function QuestTogether:SafeToString(value, fallback)
 end
 
 function QuestTogether:SafeTrimString(value, fallback)
-	local textValue = self:SafeToString(value, "")
+	local fallbackValue = fallback or ""
+	local textValue = self:SafeToString(value, fallbackValue)
 	if type(textValue) ~= "string" then
-		return fallback or ""
+		return fallbackValue
 	end
 
 	local okLeadingTrim, trimmedValue = pcall(string.gsub, textValue, "^%s+", "")
 	if not okLeadingTrim then
-		return fallback or ""
+		return fallbackValue
 	end
 	local okTrailingTrim = false
 	okTrailingTrim, trimmedValue = pcall(string.gsub, trimmedValue, "%s+$", "")
 	if not okTrailingTrim then
-		return fallback or ""
+		return fallbackValue
 	end
 	return trimmedValue
 end
 
 function QuestTogether:SafeStripWhitespace(value, fallback)
-	local textValue = self:SafeToString(value, "")
+	local fallbackValue = fallback or ""
+	local textValue = self:SafeToString(value, fallbackValue)
 	if type(textValue) ~= "string" then
-		return fallback or ""
+		return fallbackValue
 	end
 
 	local ok, stripped = pcall(string.gsub, textValue, "%s+", "")
 	if not ok then
-		return fallback or ""
+		return fallbackValue
 	end
 	return stripped
 end

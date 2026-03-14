@@ -312,9 +312,10 @@ QuestTogether:RegisterTest("personal bubble anchor numeric parsing uses SafeToNu
 		return nil
 	end, function()
 		QuestTogether:SetPersonalBubbleAnchor("TOP", "TOP", "secret-x", "secret-y")
-		local anchor = QuestTogether:GetPersonalBubbleAnchor()
-		AssertEquals(anchor.x, 33)
-		AssertEquals(anchor.y, -27)
+		local store = QuestTogether:GetPersonalBubbleAnchorStore()
+		local key = QuestTogether:GetPersonalBubbleAnchorKey()
+		AssertEquals(store[key].x, 33)
+		AssertEquals(store[key].y, -27)
 	end)
 end)
 
