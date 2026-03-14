@@ -530,8 +530,8 @@ local function GetAnnouncementBubbleScreenHostFrame()
 
 	local hostFrame = CreateFrame("Frame", "QuestTogetherPersonalBubbleAnchor", parentFrame)
 	hostFrame:SetSize(1, 1)
-	hostFrame:SetFrameStrata("HIGH")
-	hostFrame:SetFrameLevel(parentFrame:GetFrameLevel() + 50)
+	hostFrame:SetFrameStrata("LOW")
+	hostFrame:SetFrameLevel(parentFrame:GetFrameLevel() + 5)
 	hostFrame:SetClampedToScreen(true)
 	hostFrame:SetMovable(true)
 	hostFrame:RegisterForDrag("LeftButton")
@@ -797,7 +797,13 @@ function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
 	EnsurePersonalBubbleAnchorSelection(hostFrame)
 
 	local editModeActive = self:IsPersonalBubbleAnchorInEditMode()
+	local uiParentLevel = SafeUiNumber(
+		(UIParent and UIParent.GetFrameLevel and UIParent:GetFrameLevel()) or 0,
+		0
+	)
 	if editModeActive then
+		hostFrame:SetFrameStrata("HIGH")
+		hostFrame:SetFrameLevel(uiParentLevel + 80)
 		local visualConfig = GetAnnouncementBubbleVisualConfig()
 		local fontPath, fontFlags = GetPersonalBubbleAnchorFontDefinition()
 		hostFrame.EditLabel:SetFont(fontPath, visualConfig.fontSize, fontFlags)
@@ -821,7 +827,15 @@ function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
 		hostFrame.EditLabel:SetPoint("LEFT", hostFrame.EditIcon, "RIGHT", visualConfig.iconGap, 0)
 		hostFrame.EditLabel:SetWidth(labelWidth)
 	else
+		hostFrame:SetFrameStrata("LOW")
+		hostFrame:SetFrameLevel(uiParentLevel + 5)
 		hostFrame:SetSize(1, 1)
+	end
+
+	local activeBubble = self.nameplateBubbleByUnitFrame and self.nameplateBubbleByUnitFrame[hostFrame]
+	if activeBubble then
+		activeBubble:SetFrameStrata(hostFrame:GetFrameStrata() or "LOW")
+		activeBubble:SetFrameLevel(SafeUiNumber(hostFrame:GetFrameLevel(), 0) + 20)
 	end
 	hostFrame:EnableMouse(editModeActive)
 
@@ -1689,6 +1703,17 @@ local function CreateAnnouncementBubbleFrame(parentFrame)
 	return fallbackBubble
 end
 
+local function ApplyAnnouncementBubbleLayering(hostFrame, unitFrame, bubble)
+	if not hostFrame or not unitFrame or not bubble then
+		return
+	end
+
+	local frameStrata = hostFrame:GetFrameStrata() or "LOW"
+	local frameLevel = SafeUiNumber(unitFrame:GetFrameLevel(), 0) + 20
+	bubble:SetFrameStrata(frameStrata)
+	bubble:SetFrameLevel(frameLevel)
+end
+
 local function EnsureAnnouncementBubble(hostFrame)
 	local unitFrame = GetAnnouncementBubbleUnitFrame(hostFrame)
 	if not hostFrame or not unitFrame then
@@ -1697,6 +1722,7 @@ local function EnsureAnnouncementBubble(hostFrame)
 
 	local existingBubble = QuestTogether.nameplateBubbleByUnitFrame[unitFrame]
 	if existingBubble then
+		ApplyAnnouncementBubbleLayering(hostFrame, unitFrame, existingBubble)
 		return existingBubble
 	end
 
@@ -1705,8 +1731,7 @@ local function EnsureAnnouncementBubble(hostFrame)
 		return nil
 	end
 
-	bubble:SetFrameStrata(hostFrame:GetFrameStrata())
-	bubble:SetFrameLevel(unitFrame:GetFrameLevel() + 20)
+	ApplyAnnouncementBubbleLayering(hostFrame, unitFrame, bubble)
 	bubble:SetAlpha(0)
 	bubble:Hide()
 
