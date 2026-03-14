@@ -146,6 +146,30 @@ local function GetAnnouncementBubbleVisualConfig()
 	}
 end
 
+local function EstimateBubbleTextWidth(text, fontSize, minTextWidth, maxTextWidth)
+	local textValue = type(text) == "string" and text or ""
+	if textValue == "" then
+		return minTextWidth
+	end
+
+	local characterWidth = math.max(5, fontSize * 0.55)
+	local estimatedWidth = math.floor((string.len(textValue) * characterWidth) + 0.5)
+	return math.min(maxTextWidth, math.max(minTextWidth, estimatedWidth))
+end
+
+local function EstimateBubbleTextHeight(text, textWidth, fontSize)
+	local textValue = type(text) == "string" and text or ""
+	local lineHeight = math.max(fontSize, math.floor((fontSize * 1.2) + 0.5))
+	if textValue == "" then
+		return lineHeight
+	end
+
+	local characterWidth = math.max(5, fontSize * 0.55)
+	local maxCharsPerLine = math.max(1, math.floor(textWidth / characterWidth))
+	local lineCount = math.max(1, math.ceil(string.len(textValue) / maxCharsPerLine))
+	return lineCount * lineHeight
+end
+
 local function EnsurePersonalBubbleAnchorSelection(hostFrame)
 	if not hostFrame or hostFrame.Selection then
 		return hostFrame and hostFrame.Selection or nil
@@ -1975,17 +1999,21 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 	bubble.String:SetWidth(maxTextWidth)
 	bubble.String:SetText(message)
 
-	local unboundedWidth = minTextWidth
+	local measuredUnboundedWidth = nil
 	if bubble.String.GetUnboundedStringWidth then
-		unboundedWidth = SafeUiNumber(bubble.String:GetUnboundedStringWidth(), minTextWidth)
+		measuredUnboundedWidth = SafeUiNumber(bubble.String:GetUnboundedStringWidth(), nil)
 	end
+	local unboundedWidth = measuredUnboundedWidth
+		or EstimateBubbleTextWidth(message, fontSize, minTextWidth, maxTextWidth)
 	local targetTextWidth = math.min(
 		maxTextWidth,
 		math.max(minTextWidth, unboundedWidth)
 	)
 	bubble.String:SetWidth(targetTextWidth)
 
-	local textHeight = SafeUiNumber(bubble.String:GetStringHeight(), 0)
+	local measuredTextHeight = SafeUiNumber(bubble.String:GetStringHeight(), nil)
+	local textHeight = measuredTextHeight
+		or EstimateBubbleTextHeight(message, targetTextWidth, fontSize)
 	local contentHeight = math.max(iconSize, textHeight)
 	local contentWidth = iconSize + iconGap + targetTextWidth
 	local bubbleWidth = contentWidth + (inset * 2)
