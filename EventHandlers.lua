@@ -546,13 +546,10 @@ end
 function QuestTogether:QUEST_LOG_UPDATE()
 	local queuedTasks = self.onQuestLogUpdate
 	if #queuedTasks > 0 then
-		for index = 1, #queuedTasks do
-			local ok, err = pcall(queuedTasks[index])
-			if not ok then
-				self:Print("Quest task error: " .. tostring(err))
-			end
-		end
 		self.onQuestLogUpdate = {}
+		for index = 1, #queuedTasks do
+			queuedTasks[index]()
+		end
 	end
 
 	self:RefreshTaskAreaStates(true)
