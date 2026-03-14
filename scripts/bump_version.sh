@@ -143,6 +143,14 @@ fi
 git commit -m "Bump version to ${new_version}" -- "$toc_file"
 
 release_commit="$(git rev-parse --short HEAD)"
+current_branch="$(git rev-parse --abbrev-ref HEAD)"
+if [[ -z "$current_branch" || "$current_branch" == "HEAD" ]]; then
+	echo "Error: release commit ${release_commit} is not on a branch; cannot push commit."
+	exit 1
+fi
+echo "Pushing commit ${release_commit} to origin/${current_branch}..."
+git push origin "${current_branch}"
+
 echo "Tagging ${release_commit} as ${new_tag}..."
 git tag -a "${new_tag}" -m "Release ${new_tag}" HEAD
 
@@ -151,5 +159,6 @@ git push origin "${new_tag}"
 
 echo "Done."
 echo "Committed: ${release_commit}"
+echo "Commit pushed: origin/${current_branch}"
 echo "Tag pushed: ${new_tag}"
 echo "Updated file: ${toc_file}"
