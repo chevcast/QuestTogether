@@ -726,22 +726,23 @@ end
 
 function QuestTogether:SafeToNumber(value)
 	local valueType = type(value)
-	if valueType ~= "number" and valueType ~= "string" then
-		return nil
+	if valueType == "number" then
+		-- Validate with protected arithmetic; secret numbers can throw when used numerically.
+		local okNumber, normalizedValue = pcall(function()
+			return value + 0
+		end)
+		if not okNumber then
+			return nil
+		end
+		return normalizedValue
 	end
 
-	-- tostring can throw on protected/userdata values; conversion must stay non-fatal.
-	local okText, textValue = pcall(tostring, value)
-	if not okText then
-		return nil
-	end
-
-	if type(textValue) ~= "string" then
+	if valueType ~= "string" then
 		return nil
 	end
 
 	-- Trim operations are guarded because protected strings can error on pattern APIs.
-	local okLeadingTrim, trimmedValue = pcall(string.gsub, textValue, "^%s+", "")
+	local okLeadingTrim, trimmedValue = pcall(string.gsub, value, "^%s+", "")
 	if not okLeadingTrim then
 		return nil
 	end
@@ -778,13 +779,12 @@ end
 
 function QuestTogether:SafeTrimString(value, fallback)
 	local fallbackValue = fallback or ""
-	local textValue = self:SafeToString(value, fallbackValue)
-	if type(textValue) ~= "string" then
+	if type(value) ~= "string" then
 		return fallbackValue
 	end
 
 	-- Guard trim calls for protected string values.
-	local okLeadingTrim, trimmedValue = pcall(string.gsub, textValue, "^%s+", "")
+	local okLeadingTrim, trimmedValue = pcall(string.gsub, value, "^%s+", "")
 	if not okLeadingTrim then
 		return fallbackValue
 	end
@@ -798,13 +798,12 @@ end
 
 function QuestTogether:SafeStripWhitespace(value, fallback)
 	local fallbackValue = fallback or ""
-	local textValue = self:SafeToString(value, fallbackValue)
-	if type(textValue) ~= "string" then
+	if type(value) ~= "string" then
 		return fallbackValue
 	end
 
 	-- Guard whitespace stripping for protected string values.
-	local ok, stripped = pcall(string.gsub, textValue, "%s+", "")
+	local ok, stripped = pcall(string.gsub, value, "%s+", "")
 	if not ok then
 		return fallbackValue
 	end
@@ -3039,10 +3038,31 @@ function QuestTogether:OpenHudEditMode()
 		pcall(UIParentLoadAddOn, "Blizzard_EditMode")
 	end
 
-	if EditModeManagerFrame and ShowUIPanel then
-		self:Debug("Opening HUD Edit Mode", "editmode")
-		ShowUIPanel(EditModeManagerFrame)
-		return true
+	if self.API and self.API.InCombatLockdown and self.API.InCombatLockdown() then
+		self:Debug("Skipping HUD Edit Mode open during combat", "editmode")
+		return false
+	end
+
+	if not EditModeManagerFrame then
+		self:Debug("HUD Edit Mode unavailable", "editmode")
+		return false
+	end
+
+	-- Avoid ShowUIPanel() to keep UIParentPanelManager taint risk low.
+	if EditModeManagerFrame.EnterEditMode then
+		local ok = pcall(EditModeManagerFrame.EnterEditMode, EditModeManagerFrame)
+		if ok then
+			self:Debug("Opening HUD Edit Mode via EnterEditMode", "editmode")
+			return true
+		end
+	end
+
+	if EditModeManagerFrame.Show then
+		local ok = pcall(EditModeManagerFrame.Show, EditModeManagerFrame)
+		if ok then
+			self:Debug("Opening HUD Edit Mode via Show", "editmode")
+			return true
+		end
 	end
 
 	self:Debug("HUD Edit Mode unavailable", "editmode")
