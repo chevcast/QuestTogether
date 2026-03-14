@@ -319,11 +319,13 @@ function QuestTogether:GetPersonalBubbleAnchor()
 	if type(saved.relativePoint) == "string" and saved.relativePoint ~= "" then
 		anchor.relativePoint = saved.relativePoint
 	end
-	if tonumber(saved.x) then
-		anchor.x = tonumber(saved.x)
+	local numericX = self:SafeToNumber(saved.x)
+	if numericX ~= nil then
+		anchor.x = numericX
 	end
-	if tonumber(saved.y) then
-		anchor.y = tonumber(saved.y)
+	local numericY = self:SafeToNumber(saved.y)
+	if numericY ~= nil then
+		anchor.y = numericY
 	end
 
 	return anchor
@@ -336,11 +338,13 @@ function QuestTogether:SetPersonalBubbleAnchor(point, relativePoint, offsetX, of
 	end
 
 	local defaults = self.DEFAULT_PERSONAL_BUBBLE_ANCHOR
+	local numericOffsetX = self:SafeToNumber(offsetX)
+	local numericOffsetY = self:SafeToNumber(offsetY)
 	store[self:GetPersonalBubbleAnchorKey()] = {
 		point = type(point) == "string" and point ~= "" and point or defaults.point,
 		relativePoint = type(relativePoint) == "string" and relativePoint ~= "" and relativePoint or defaults.relativePoint,
-		x = tonumber(offsetX) or defaults.x,
-		y = tonumber(offsetY) or defaults.y,
+		x = numericOffsetX ~= nil and numericOffsetX or defaults.x,
+		y = numericOffsetY ~= nil and numericOffsetY or defaults.y,
 	}
 
 	if self.ApplySavedPersonalBubbleAnchor then
@@ -759,6 +763,37 @@ function QuestTogether:SafeToString(value, fallback)
 	return "<secret>"
 end
 
+function QuestTogether:SafeTrimString(value, fallback)
+	local textValue = self:SafeToString(value, "")
+	if type(textValue) ~= "string" then
+		return fallback or ""
+	end
+
+	local okLeadingTrim, trimmedValue = pcall(string.gsub, textValue, "^%s+", "")
+	if not okLeadingTrim then
+		return fallback or ""
+	end
+	local okTrailingTrim = false
+	okTrailingTrim, trimmedValue = pcall(string.gsub, trimmedValue, "%s+$", "")
+	if not okTrailingTrim then
+		return fallback or ""
+	end
+	return trimmedValue
+end
+
+function QuestTogether:SafeStripWhitespace(value, fallback)
+	local textValue = self:SafeToString(value, "")
+	if type(textValue) ~= "string" then
+		return fallback or ""
+	end
+
+	local ok, stripped = pcall(string.gsub, textValue, "%s+", "")
+	if not ok then
+		return fallback or ""
+	end
+	return stripped
+end
+
 -- Deep copy helper used for defaults merging and tests.
 function QuestTogether:DeepCopy(value)
 	if type(value) ~= "table" then
@@ -840,7 +875,7 @@ local function NormalizeProfileKey(profileKey)
 		return nil
 	end
 
-	local trimmed = tostring(profileKey):gsub("^%s+", ""):gsub("%s+$", "")
+	local trimmed = QuestTogether:SafeTrimString(profileKey, "")
 	if trimmed == "" then
 		return nil
 	end
@@ -858,7 +893,7 @@ function QuestTogether:GetCurrentCharacterKey()
 		return playerName
 	end
 
-	local realmName = tostring(self.API.GetRealmName and self.API.GetRealmName() or ""):gsub("%s+", "")
+	local realmName = self:SafeStripWhitespace(self.API.GetRealmName and self.API.GetRealmName() or "", "")
 	if realmName ~= "" then
 		return playerName .. "-" .. realmName
 	end
@@ -1108,7 +1143,7 @@ function QuestTogether:PrintRaw(message)
 end
 
 function QuestTogether:PrintChatLogSystemMessage(message)
-	self:PrintChatLogRaw("|cff33ff99QuestTogether|r: " .. tostring(message))
+	self:PrintChatLogRaw("|cff33ff99QuestTogether|r: " .. self:SafeToString(message, ""))
 end
 
 function QuestTogether:GetMainChatFrame()
@@ -1120,10 +1155,10 @@ function QuestTogether:GetConfiguredQuestLogChatFrameID()
 		return nil
 	end
 
-	local configuredID = tonumber(self.db.profile and self.db.profile.questLogChatFrameID)
+	local configuredID = self:SafeToNumber(self.db.profile and self.db.profile.questLogChatFrameID)
 	if not configuredID and self.db.global then
 		-- Legacy fallback for migration from pre-profile versions.
-		configuredID = tonumber(self.db.global.questLogChatFrameID)
+		configuredID = self:SafeToNumber(self.db.global.questLogChatFrameID)
 	end
 	if configuredID and configuredID > 0 then
 		return configuredID
@@ -1137,7 +1172,7 @@ function QuestTogether:SetConfiguredQuestLogChatFrameID(chatFrameID)
 		return false
 	end
 
-	local numericID = tonumber(chatFrameID)
+	local numericID = self:SafeToNumber(chatFrameID)
 	if numericID and numericID > 0 then
 		if self.db.profile then
 			self.db.profile.questLogChatFrameID = numericID
@@ -1167,7 +1202,7 @@ function QuestTogether:FindQuestLogChatFrame()
 		end
 	end
 
-	local maxWindows = tonumber(self.API.GetNumChatWindows and self.API.GetNumChatWindows()) or 0
+	local maxWindows = self:SafeToNumber(self.API.GetNumChatWindows and self.API.GetNumChatWindows()) or 0
 	for chatFrameID = 1, maxWindows do
 		local frameName = self.API.GetChatWindowInfo and self.API.GetChatWindowInfo(chatFrameID)
 		if frameName == chatWindowName then
@@ -1200,7 +1235,7 @@ end
 
 function QuestTogether:FindVisibleQuestLogChatFrame(excludedFrame)
 	local chatWindowName = self.questLogWindowName or "QuestTogether"
-	local maxWindows = tonumber(self.API.GetNumChatWindows and self.API.GetNumChatWindows()) or 0
+	local maxWindows = self:SafeToNumber(self.API.GetNumChatWindows and self.API.GetNumChatWindows()) or 0
 
 	for chatFrameID = 1, maxWindows do
 		local frameName = self.API.GetChatWindowInfo and self.API.GetChatWindowInfo(chatFrameID)
@@ -1444,7 +1479,7 @@ function QuestTogether:ApplyMainChatFontSizeToChatFrame(chatFrame)
 
 	local mainChatID = mainChatFrame:GetID()
 	local _, fontSize = self.API.GetChatWindowInfo(mainChatID)
-	fontSize = tonumber(fontSize)
+	fontSize = self:SafeToNumber(fontSize)
 	if not fontSize or fontSize <= 0 then
 		return false
 	end
@@ -1486,7 +1521,7 @@ function QuestTogether:GetQuestIconChatTag(size)
 		return ""
 	end
 
-	local iconSize = math.max(1, math.floor(tonumber(size) or 14))
+	local iconSize = math.max(1, math.floor((self:SafeToNumber(size) or 14)))
 	return string.format("|T%s:%d:%d:0:0|t", texturePath, iconSize, iconSize)
 end
 
@@ -1496,7 +1531,7 @@ function QuestTogether:GetIconChatTagFromAsset(iconAsset, iconKind, size)
 		return ""
 	end
 
-	local iconSize = math.max(1, math.floor(tonumber(size) or 14))
+	local iconSize = math.max(1, math.floor((self:SafeToNumber(size) or 14)))
 	if iconKind == "atlas" then
 		return "|A:" .. asset .. ":" .. tostring(iconSize) .. ":" .. tostring(iconSize) .. "|a"
 	end
@@ -1530,7 +1565,7 @@ function QuestTogether:GetAddonVersion()
 		return ""
 	end
 
-	local version = metadata:gsub("^%s+", ""):gsub("%s+$", "")
+	local version = self:SafeTrimString(metadata, "")
 	if version == "" then
 		return ""
 	end
@@ -1568,7 +1603,7 @@ function QuestTogether:NormalizeAnnouncementWarModeValue(warMode)
 end
 
 function QuestTogether:GetQuestTagInfo(questId)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId or not C_QuestLog or not C_QuestLog.GetQuestTagInfo then
 		return nil
 	end
@@ -1582,7 +1617,7 @@ function QuestTogether:GetQuestTagInfo(questId)
 end
 
 function QuestTogether:GetQuestDetailsThemePoiIcon(questId)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId or not C_QuestLog or not C_QuestLog.GetQuestDetailsTheme then
 		return nil
 	end
@@ -1614,7 +1649,7 @@ function QuestTogether:GetQuestTagAtlas(tagID, worldQuestType)
 end
 
 function QuestTogether:GetWorldQuestAtlasInfo(questId, tagInfo, inProgress)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId or type(tagInfo) ~= "table" or not QuestUtil or not QuestUtil.GetWorldQuestAtlasInfo then
 		return nil
 	end
@@ -1628,7 +1663,7 @@ function QuestTogether:GetWorldQuestAtlasInfo(questId, tagInfo, inProgress)
 end
 
 function QuestTogether:GetQuestStateAnnouncementIconInfo(eventType, questId)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId or not QuestUtil then
 		return nil, nil
 	end
@@ -1660,7 +1695,7 @@ function QuestTogether:GetQuestStateAnnouncementIconInfo(eventType, questId)
 end
 
 function QuestTogether:GetWorldQuestAnnouncementIconInfo(questId)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId then
 		return "worldquest-icon", "atlas"
 	end
@@ -1682,7 +1717,7 @@ function QuestTogether:GetWorldQuestAnnouncementIconInfo(questId)
 end
 
 function QuestTogether:GetBonusObjectiveAnnouncementIconInfo(eventType, questId)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if numericQuestId then
 		local tagInfo = self:GetQuestTagInfo(numericQuestId)
 		if tagInfo then
@@ -1858,7 +1893,7 @@ function QuestTogether:BuildChatLogSpeakerLabel(targetName, classFile)
 end
 
 function QuestTogether:BuildChatLogQuestLabel(questId, questTitle)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	local titleText = tostring(questTitle or "")
 	if not numericQuestId or titleText == "" or not LinkUtil or not LinkUtil.FormatLink then
 		return titleText
@@ -1870,24 +1905,25 @@ end
 
 function QuestTogether:DecorateAnnouncementMessageWithQuestLink(message, eventType, questId)
 	if not self.questTitleLinkEventTypes or not self.questTitleLinkEventTypes[eventType] then
-		return tostring(message or "")
+		return self:SafeToString(message, "")
 	end
 
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId then
-		return tostring(message or "")
+		return self:SafeToString(message, "")
 	end
 
-	local prefixText, questTitle = tostring(message or ""):match("^(.-:%s+)(.+)$")
+	local messageText = self:SafeToString(message, "")
+	local prefixText, questTitle = string.match(messageText, "^(.-:%s+)(.+)$")
 	if not prefixText or not questTitle or questTitle == "" then
-		return tostring(message or "")
+		return messageText
 	end
 
 	return prefixText .. self:BuildChatLogQuestLabel(numericQuestId, questTitle)
 end
 
 function QuestTogether:GetQuestStatusLabel(questId)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId then
 		return "Unknown"
 	end
@@ -1912,7 +1948,7 @@ function QuestTogether:GetQuestStatusLabel(questId)
 end
 
 function QuestTogether:GetQuestShareableStatusLabel(questId)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId then
 		return "Unknown"
 	end
@@ -1931,16 +1967,15 @@ function QuestTogether:GetQuestShareableStatusLabel(questId)
 end
 
 function QuestTogether:NormalizeQuestLinkTitleText(titleText)
-	local normalizedText = tostring(titleText or "")
-	normalizedText = normalizedText:gsub("^%s+", ""):gsub("%s+$", "")
-	if normalizedText:match("^%[.+%]$") then
-		normalizedText = normalizedText:sub(2, -2)
+	local normalizedText = self:SafeTrimString(titleText, "")
+	if string.match(normalizedText, "^%[.+%]$") then
+		normalizedText = string.sub(normalizedText, 2, -2)
 	end
 	return normalizedText
 end
 
 function QuestTogether:BuildQuestStatusMessage(questId, fallbackTitle)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId then
 		return "Quest status unavailable."
 	end
@@ -1995,7 +2030,7 @@ function QuestTogether:GetTrackedQuestAnnouncementIcon(questData)
 end
 
 function QuestTogether:RefreshTrackedQuestAnnouncementIcon(questId, questData, eventType)
-	local numericQuestId = tonumber(questId)
+	local numericQuestId = self:SafeToNumber(questId)
 	if not numericQuestId or type(questData) ~= "table" then
 		return nil, nil
 	end
@@ -2044,7 +2079,7 @@ function QuestTogether:BuildQuestCompareMessage(remoteName, compareEntry)
 		return "Quest comparison unavailable."
 	end
 
-	local questId = tonumber(compareEntry.questId)
+	local questId = self:SafeToNumber(compareEntry.questId)
 	local questTitle = tostring(compareEntry.questTitle or "")
 	if questTitle == "" then
 		questTitle = self:GetQuestTitle(questId)
@@ -2619,7 +2654,10 @@ function QuestTogether:StripTrailingParentheticalPercent(objectiveText)
 		return objectiveText
 	end
 
-	local strippedText = objectiveText:gsub("%s*%(%d+%%%s*%)%s*$", "")
+	local ok, strippedText = pcall(string.gsub, objectiveText, "%s*%(%d+%%%s*%)%s*$", "")
+	if not ok then
+		return objectiveText
+	end
 	if strippedText == "" then
 		return objectiveText
 	end
@@ -3288,7 +3326,7 @@ function QuestTogether:WatchQuest(questId, questInfo)
 			currentValue = progress
 		end
 		tracker[questId].objectives[objectiveIndex] = objectiveText
-		tracker[questId].objectiveValues[objectiveIndex] = tonumber(currentValue)
+		tracker[questId].objectiveValues[objectiveIndex] = self:SafeToNumber(currentValue)
 	end
 end
 

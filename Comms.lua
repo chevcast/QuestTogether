@@ -104,17 +104,59 @@ local function SafeNumber(addon, value)
 	return numberValue
 end
 
+local function NormalizeRealmName(addon, realmName)
+	local sourceRealm = realmName
+	if sourceRealm == nil or sourceRealm == "" then
+		sourceRealm = addon and addon.API and addon.API.GetRealmName and addon.API.GetRealmName() or ""
+	end
+	if addon and addon.SafeStripWhitespace then
+		return addon:SafeStripWhitespace(sourceRealm, "")
+	end
+	local okText, textValue = pcall(tostring, sourceRealm)
+	if not okText then
+		return ""
+	end
+	local okStrip, stripped = pcall(string.gsub, textValue, "%s+", "")
+	if not okStrip then
+		return ""
+	end
+	return stripped
+end
+
 function QuestTogether:EscapePayload(value)
 	local text = tostring(value or "")
-	return (text:gsub("([^%w%-_%.~])", function(character)
+	return (string.gsub(text, "([^%w%-_%.~])", function(character)
 		return string.format("%%%02X", string.byte(character))
 	end))
 end
 
 function QuestTogether:UnescapePayload(value)
 	local text = tostring(value or "")
-	return (text:gsub("%%(%x%x)", function(hex)
-		return string.char(tonumber(hex, 16))
+	return (string.gsub(text, "%%(%x%x)", function(hex)
+		local firstChar = string.sub(hex or "", 1, 1)
+		local secondChar = string.sub(hex or "", 2, 2)
+		local firstNibble = nil
+		local secondNibble = nil
+		if firstChar ~= "" then
+			local firstByte = string.byte(string.upper(firstChar))
+			if firstByte >= string.byte("0") and firstByte <= string.byte("9") then
+				firstNibble = firstByte - string.byte("0")
+			elseif firstByte >= string.byte("A") and firstByte <= string.byte("F") then
+				firstNibble = firstByte - string.byte("A") + 10
+			end
+		end
+		if secondChar ~= "" then
+			local secondByte = string.byte(string.upper(secondChar))
+			if secondByte >= string.byte("0") and secondByte <= string.byte("9") then
+				secondNibble = secondByte - string.byte("0")
+			elseif secondByte >= string.byte("A") and secondByte <= string.byte("F") then
+				secondNibble = secondByte - string.byte("A") + 10
+			end
+		end
+		if firstNibble == nil or secondNibble == nil then
+			return ""
+		end
+		return string.char((firstNibble * 16) + secondNibble)
 	end))
 end
 
@@ -531,7 +573,7 @@ function QuestTogether:HideAnnouncementChannelFromChatWindows()
 		return
 	end
 
-	local maxWindows = tonumber(self.API.GetNumChatWindows()) or 0
+	local maxWindows = SafeNumber(self, self.API.GetNumChatWindows()) or 0
 	for chatFrameID = 1, maxWindows do
 		local chatFrame = self.API.GetChatFrameByID(chatFrameID)
 		if chatFrame then
@@ -694,7 +736,7 @@ function QuestTogether:BuildAnnouncementEventForUnit(unitToken, eventType, text)
 
 	local _, classFile = self.API.UnitClass(unitToken)
 	local senderGUID = self.API.UnitGUID and self.API.UnitGUID(unitToken) or ""
-	local senderName = tostring(unitName) .. "-" .. tostring((unitRealm or self.API.GetRealmName() or ""):gsub("%s+", ""))
+	local senderName = tostring(unitName) .. "-" .. tostring(NormalizeRealmName(self, unitRealm))
 
 	return {
 		version = ANNOUNCEMENT_WIRE_VERSION,

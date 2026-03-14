@@ -94,7 +94,7 @@ local function CreateCheckbox(parent, optionKey, labelText, tooltipText, x, y)
 end
 
 local function ClampColorComponent(value, fallback)
-	local numberValue = tonumber(value)
+	local numberValue = QuestTogether:SafeToNumber(value)
 	if not numberValue then
 		return fallback
 	end
@@ -163,9 +163,9 @@ local function CreateColorSwatch(parent, optionKey, labelText, tooltipText, fall
 			"options",
 			"Color option changed key=%s r=%.3f g=%.3f b=%.3f",
 			tostring(optionKey),
-			tonumber(r) or 0,
-			tonumber(g) or 0,
-			tonumber(b) or 0
+			QuestTogether:SafeToNumber(r) or 0,
+			QuestTogether:SafeToNumber(g) or 0,
+			QuestTogether:SafeToNumber(b) or 0
 		)
 		QuestTogether:SetOption(optionKey, {
 			r = ClampColorComponent(r, fallbackColor.r),

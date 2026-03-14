@@ -269,6 +269,19 @@ QuestTogether:RegisterTest("SafeToNumber accepts numeric values without conversi
 	AssertEquals(QuestTogether:SafeToNumber({}), nil)
 end)
 
+QuestTogether:RegisterTest("SafeTrimString and SafeStripWhitespace handle normal and failing values", function()
+	AssertEquals(QuestTogether:SafeTrimString("  hello there  "), "hello there")
+	AssertEquals(QuestTogether:SafeStripWhitespace(" a b\tc \n d "), "abcd")
+
+	local failingToString = setmetatable({}, {
+		__tostring = function()
+			error("boom")
+		end,
+	})
+	AssertEquals(QuestTogether:SafeTrimString(failingToString, "fallback"), "fallback")
+	AssertEquals(QuestTogether:SafeStripWhitespace(failingToString, "fallback"), "fallback")
+end)
+
 QuestTogether:RegisterTest("chat bubble normalizers use SafeToNumber conversion", function()
 	local seenValues = {}
 	WithPatchedMethod(QuestTogether, "SafeToNumber", function(_, value)
@@ -286,6 +299,23 @@ QuestTogether:RegisterTest("chat bubble normalizers use SafeToNumber conversion"
 	end)
 	AssertEquals(seenValues[1], "size-secret")
 	AssertEquals(seenValues[2], "duration-secret")
+end)
+
+QuestTogether:RegisterTest("personal bubble anchor numeric parsing uses SafeToNumber", function()
+	WithPatchedMethod(QuestTogether, "SafeToNumber", function(_, value)
+		if value == "secret-x" then
+			return 33
+		end
+		if value == "secret-y" then
+			return -27
+		end
+		return nil
+	end, function()
+		QuestTogether:SetPersonalBubbleAnchor("TOP", "TOP", "secret-x", "secret-y")
+		local anchor = QuestTogether:GetPersonalBubbleAnchor()
+		AssertEquals(anchor.x, 33)
+		AssertEquals(anchor.y, -27)
+	end)
 end)
 
 QuestTogether:RegisterTest("profile assignment is stored per character key", function()

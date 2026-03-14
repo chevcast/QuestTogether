@@ -22,21 +22,21 @@ local function ParseObjectiveProgressFromText(objectiveText)
 		return nil
 	end
 
-	local amountCurrent = objectiveText:match("(%d+)%s*/%s*%d+")
+	local amountCurrent = string.match(objectiveText, "(%d+)%s*/%s*%d+")
 	if amountCurrent then
-		return tonumber(amountCurrent)
+		return QuestTogether:SafeToNumber(amountCurrent)
 	end
 
-	local percent = objectiveText:match("(%d+)%%")
+	local percent = string.match(objectiveText, "(%d+)%%")
 	if percent then
-		return tonumber(percent)
+		return QuestTogether:SafeToNumber(percent)
 	end
 
 	return nil
 end
 
 local function ResolveObjectiveProgressValue(objectiveText, currentValue)
-	local numericValue = tonumber(currentValue)
+	local numericValue = QuestTogether:SafeToNumber(currentValue)
 	if numericValue ~= nil then
 		return numericValue
 	end
@@ -44,7 +44,7 @@ local function ResolveObjectiveProgressValue(objectiveText, currentValue)
 end
 
 local function DidObjectiveProgressIncrease(oldText, oldValue, newText, newValue)
-	local previousValue = tonumber(oldValue)
+	local previousValue = QuestTogether:SafeToNumber(oldValue)
 	if previousValue == nil then
 		previousValue = ParseObjectiveProgressFromText(oldText)
 	end

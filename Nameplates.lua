@@ -19,6 +19,7 @@ local ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS = 0.4
 local PERSONAL_BUBBLE_SETTINGS_DIALOG_WIDTH = 380
 local PERSONAL_BUBBLE_SETTINGS_DIALOG_HEIGHT = 220
 local ApplyQuestIconVisual
+local SafeUiNumber
 
 -- Original icon used by this addon's first nameplate implementation.
 QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE = "Interface\\OPTIONSFRAME\\UI-OptionsFrame-NewFeatureIcon"
@@ -44,7 +45,7 @@ QuestTogether.knownNameplateAddons = QuestTogether.knownNameplateAddons or {
 }
 
 local function ClampColorComponent(value, fallback)
-	local numberValue = tonumber(value)
+	local numberValue = SafeUiNumber and SafeUiNumber(value, nil) or nil
 	if not numberValue then
 		return fallback
 	end
@@ -64,7 +65,7 @@ local function IsNonEmptyString(value)
 	return ok and result and true or false
 end
 
-local function SafeUiNumber(value, fallback)
+SafeUiNumber = function(value, fallback)
 	local numericValue = nil
 	if QuestTogether and QuestTogether.SafeToNumber then
 		numericValue = QuestTogether:SafeToNumber(value)
@@ -634,7 +635,7 @@ function QuestTogether:ApplySavedPersonalBubbleAnchor()
 end
 
 local function RoundOffset(value)
-	local numberValue = tonumber(value) or 0
+	local numberValue = SafeUiNumber(value, 0)
 	if numberValue >= 0 then
 		return math.floor(numberValue + 0.5)
 	end
@@ -1046,17 +1047,26 @@ local function GetObjectiveProgressState(text)
 		return "unknown"
 	end
 
-	local amountCurrent, amountTotal = text:match("(%d+)%s*/%s*(%d+)")
+	local amountCurrent, amountTotal = string.match(text, "(%d+)%s*/%s*(%d+)")
 	if amountCurrent and amountTotal then
-		if tonumber(amountCurrent) < tonumber(amountTotal) then
+		local currentValue = SafeUiNumber(amountCurrent, nil)
+		local totalValue = SafeUiNumber(amountTotal, nil)
+		if currentValue == nil or totalValue == nil then
+			return "unknown"
+		end
+		if currentValue < totalValue then
 			return "unfinished"
 		end
 		return "complete"
 	end
 
-	local percentText = text:match("(%d+)%%")
+	local percentText = string.match(text, "(%d+)%%")
 	if percentText then
-		if tonumber(percentText) < 100 then
+		local percentValue = SafeUiNumber(percentText, nil)
+		if percentValue == nil then
+			return "unknown"
+		end
+		if percentValue < 100 then
 			return "unfinished"
 		end
 		return "complete"
@@ -2271,18 +2281,19 @@ function QuestTogether:FindVisiblePlayerNameplateForSender(senderGUID, senderNam
 			return
 		end
 
-		if normalizedSenderName then
-			local unitName, unitRealm = self.API.UnitFullName(unitToken)
-			local fullUnitName = nil
-			if unitName then
-				fullUnitName = tostring(unitName) .. "-" .. tostring((unitRealm or self.API.GetRealmName() or ""):gsub("%s+", ""))
-			else
-				fullUnitName = self:NormalizeMemberName(self.API.UnitName(unitToken))
+			if normalizedSenderName then
+				local unitName, unitRealm = self.API.UnitFullName(unitToken)
+				local fullUnitName = nil
+				if unitName then
+					local realmName = self:SafeStripWhitespace(unitRealm or self.API.GetRealmName() or "", "")
+					fullUnitName = tostring(unitName) .. "-" .. tostring(realmName)
+				else
+					fullUnitName = self:NormalizeMemberName(self.API.UnitName(unitToken))
+				end
+				if fullUnitName and self:NormalizeMemberName(fullUnitName) == normalizedSenderName then
+					matchedFrame = frame
+				end
 			end
-			if fullUnitName and self:NormalizeMemberName(fullUnitName) == normalizedSenderName then
-				matchedFrame = frame
-			end
-		end
 	end)
 
 	self:Debugf(
@@ -2319,7 +2330,8 @@ function QuestTogether:DoesUnitTokenMatchSender(unitToken, senderGUID, senderNam
 	local unitName, unitRealm = self.API.UnitFullName and self.API.UnitFullName(unitToken)
 	local fullUnitName = nil
 	if unitName then
-		fullUnitName = tostring(unitName) .. "-" .. tostring((unitRealm or self.API.GetRealmName() or ""):gsub("%s+", ""))
+		local realmName = self:SafeStripWhitespace(unitRealm or self.API.GetRealmName() or "", "")
+		fullUnitName = tostring(unitName) .. "-" .. tostring(realmName)
 	else
 		fullUnitName = self:NormalizeMemberName(self.API.UnitName and self.API.UnitName(unitToken) or nil)
 	end

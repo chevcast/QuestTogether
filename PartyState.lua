@@ -17,7 +17,18 @@ local function NormalizeRealmName(addon, realmName)
 	if not realmName or realmName == "" then
 		realmName = addon.API.GetRealmName() or ""
 	end
-	return (tostring(realmName):gsub("%s+", ""))
+	if addon and addon.SafeStripWhitespace then
+		return addon:SafeStripWhitespace(realmName, "")
+	end
+	local okText, textValue = pcall(tostring, realmName)
+	if not okText then
+		return ""
+	end
+	local okStrip, stripped = pcall(string.gsub, textValue, "%s+", "")
+	if not okStrip then
+		return ""
+	end
+	return stripped
 end
 
 local function SortNames(nameList)
