@@ -269,6 +269,25 @@ QuestTogether:RegisterTest("SafeToNumber accepts numeric values without conversi
 	AssertEquals(QuestTogether:SafeToNumber({}), nil)
 end)
 
+QuestTogether:RegisterTest("chat bubble normalizers use SafeToNumber conversion", function()
+	local seenValues = {}
+	WithPatchedMethod(QuestTogether, "SafeToNumber", function(_, value)
+		seenValues[#seenValues + 1] = value
+		if value == "size-secret" then
+			return 118
+		end
+		if value == "duration-secret" then
+			return 2.26
+		end
+		return nil
+	end, function()
+		AssertEquals(QuestTogether:NormalizeChatBubbleSizeValue("size-secret"), 120)
+		AssertEquals(QuestTogether:NormalizeChatBubbleDurationValue("duration-secret"), 2.5)
+	end)
+	AssertEquals(seenValues[1], "size-secret")
+	AssertEquals(seenValues[2], "duration-secret")
+end)
+
 QuestTogether:RegisterTest("profile assignment is stored per character key", function()
 	QuestTogether.db.profiles = {}
 	QuestTogether.db.profileKeys = {}

@@ -182,7 +182,7 @@ function QuestTogether:NormalizeChatBubbleSizeValue(value)
 		value = legacyValues[value]
 	end
 
-	local numericValue = tonumber(value)
+	local numericValue = self:SafeToNumber(value)
 	if not numericValue then
 		return nil
 	end
@@ -202,7 +202,7 @@ function QuestTogether:IsChatBubbleSize(value)
 end
 
 function QuestTogether:NormalizeChatBubbleDurationValue(value)
-	local numericValue = tonumber(value)
+	local numericValue = self:SafeToNumber(value)
 	if not numericValue then
 		return nil
 	end
@@ -712,14 +712,17 @@ function QuestTogether:IsSecretValue(_)
 end
 
 function QuestTogether:SafeToNumber(value)
-	if type(value) == "number" then
-		return value
-	end
-	if type(value) ~= "string" then
+	local valueType = type(value)
+	if valueType ~= "number" and valueType ~= "string" then
 		return nil
 	end
 
-	local trimmedValue = value:gsub("^%s+", ""):gsub("%s+$", "")
+	local okText, textValue = pcall(tostring, value)
+	if not okText then
+		return nil
+	end
+
+	local trimmedValue = tostring(textValue):gsub("^%s+", ""):gsub("%s+$", "")
 	if trimmedValue == "" then
 		return nil
 	end

@@ -64,6 +64,17 @@ local function IsNonEmptyString(value)
 	return ok and result and true or false
 end
 
+local function SafeUiNumber(value, fallback)
+	local numericValue = nil
+	if QuestTogether and QuestTogether.SafeToNumber then
+		numericValue = QuestTogether:SafeToNumber(value)
+	end
+	if numericValue == nil then
+		return fallback
+	end
+	return numericValue
+end
+
 QuestTogether.nameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache or {}
 QuestTogether.nameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache or {}
 QuestTogether.nameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken or {}
@@ -84,7 +95,7 @@ local function GetAnnouncementBubbleLifetimeSeconds()
 	if not configuredDuration or configuredDuration <= 0 then
 		configuredDuration = QuestTogether.DEFAULTS.profile.chatBubbleDuration
 	end
-	return configuredDuration
+	return SafeUiNumber(configuredDuration, QuestTogether.DEFAULTS.profile.chatBubbleDuration)
 end
 
 local function GetAnnouncementBubbleUnitFrame(hostFrame)
@@ -808,7 +819,8 @@ function QuestTogether:RefreshPersonalBubbleAnchorVisualState()
 		hostFrame.EditLabel:SetText("QuestTogether Bubble")
 
 		local labelWidth = hostFrame.EditLabel.GetUnboundedStringWidth and hostFrame.EditLabel:GetUnboundedStringWidth() or 0
-		local labelHeight = hostFrame.EditLabel:GetStringHeight() or visualConfig.fontSize
+		labelWidth = SafeUiNumber(labelWidth, 0)
+		local labelHeight = SafeUiNumber(hostFrame.EditLabel:GetStringHeight(), visualConfig.fontSize)
 		labelWidth = math.max(visualConfig.minTextWidth, math.min(visualConfig.maxTextWidth, labelWidth))
 		local anchorWidth = labelWidth + visualConfig.iconSize + visualConfig.iconGap + (visualConfig.inset * 2)
 		local anchorHeight = math.max(visualConfig.iconSize, labelHeight) + (visualConfig.inset * 2)
@@ -1726,10 +1738,11 @@ local function EnsureAnnouncementBubble(hostFrame)
 
 	local hold = animationGroup:CreateAnimation("Alpha")
 	hold:SetOrder(2)
+	local lifetimeSeconds = SafeUiNumber(GetAnnouncementBubbleLifetimeSeconds(), QuestTogether.DEFAULTS.profile.chatBubbleDuration)
 	hold:SetDuration(
 		math.max(
 			0,
-			GetAnnouncementBubbleLifetimeSeconds() - ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS - ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS
+			lifetimeSeconds - ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS - ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS
 		)
 	)
 	hold:SetFromAlpha(1)
@@ -1885,7 +1898,13 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 
 	local anchorFrame = unitFrame.HealthBarsContainer or unitFrame
 	local visualConfig = GetAnnouncementBubbleVisualConfig()
-	local inset = visualConfig.inset or 16
+	local inset = SafeUiNumber(visualConfig.inset, 16)
+	local minTextWidth = SafeUiNumber(visualConfig.minTextWidth, 48)
+	local maxTextWidth = SafeUiNumber(visualConfig.maxTextWidth, 220)
+	local iconSize = SafeUiNumber(visualConfig.iconSize, 18)
+	local iconGap = SafeUiNumber(visualConfig.iconGap, 8)
+	local fontSize = SafeUiNumber(visualConfig.fontSize, 14)
+	local lifetimeSeconds = SafeUiNumber(GetAnnouncementBubbleLifetimeSeconds(), QuestTogether.DEFAULTS.profile.chatBubbleDuration)
 
 	if bubble.animationGroup and bubble.animationGroup:IsPlaying() then
 		bubble.animationGroup:Stop()
@@ -1894,34 +1913,32 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 	if bubble.holdAnimation then
 		local holdSeconds = math.max(
 			0,
-			GetAnnouncementBubbleLifetimeSeconds()
-				- ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS
-				- ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS
+			lifetimeSeconds - ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS - ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS
 		)
 		bubble.holdAnimation:SetDuration(holdSeconds)
 	end
 
 	local fontPath, _, fontFlags = bubble.String:GetFont()
 	if fontPath and bubble.String.SetFont then
-		bubble.String:SetFont(fontPath, visualConfig.fontSize, fontFlags)
+		bubble.String:SetFont(fontPath, fontSize, fontFlags)
 	end
 
-	bubble.String:SetWidth(visualConfig.maxTextWidth)
+	bubble.String:SetWidth(maxTextWidth)
 	bubble.String:SetText(message)
 
-	local unboundedWidth = visualConfig.minTextWidth
+	local unboundedWidth = minTextWidth
 	if bubble.String.GetUnboundedStringWidth then
-		unboundedWidth = bubble.String:GetUnboundedStringWidth() or visualConfig.minTextWidth
+		unboundedWidth = SafeUiNumber(bubble.String:GetUnboundedStringWidth(), minTextWidth)
 	end
 	local targetTextWidth = math.min(
-		visualConfig.maxTextWidth,
-		math.max(visualConfig.minTextWidth, unboundedWidth)
+		maxTextWidth,
+		math.max(minTextWidth, unboundedWidth)
 	)
 	bubble.String:SetWidth(targetTextWidth)
 
-	local textHeight = bubble.String:GetStringHeight() or 0
-	local contentHeight = math.max(visualConfig.iconSize, textHeight)
-	local contentWidth = visualConfig.iconSize + visualConfig.iconGap + targetTextWidth
+	local textHeight = SafeUiNumber(bubble.String:GetStringHeight(), 0)
+	local contentHeight = math.max(iconSize, textHeight)
+	local contentWidth = iconSize + iconGap + targetTextWidth
 	local bubbleWidth = contentWidth + (inset * 2)
 	local bubbleHeight = contentHeight + (inset * 2)
 	self:Debugf(
@@ -1930,8 +1947,8 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 		tostring(unitFrame.unit or unitFrame:GetName() or "<screen>"),
 		bubbleWidth,
 		bubbleHeight,
-		visualConfig.fontSize,
-		GetAnnouncementBubbleLifetimeSeconds(),
+		fontSize,
+		lifetimeSeconds,
 		tostring(message)
 	)
 
@@ -1942,14 +1959,14 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 	if bubble.Icon then
 		ApplyAnnouncementIconVisual(bubble.Icon, eventType, iconAsset, iconKind)
 		bubble.Icon:ClearAllPoints()
-		bubble.Icon:SetSize(visualConfig.iconSize, visualConfig.iconSize)
-		bubble.Icon:SetPoint("CENTER", bubble, "CENTER", -((visualConfig.iconGap + targetTextWidth) / 2), 0)
+		bubble.Icon:SetSize(iconSize, iconSize)
+		bubble.Icon:SetPoint("CENTER", bubble, "CENTER", -((iconGap + targetTextWidth) / 2), 0)
 		bubble.Icon:Show()
 	end
 
 	bubble.String:ClearAllPoints()
 	bubble.String:SetWidth(targetTextWidth)
-	bubble.String:SetPoint("CENTER", bubble, "CENTER", ((visualConfig.iconSize + visualConfig.iconGap) / 2), 0)
+	bubble.String:SetPoint("CENTER", bubble, "CENTER", ((iconSize + iconGap) / 2), 0)
 
 	if bubble.SetClampRectInsets then
 		bubble:SetClampRectInsets(0, 0, 0, 0)
