@@ -83,6 +83,7 @@ QuestTogether.nameplateHealthOverlayByUnitFrame = QuestTogether.nameplateHealthO
 QuestTogether.nameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
 	or setmetatable({}, { __mode = "k" })
 QuestTogether.nameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken or {}
+QuestTogether.nameplateRefreshGenerationByUnitToken = QuestTogether.nameplateRefreshGenerationByUnitToken or {}
 QuestTogether.nameplateHealthTintRefreshPendingByUnitToken =
 	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken or {}
 QuestTogether.nameplateHealthTintRetryCountByUnitToken = QuestTogether.nameplateHealthTintRetryCountByUnitToken or {}
@@ -2202,24 +2203,43 @@ function QuestTogether:ScheduleNameplateRefresh(unitToken)
 	if not self:IsNameplateUnitToken(unitToken) then
 		return
 	end
-	if self.nameplateRefreshPendingByUnitToken[unitToken] then
-		return
-	end
 
+	local generation = (self.nameplateRefreshGenerationByUnitToken[unitToken] or 0) + 1
+	self.nameplateRefreshGenerationByUnitToken[unitToken] = generation
 	self.nameplateRefreshPendingByUnitToken[unitToken] = true
-	self.API.Delay(0, function()
-		self.nameplateRefreshPendingByUnitToken[unitToken] = nil
-		if not self.isEnabled or not C_NamePlate or not C_NamePlate.GetNamePlateForUnit then
-			return
-		end
 
-		local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
-		if not namePlateFrameBase or not namePlateFrameBase.UnitFrame or not namePlateFrameBase:IsShown() then
-			return
-		end
+	-- Quest-related tooltip/API flags on fresh nameplates can lag behind the add event.
+	-- Run a short refresh burst so objective markers resolve once data catches up.
+	local refreshDelays = {
+		0,
+		0.05,
+		0.15,
+		0.35,
+		0.70,
+	}
+	local lastRefreshIndex = #refreshDelays
 
-		self:RefreshNameplateIcon(namePlateFrameBase)
-	end)
+	for refreshIndex = 1, lastRefreshIndex do
+		local refreshDelay = refreshDelays[refreshIndex]
+		self.API.Delay(refreshDelay, function()
+			if self.nameplateRefreshGenerationByUnitToken[unitToken] ~= generation then
+				return
+			end
+			if refreshIndex == lastRefreshIndex then
+				self.nameplateRefreshPendingByUnitToken[unitToken] = nil
+			end
+			if not self.isEnabled or not C_NamePlate or not C_NamePlate.GetNamePlateForUnit then
+				return
+			end
+
+			local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
+			if not namePlateFrameBase or not namePlateFrameBase.UnitFrame or not namePlateFrameBase:IsShown() then
+				return
+			end
+
+			self:RefreshNameplateIcon(namePlateFrameBase)
+		end)
+	end
 end
 
 function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
@@ -2445,6 +2465,7 @@ function QuestTogether:OnNameplateRemoved(unitToken)
 
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
 	self.nameplateRefreshPendingByUnitToken[unitToken] = nil
+	self.nameplateRefreshGenerationByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 
@@ -2606,6 +2627,7 @@ function QuestTogether:DisableNameplateAugmentation()
 	-- Hide our icon overlays and clear cached quest objective state.
 	wipe(self.nameplateQuestStateByUnitToken)
 	wipe(self.nameplateRefreshPendingByUnitToken)
+	wipe(self.nameplateRefreshGenerationByUnitToken)
 	wipe(self.nameplateHealthTintRefreshPendingByUnitToken)
 	self:ForEachVisibleNamePlate(function(frame)
 		self:HideNameplateIcon(frame)
