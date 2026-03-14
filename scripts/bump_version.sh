@@ -115,11 +115,6 @@ echo "Release channel: ${release_channel}"
 echo "Bump type: ${bump_type}"
 echo "Target base version: ${target_base_version}"
 echo "New version: ${new_version}"
-echo "Tagging HEAD as ${new_tag}..."
-git tag -a "${new_tag}" -m "Release ${new_tag}" HEAD
-
-echo "Pushing tag ${new_tag} to origin..."
-git push origin "${new_tag}"
 
 echo "Updating ${toc_file} to version ${new_version}..."
 tmp_file="$(mktemp)"
@@ -139,6 +134,22 @@ END {
 ' "$toc_file" > "$tmp_file"
 mv "$tmp_file" "$toc_file"
 
+echo "Committing ${toc_file}..."
+git add "$toc_file"
+if git diff --cached --quiet -- "$toc_file"; then
+	echo "Error: ${toc_file} did not change; nothing to commit."
+	exit 1
+fi
+git commit -m "Bump version to ${new_version}" -- "$toc_file"
+
+release_commit="$(git rev-parse --short HEAD)"
+echo "Tagging ${release_commit} as ${new_tag}..."
+git tag -a "${new_tag}" -m "Release ${new_tag}" HEAD
+
+echo "Pushing tag ${new_tag} to origin..."
+git push origin "${new_tag}"
+
 echo "Done."
+echo "Committed: ${release_commit}"
 echo "Tag pushed: ${new_tag}"
 echo "Updated file: ${toc_file}"
