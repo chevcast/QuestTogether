@@ -3416,10 +3416,7 @@ local function DispatchEvent(_, eventName, ...)
 		return
 	end
 
-	local ok, err = pcall(handler, QuestTogether, eventName, ...)
-	if not ok then
-		QuestTogether:Print("Error in event " .. tostring(eventName) .. ": " .. tostring(err))
-	end
+	handler(QuestTogether, eventName, ...)
 end
 
 QuestTogether.eventFrame = QuestTogether.eventFrame or CreateFrame("Frame")
