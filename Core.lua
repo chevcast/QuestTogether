@@ -722,7 +722,19 @@ function QuestTogether:SafeToNumber(value)
 		return nil
 	end
 
-	local trimmedValue = tostring(textValue):gsub("^%s+", ""):gsub("%s+$", "")
+	if type(textValue) ~= "string" then
+		return nil
+	end
+
+	local okLeadingTrim, trimmedValue = pcall(string.gsub, textValue, "^%s+", "")
+	if not okLeadingTrim then
+		return nil
+	end
+	local okTrailingTrim = false
+	okTrailingTrim, trimmedValue = pcall(string.gsub, trimmedValue, "%s+$", "")
+	if not okTrailingTrim then
+		return nil
+	end
 	if trimmedValue == "" then
 		return nil
 	end
