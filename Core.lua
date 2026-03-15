@@ -2946,6 +2946,22 @@ function QuestTogether:GetQuestTitle(questId, questInfo)
 	return "Quest " .. tostring(questId)
 end
 
+function QuestTogether:NormalizeQuestProgressPercent(progressValue)
+	local numericProgress = self:SafeToNumber(progressValue)
+	if numericProgress == nil then
+		return nil
+	end
+
+	-- Blizzard progress bars can return floating values; format chat/objectives as whole percents.
+	if numericProgress < 0 then
+		numericProgress = 0
+	elseif numericProgress > 100 then
+		numericProgress = 100
+	end
+
+	return math.floor(numericProgress + 0.5)
+end
+
 function QuestTogether:StripTrailingParentheticalPercent(objectiveText)
 	if type(objectiveText) ~= "string" or objectiveText == "" then
 		return objectiveText
@@ -3647,10 +3663,11 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		end
 		if objectiveType == "progressbar" then
 			local progress = self.API.GetQuestProgressBarPercent and self.API.GetQuestProgressBarPercent(questId)
-			objectiveText = tostring(progress)
+			local roundedProgress = self:NormalizeQuestProgressPercent(progress) or 0
+			objectiveText = tostring(roundedProgress)
 				.. "% "
 				.. tostring(self:StripTrailingParentheticalPercent(objectiveText))
-			currentValue = progress
+			currentValue = roundedProgress
 		end
 		tracker[questId].objectives[objectiveIndex] = objectiveText
 		tracker[questId].objectiveValues[objectiveIndex] = self:SafeToNumber(currentValue)

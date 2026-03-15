@@ -1189,7 +1189,7 @@ local function GetObjectiveProgressState(text)
 		return "complete"
 	end
 
-	local percentText = SafeMatch(text, "(%d+)%%")
+	local percentText = SafeMatch(text, "(%d+%.?%d*)%%")
 	if percentText then
 		local percentValue = SafeUiNumber(percentText, nil)
 		if percentValue == nil then

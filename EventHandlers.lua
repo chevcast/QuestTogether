@@ -45,7 +45,7 @@ local function ParseObjectiveProgressFromText(objectiveText)
 		return QuestTogether:SafeToNumber(amountCurrent)
 	end
 
-	local percent = SafeMatch(objectiveText, "(%d+)%%")
+	local percent = SafeMatch(objectiveText, "(%d+%.?%d*)%%")
 	if percent then
 		return QuestTogether:SafeToNumber(percent)
 	end
@@ -503,10 +503,11 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 					if objectiveType == "progressbar" then
 						local progress = self.API.GetQuestProgressBarPercent
 							and self.API.GetQuestProgressBarPercent(questId)
-						objectiveText = SafeText(progress, "0")
+						local roundedProgress = self:NormalizeQuestProgressPercent(progress) or 0
+						objectiveText = SafeText(roundedProgress, "0")
 							.. "% "
 							.. SafeText(self:StripTrailingParentheticalPercent(objectiveText), "")
-						currentValue = progress
+						currentValue = roundedProgress
 					end
 
 					questData.objectiveValues = questData.objectiveValues or {}
