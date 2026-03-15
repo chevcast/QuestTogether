@@ -18,6 +18,56 @@ local addonName, addonTable = ...
 local QuestTogether = _G.QuestTogether or addonTable or {}
 _G.QuestTogether = QuestTogether
 
+local raw_tostring = tostring
+local raw_string_match = string.match
+local raw_string_find = string.find
+
+local function SafeText(value, fallback)
+	if QuestTogether and QuestTogether.SafeToString then
+		return QuestTogether:SafeToString(value, fallback ~= nil and fallback or "<secret>")
+	end
+
+	local ok, textValue = pcall(raw_tostring, value)
+	if ok then
+		return textValue
+	end
+
+	if fallback ~= nil then
+		return fallback
+	end
+	return "<secret>"
+end
+
+local function SafeMatch(text, pattern)
+	local safeText = SafeText(text, "")
+	if safeText == "" then
+		return nil
+	end
+
+	local ok, first, second, third, fourth = pcall(raw_string_match, safeText, pattern)
+	if not ok then
+		return nil
+	end
+
+	return first, second, third, fourth
+end
+
+local function SafeFind(text, pattern, init, plain)
+	local safeText = SafeText(text, "")
+	if safeText == "" then
+		return nil
+	end
+
+	local ok, firstIndex, secondIndex = pcall(raw_string_find, safeText, pattern, init, plain)
+	if not ok then
+		return nil
+	end
+
+	return firstIndex, secondIndex
+end
+
+local tostring = SafeText
+
 QuestTogether.addonName = addonName or "QuestTogether"
 QuestTogether.commPrefix = "QuestTogether"
 QuestTogether.announcementChannelName = "QuestTogetherAnnounce1"
@@ -423,6 +473,9 @@ Why this exists:
 - Production code uses these wrappers to call WoW globals.
 - Tests can replace one or more wrappers to observe behavior without touching global WoW APIs.
 ]]
+-- API wrapper layer:
+-- Guard Blizzard calls that can throw (invalid token, secure context, or transient data race)
+-- so runtime features fail soft instead of tainting shared execution paths.
 QuestTogether.API = QuestTogether.API or {
 	Delay = function(seconds, callback)
 		C_Timer.After(seconds, callback)
@@ -473,12 +526,14 @@ QuestTogether.API = QuestTogether.API or {
 	SetChatWindowFontSize = function(chatFrame, fontSize)
 		return FCF_SetChatWindowFontSize(nil, chatFrame, fontSize)
 	end,
-	RegisterAddonPrefix = function(prefix)
-		return C_ChatInfo.RegisterAddonMessagePrefix(prefix)
-	end,
-	SendAddonMessage = function(prefix, message, channel, target)
-		return C_ChatInfo.SendAddonMessage(prefix, message, channel, target)
-	end,
+		RegisterAddonPrefix = function(prefix)
+			local ok, result = pcall(C_ChatInfo.RegisterAddonMessagePrefix, prefix)
+			return ok and result or nil
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			local ok, result = pcall(C_ChatInfo.SendAddonMessage, prefix, message, channel, target)
+			return ok and result or nil
+		end,
 	IsInInstanceGroup = function()
 		return IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
 	end,
@@ -514,114 +569,268 @@ QuestTogether.API = QuestTogether.API or {
 	GetTime = function()
 		return GetTime()
 	end,
-	UnitExists = function(unitToken)
-		return UnitExists(unitToken)
-	end,
+		UnitExists = function(unitToken)
+			local ok, exists = pcall(UnitExists, unitToken)
+			return ok and exists and true or false
+		end,
 	UnitGUID = function(unitToken)
-		return UnitGUID(unitToken)
+		local ok, guidValue = pcall(UnitGUID, unitToken)
+		if not ok then
+			return nil
+		end
+		if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(guidValue) then
+			return nil
+		end
+		return guidValue
 	end,
 	UnitFullName = function(unitToken)
-		return UnitFullName(unitToken)
+		local ok, unitName, unitRealm = pcall(UnitFullName, unitToken)
+		if not ok then
+			return nil, nil
+		end
+		if QuestTogether and QuestTogether.IsSecretValue then
+			if QuestTogether:IsSecretValue(unitName) then
+				unitName = nil
+			end
+			if QuestTogether:IsSecretValue(unitRealm) then
+				unitRealm = nil
+			end
+		end
+		return unitName, unitRealm
 	end,
 	UnitClass = function(unitToken)
-		return UnitClass(unitToken)
+		local ok, className, classFile = pcall(UnitClass, unitToken)
+		if not ok then
+			return nil, nil
+		end
+		if QuestTogether and QuestTogether.IsSecretValue then
+			if QuestTogether:IsSecretValue(className) then
+				className = nil
+			end
+			if QuestTogether:IsSecretValue(classFile) then
+				classFile = nil
+			end
+		end
+		return className, classFile
 	end,
 	UnitRace = function(unitToken)
-		return UnitRace(unitToken)
+		local ok, raceName = pcall(UnitRace, unitToken)
+		if not ok then
+			return nil
+		end
+		if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(raceName) then
+			return nil
+		end
+		return raceName
 	end,
 	UnitLevel = function(unitToken)
-		return UnitLevel(unitToken)
+		local ok, levelValue = pcall(UnitLevel, unitToken)
+		if not ok then
+			return nil
+		end
+		if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(levelValue) then
+			return nil
+		end
+		return levelValue
 	end,
 	UnitName = function(unitToken)
-		return UnitName(unitToken)
-	end,
-	UnitHealth = function(unitToken)
-		return UnitHealth(unitToken)
-	end,
-	UnitHealthMax = function(unitToken)
-		return UnitHealthMax(unitToken)
-	end,
-	UnitIsDeadOrGhost = function(unitToken)
-		if type(UnitIsDeadOrGhost) == "function" then
-			return UnitIsDeadOrGhost(unitToken)
+		local ok, unitName = pcall(UnitName, unitToken)
+		if not ok then
+			return nil
 		end
-		if type(UnitIsDead) == "function" then
-			return UnitIsDead(unitToken)
+		if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(unitName) then
+			return nil
 		end
-		return false
+		return unitName
 	end,
-	UnitIsPlayer = function(unitToken)
-		return UnitIsPlayer(unitToken)
-	end,
-	GetQuestLogIndexForQuestID = function(questID)
-		if C_QuestLog and C_QuestLog.GetLogIndexForQuestID then
-			return C_QuestLog.GetLogIndexForQuestID(questID)
-		end
-		return nil
-	end,
-	IsQuestFlaggedCompleted = function(questID)
-		if C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted then
-			return C_QuestLog.IsQuestFlaggedCompleted(questID)
-		end
-		return false
-	end,
-	IsQuestReadyForTurnIn = function(questID)
-		if C_QuestLog and C_QuestLog.ReadyForTurnIn then
-			return C_QuestLog.ReadyForTurnIn(questID)
-		end
-		return false
-	end,
-	IsQuestComplete = function(questID)
-		if C_QuestLog and C_QuestLog.IsComplete then
-			return C_QuestLog.IsComplete(questID)
-		end
-		return false
-	end,
-	IsOnQuest = function(questID)
-		if C_QuestLog and C_QuestLog.IsOnQuest then
-			return C_QuestLog.IsOnQuest(questID)
-		end
-		return false
-	end,
-	IsPushableQuest = function(questID)
-		if C_QuestLog and C_QuestLog.IsPushableQuest then
-			return C_QuestLog.IsPushableQuest(questID)
-		end
-		return false
-	end,
-	GetNumQuestLogEntries = function()
-		if C_QuestLog and C_QuestLog.GetNumQuestLogEntries then
-			return C_QuestLog.GetNumQuestLogEntries()
-		end
-		return 0
-	end,
-	GetQuestLogInfo = function(questLogIndex)
-		if C_QuestLog and C_QuestLog.GetInfo then
-			return C_QuestLog.GetInfo(questLogIndex)
-		end
-		return nil
-	end,
-	InviteUnit = function(name)
-		if C_PartyInfo and C_PartyInfo.InviteUnit then
-			return C_PartyInfo.InviteUnit(name)
-		end
-		return nil
-	end,
-	SendTell = function(name, chatFrame)
-		if ChatFrameUtil and ChatFrameUtil.SendTell then
-			return ChatFrameUtil.SendTell(name, chatFrame)
-		end
-		if type(ChatFrame_SendTell) == "function" then
-			return ChatFrame_SendTell(name, chatFrame)
-		end
-		return nil
-	end,
-	AddFriend = function(name)
-		if C_FriendList and C_FriendList.AddFriend then
-			return C_FriendList.AddFriend(name)
-		end
-		return nil
-	end,
+		UnitHealth = function(unitToken)
+			local ok, unitHealth = pcall(UnitHealth, unitToken)
+			if not ok then
+				return nil
+			end
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(unitHealth) then
+				return nil
+			end
+			return unitHealth
+		end,
+		UnitHealthMax = function(unitToken)
+			local ok, maxHealth = pcall(UnitHealthMax, unitToken)
+			if not ok then
+				return nil
+			end
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(maxHealth) then
+				return nil
+			end
+			return maxHealth
+		end,
+		UnitIsDeadOrGhost = function(unitToken)
+			if type(UnitIsDeadOrGhost) == "function" then
+				local ok, result = pcall(UnitIsDeadOrGhost, unitToken)
+				return ok and result and true or false
+			end
+			if type(UnitIsDead) == "function" then
+				local ok, result = pcall(UnitIsDead, unitToken)
+				return ok and result and true or false
+			end
+			return false
+		end,
+		UnitIsPlayer = function(unitToken)
+			local ok, result = pcall(UnitIsPlayer, unitToken)
+			return ok and result and true or false
+		end,
+		GetQuestLogIndexForQuestID = function(questID)
+			if C_QuestLog and C_QuestLog.GetLogIndexForQuestID then
+				local ok, questLogIndex = pcall(C_QuestLog.GetLogIndexForQuestID, questID)
+				if not ok then
+					return nil
+				end
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(questLogIndex) then
+					return nil
+				end
+				return questLogIndex
+			end
+			return nil
+		end,
+		IsQuestFlaggedCompleted = function(questID)
+			if C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted then
+				local ok, isCompleted = pcall(C_QuestLog.IsQuestFlaggedCompleted, questID)
+				return ok and isCompleted and true or false
+			end
+			return false
+		end,
+		IsQuestReadyForTurnIn = function(questID)
+			if C_QuestLog and C_QuestLog.ReadyForTurnIn then
+				local ok, isReady = pcall(C_QuestLog.ReadyForTurnIn, questID)
+				return ok and isReady and true or false
+			end
+			return false
+		end,
+		IsQuestComplete = function(questID)
+			if C_QuestLog and C_QuestLog.IsComplete then
+				local ok, isComplete = pcall(C_QuestLog.IsComplete, questID)
+				return ok and isComplete and true or false
+			end
+			return false
+		end,
+		IsOnQuest = function(questID)
+			if C_QuestLog and C_QuestLog.IsOnQuest then
+				local ok, isOnQuest = pcall(C_QuestLog.IsOnQuest, questID)
+				return ok and isOnQuest and true or false
+			end
+			return false
+		end,
+		IsPushableQuest = function(questID)
+			if C_QuestLog and C_QuestLog.IsPushableQuest then
+				local ok, isPushable = pcall(C_QuestLog.IsPushableQuest, questID)
+				return ok and isPushable and true or false
+			end
+			return false
+		end,
+		GetNumQuestLogEntries = function()
+			if C_QuestLog and C_QuestLog.GetNumQuestLogEntries then
+				local ok, count = pcall(C_QuestLog.GetNumQuestLogEntries)
+				if not ok then
+					return 0
+				end
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(count) then
+					return 0
+				end
+				if type(count) ~= "number" then
+					return 0
+				end
+				return count
+			end
+			return 0
+		end,
+		GetQuestLogInfo = function(questLogIndex)
+			if C_QuestLog and C_QuestLog.GetInfo then
+				local ok, questInfo = pcall(C_QuestLog.GetInfo, questLogIndex)
+				if not ok then
+					return nil
+				end
+				return questInfo
+			end
+			return nil
+		end,
+		GetNumQuestLeaderBoards = function(questLogIndex)
+			if type(GetNumQuestLeaderBoards) ~= "function" then
+				return 0
+			end
+			local ok, objectiveCount = pcall(GetNumQuestLeaderBoards, questLogIndex)
+			if not ok then
+				return 0
+			end
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(objectiveCount) then
+				return 0
+			end
+			if type(objectiveCount) ~= "number" then
+				return 0
+			end
+			return objectiveCount
+		end,
+		GetQuestObjectiveInfo = function(questID, objectiveIndex, displayComplete)
+			if type(GetQuestObjectiveInfo) ~= "function" then
+				return nil, nil, nil, nil
+			end
+			local ok, text, objectiveType, finished, currentValue =
+				pcall(GetQuestObjectiveInfo, questID, objectiveIndex, displayComplete)
+			if not ok then
+				return nil, nil, nil, nil
+			end
+			if QuestTogether and QuestTogether.IsSecretValue then
+				if QuestTogether:IsSecretValue(text) then
+					text = nil
+				end
+				if QuestTogether:IsSecretValue(objectiveType) then
+					objectiveType = nil
+				end
+				if QuestTogether:IsSecretValue(finished) then
+					finished = nil
+				end
+				if QuestTogether:IsSecretValue(currentValue) then
+					currentValue = nil
+				end
+			end
+			return text, objectiveType, finished, currentValue
+		end,
+		GetQuestProgressBarPercent = function(questID)
+			if type(GetQuestProgressBarPercent) ~= "function" then
+				return nil
+			end
+			local ok, progressValue = pcall(GetQuestProgressBarPercent, questID)
+			if not ok then
+				return nil
+			end
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(progressValue) then
+				return nil
+			end
+			return progressValue
+		end,
+		InviteUnit = function(name)
+			if C_PartyInfo and C_PartyInfo.InviteUnit then
+				local ok, result = pcall(C_PartyInfo.InviteUnit, name)
+				return ok and result or nil
+			end
+			return nil
+		end,
+		SendTell = function(name, chatFrame)
+			if ChatFrameUtil and ChatFrameUtil.SendTell then
+				local ok, result = pcall(ChatFrameUtil.SendTell, name, chatFrame)
+				return ok and result or nil
+			end
+			if type(ChatFrame_SendTell) == "function" then
+				local ok, result = pcall(ChatFrame_SendTell, name, chatFrame)
+				return ok and result or nil
+			end
+			return nil
+		end,
+		AddFriend = function(name)
+			if C_FriendList and C_FriendList.AddFriend then
+				local ok, result = pcall(C_FriendList.AddFriend, name)
+				return ok and result or nil
+			end
+			return nil
+		end,
 	AddOrDelIgnore = function(name)
 		if C_FriendList and C_FriendList.AddOrDelIgnore then
 			-- Ignore-list APIs can throw for invalid names; keep menu actions non-fatal.
@@ -638,51 +847,92 @@ QuestTogether.API = QuestTogether.API or {
 		end
 		return false
 	end,
-	IsAddOnLoaded = function(addonName)
-		if C_AddOns and C_AddOns.IsAddOnLoaded then
-			return C_AddOns.IsAddOnLoaded(addonName)
-		end
-		return IsAddOnLoaded(addonName)
-	end,
-	GetAddOnMetadata = function(addonName, fieldName)
-		if C_AddOns and C_AddOns.GetAddOnMetadata then
-			return C_AddOns.GetAddOnMetadata(addonName, fieldName)
-		end
-		if type(GetAddOnMetadata) == "function" then
-			return GetAddOnMetadata(addonName, fieldName)
-		end
-		return nil
-	end,
-	UnitInParty = function(unitToken)
-		return UnitInParty(unitToken)
-	end,
-	UnitInRaid = function(unitToken)
-		return UnitInRaid(unitToken)
-	end,
-	Ambiguate = function(name, context)
-		return Ambiguate(name, context)
-	end,
+		IsAddOnLoaded = function(addonName)
+			if C_AddOns and C_AddOns.IsAddOnLoaded then
+				local ok, isLoaded = pcall(C_AddOns.IsAddOnLoaded, addonName)
+				return ok and isLoaded and true or false
+			end
+			local ok, isLoaded = pcall(IsAddOnLoaded, addonName)
+			return ok and isLoaded and true or false
+		end,
+		GetAddOnMetadata = function(addonName, fieldName)
+			if C_AddOns and C_AddOns.GetAddOnMetadata then
+				local ok, metadata = pcall(C_AddOns.GetAddOnMetadata, addonName, fieldName)
+				if not ok then
+					return nil
+				end
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(metadata) then
+					return nil
+				end
+				return metadata
+			end
+			if type(GetAddOnMetadata) == "function" then
+				local ok, metadata = pcall(GetAddOnMetadata, addonName, fieldName)
+				if not ok then
+					return nil
+				end
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(metadata) then
+					return nil
+				end
+				return metadata
+			end
+			return nil
+		end,
+		UnitInParty = function(unitToken)
+			local ok, result = pcall(UnitInParty, unitToken)
+			return ok and result and true or false
+		end,
+		UnitInRaid = function(unitToken)
+			local ok, result = pcall(UnitInRaid, unitToken)
+			return ok and result and true or false
+		end,
+		Ambiguate = function(name, context)
+			local ok, result = pcall(Ambiguate, name, context)
+			if not ok then
+				return nil
+			end
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(result) then
+				return nil
+			end
+			return result
+		end,
 	GetRealmName = function()
-		return GetRealmName()
+		local ok, realmName = pcall(GetRealmName)
+		if not ok then
+			return ""
+		end
+		if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(realmName) then
+			return ""
+		end
+		return realmName
 	end,
 	GetBestMapForUnit = function(unitToken)
 		if C_Map and C_Map.GetBestMapForUnit then
-			return C_Map.GetBestMapForUnit(unitToken)
+			local ok, mapID = pcall(C_Map.GetBestMapForUnit, unitToken)
+			if not ok then
+				return nil
+			end
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(mapID) then
+				return nil
+			end
+			return mapID
 		end
 		return nil
 	end,
-	GetMapInfo = function(mapID)
-		if C_Map and C_Map.GetMapInfo then
-			return C_Map.GetMapInfo(mapID)
-		end
-		return nil
-	end,
-	GetPlayerMapPosition = function(mapID, unitToken)
-		if C_Map and C_Map.GetPlayerMapPosition then
-			return C_Map.GetPlayerMapPosition(mapID, unitToken)
-		end
-		return nil
-	end,
+		GetMapInfo = function(mapID)
+			if C_Map and C_Map.GetMapInfo then
+				local ok, mapInfo = pcall(C_Map.GetMapInfo, mapID)
+				return ok and mapInfo or nil
+			end
+			return nil
+		end,
+		GetPlayerMapPosition = function(mapID, unitToken)
+			if C_Map and C_Map.GetPlayerMapPosition then
+				local ok, mapPosition = pcall(C_Map.GetPlayerMapPosition, mapID, unitToken)
+				return ok and mapPosition or nil
+			end
+			return nil
+		end,
 	IsWarModeActive = function()
 		if C_PvP and C_PvP.IsWarModeDesired then
 			return C_PvP.IsWarModeDesired()
@@ -698,30 +948,36 @@ QuestTogether.API = QuestTogether.API or {
 		end
 		return nil
 	end,
-	CanSetUserWaypointOnMap = function(mapID)
-		if C_Map and C_Map.CanSetUserWaypointOnMap then
-			return C_Map.CanSetUserWaypointOnMap(mapID)
-		end
-		return false
-	end,
-	SetUserWaypoint = function(point)
-		if C_Map and C_Map.SetUserWaypoint then
-			return C_Map.SetUserWaypoint(point)
-		end
-		return nil
-	end,
-	SetSuperTrackedUserWaypoint = function(shouldSuperTrack)
-		if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then
-			return C_SuperTrack.SetSuperTrackedUserWaypoint(shouldSuperTrack)
-		end
-		return nil
-	end,
+		CanSetUserWaypointOnMap = function(mapID)
+			if C_Map and C_Map.CanSetUserWaypointOnMap then
+				local ok, canSet = pcall(C_Map.CanSetUserWaypointOnMap, mapID)
+				return ok and canSet and true or false
+			end
+			return false
+		end,
+		SetUserWaypoint = function(point)
+			if C_Map and C_Map.SetUserWaypoint then
+				local ok, result = pcall(C_Map.SetUserWaypoint, point)
+				return ok and result or nil
+			end
+			return nil
+		end,
+		SetSuperTrackedUserWaypoint = function(shouldSuperTrack)
+			if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then
+				local ok, result = pcall(C_SuperTrack.SetSuperTrackedUserWaypoint, shouldSuperTrack)
+				return ok and result or nil
+			end
+			return nil
+		end,
 }
 
-function QuestTogether:IsSecretValue(_)
-	-- Intentionally avoid probing with issecretvalue() from addon code.
-	-- Probing can taint secret values that Blizzard later reuses internally.
-	return false
+function QuestTogether:IsSecretValue(value)
+	if type(issecretvalue) ~= "function" then
+		return false
+	end
+
+	local ok, result = pcall(issecretvalue, value)
+	return ok and result and true or false
 end
 
 function QuestTogether:SafeToNumber(value)
@@ -766,7 +1022,7 @@ end
 
 function QuestTogether:SafeToString(value, fallback)
 	-- String coercion is intentionally shielded so debug/log paths never trigger taint errors.
-	local ok, stringValue = pcall(tostring, value)
+	local ok, stringValue = pcall(raw_tostring, value)
 	if ok then
 		return stringValue
 	end
@@ -838,7 +1094,11 @@ local function FormatDebugValue(value, depth, visited)
 		return tostring(value)
 	end
 	if valueType == "string" then
-		return string.format("%q", value)
+		local ok, quoted = pcall(string.format, "%q", value)
+		if ok then
+			return quoted
+		end
+		return tostring(value, "<secret>")
 	end
 	if valueType ~= "table" then
 		return "<" .. tostring(valueType) .. ">"
@@ -905,7 +1165,7 @@ function QuestTogether:GetCurrentCharacterKey()
 	end
 
 	local playerName = self:GetPlayerName() or "Unknown"
-	if string.find(playerName, "-", 1, true) then
+	if SafeFind(playerName, "-", 1, true) then
 		return playerName
 	end
 
@@ -1455,10 +1715,10 @@ function QuestTogether:CloseQuestLogChatFrame()
 	if self.API.CloseChatWindow then
 		self.suppressQuestLogChatCloseHook = true
 		-- Closing chat windows can fail in restricted UI states; keep close flow resilient.
-		local ok, closeError = pcall(self.API.CloseChatWindow, chatFrame)
+		local ok = pcall(self.API.CloseChatWindow, chatFrame)
 		self.suppressQuestLogChatCloseHook = false
 		if not ok then
-			self:Debugf("chat", "Failed to close QuestTogether chat window id=%s error=%s", tostring(chatFrameID), tostring(closeError))
+			self:Debugf("chat", "Failed to close QuestTogether chat window id=%s", tostring(chatFrameID))
 		end
 	end
 
@@ -1935,7 +2195,7 @@ function QuestTogether:DecorateAnnouncementMessageWithQuestLink(message, eventTy
 	end
 
 	local messageText = self:SafeToString(message, "")
-	local prefixText, questTitle = string.match(messageText, "^(.-:%s+)(.+)$")
+	local prefixText, questTitle = SafeMatch(messageText, "^(.-:%s+)(.+)$")
 	if not prefixText or not questTitle or questTitle == "" then
 		return messageText
 	end
@@ -1989,8 +2249,11 @@ end
 
 function QuestTogether:NormalizeQuestLinkTitleText(titleText)
 	local normalizedText = self:SafeTrimString(titleText, "")
-	if string.match(normalizedText, "^%[.+%]$") then
-		normalizedText = string.sub(normalizedText, 2, -2)
+	if SafeMatch(normalizedText, "^%[.+%]$") then
+		local ok, trimmedTitle = pcall(string.sub, normalizedText, 2, -2)
+		if ok and type(trimmedTitle) == "string" then
+			normalizedText = trimmedTitle
+		end
 	end
 	return normalizedText
 end
@@ -2486,7 +2749,7 @@ end
 
 function QuestTogether:HandleChatLogCoordLink(link, text, linkData, contextData)
 	local options = tostring(linkData and linkData.options or "")
-	local mapID, coordX, coordY = string.match(options, "^([^:]+):([^:]+):([^:]+)$")
+	local mapID, coordX, coordY = SafeMatch(options, "^([^:]+):([^:]+):([^:]+)$")
 	if not mapID or not coordX or not coordY then
 		return LinkProcessorResponse.Handled
 	end
@@ -2568,14 +2831,16 @@ function QuestTogether:DebugState(category, label, value)
 end
 
 function QuestTogether:GetPlayerName()
-	return UnitName("player") or "Unknown"
+	local playerName = self.API and self.API.UnitName and self.API.UnitName("player") or nil
+	return playerName or "Unknown"
 end
 
 function QuestTogether:IsSelfSender(sender)
 	if not sender then
 		return false
 	end
-	return Ambiguate(sender, "short") == self:GetPlayerName()
+	local shortName = self.API and self.API.Ambiguate and self.API.Ambiguate(sender, "short") or nil
+	return shortName == self:GetPlayerName()
 end
 
 function QuestTogether:GetAnnouncementOptionKey(eventType)
@@ -2659,14 +2924,20 @@ function QuestTogether:GetQuestTitle(questId, questInfo)
 	end
 
 	if C_TaskQuest and C_TaskQuest.GetQuestInfoByQuestID then
-		local taskTitle = C_TaskQuest.GetQuestInfoByQuestID(questId)
+		local okTaskTitle, taskTitle = pcall(C_TaskQuest.GetQuestInfoByQuestID, questId)
+		if okTaskTitle and self:IsSecretValue(taskTitle) then
+			taskTitle = nil
+		end
 		if type(taskTitle) == "string" and taskTitle ~= "" then
 			return taskTitle
 		end
 	end
 
 	if C_QuestLog and C_QuestLog.GetTitleForQuestID then
-		local logTitle = C_QuestLog.GetTitleForQuestID(questId)
+		local okLogTitle, logTitle = pcall(C_QuestLog.GetTitleForQuestID, questId)
+		if okLogTitle and self:IsSecretValue(logTitle) then
+			logTitle = nil
+		end
 		if type(logTitle) == "string" and logTitle ~= "" then
 			return logTitle
 		end
@@ -3109,7 +3380,7 @@ function QuestTogether:PrintHelp()
 end
 
 function QuestTogether:HandleSlashCommand(input)
-	local command, rest = string.match(input, "^(%S*)%s*(.-)$")
+	local command, rest = SafeMatch(input, "^(%S*)%s*(.-)$")
 	command = string.lower(command or "")
 	self:Debugf("slash", "Command=%s rest=%s", tostring(command), FormatDebugValue(rest))
 
@@ -3176,7 +3447,7 @@ function QuestTogether:HandleSlashCommand(input)
 	end
 
 	if command == "set" then
-		local optionKey, optionValueText = string.match(rest, "^(%S+)%s+(.+)$")
+		local optionKey, optionValueText = SafeMatch(rest, "^(%S+)%s+(.+)$")
 		if not optionKey or not optionValueText then
 			self:Print("Usage: /qt set <option> <value>")
 			return
@@ -3199,7 +3470,7 @@ function QuestTogether:HandleSlashCommand(input)
 	end
 
 	if command == "get" then
-		local optionKey = string.match(rest, "^(%S+)$")
+		local optionKey = SafeMatch(rest, "^(%S+)$")
 		if not optionKey then
 			self:Print("Usage: /qt get <option>")
 			return
@@ -3243,7 +3514,7 @@ function QuestTogether:HandleSlashCommand(input)
 		local senderName = nil
 		local testText = rest
 		if not (self.API.UnitExists and self.API.UnitExists("target")) then
-			local explicitSenderName, explicitText = string.match(rest, "^(%S+)%s+(.+)$")
+			local explicitSenderName, explicitText = SafeMatch(rest, "^(%S+)%s+(.+)$")
 			if not explicitSenderName or not explicitText then
 				self:Print("Usage without a target: /qt bubbletest <player> <text>")
 				return
@@ -3285,11 +3556,11 @@ function QuestTogether:ScanQuestLog()
 	local tracker = self:GetPlayerTracker()
 	wipe(tracker)
 
-	local numQuestLogEntries = C_QuestLog.GetNumQuestLogEntries()
+	local numQuestLogEntries = self.API and self.API.GetNumQuestLogEntries and self.API.GetNumQuestLogEntries() or 0
 	local questsTracked = 0
 
 	for questLogIndex = 1, numQuestLogEntries do
-		local questInfo = C_QuestLog.GetInfo(questLogIndex)
+		local questInfo = self.API and self.API.GetQuestLogInfo and self.API.GetQuestLogInfo(questLogIndex) or nil
 		if questInfo and not questInfo.isHeader and not questInfo.isHidden then
 			self:WatchQuest(questInfo.questID, questInfo)
 			questsTracked = questsTracked + 1
@@ -3346,7 +3617,7 @@ function QuestTogether:WatchQuest(questId, questInfo)
 	end
 
 	local tracker = self:GetPlayerTracker()
-	local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
+	local questLogIndex = self.API and self.API.GetQuestLogIndexForQuestID and self.API.GetQuestLogIndexForQuestID(questId)
 	local questTitle = self:GetQuestTitle(questId, questInfo)
 
 	tracker[questId] = {
@@ -3356,8 +3627,8 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		-- Cached numeric objective values used to gate progress announcements.
 		-- This avoids noisy chat lines caused by text-only objective rewrites.
 		objectiveValues = {},
-		isComplete = C_QuestLog.IsComplete(questId) and true or false,
-		isReadyForTurnIn = C_QuestLog.ReadyForTurnIn and C_QuestLog.ReadyForTurnIn(questId) and true or false,
+		isComplete = self.API and self.API.IsQuestComplete and self.API.IsQuestComplete(questId) or false,
+		isReadyForTurnIn = self.API and self.API.IsQuestReadyForTurnIn and self.API.IsQuestReadyForTurnIn(questId) or false,
 	}
 	self:RefreshTrackedQuestAnnouncementIcon(questId, tracker[questId])
 	self:DebugState("quest", "trackedQuest", tracker[questId])
@@ -3366,11 +3637,16 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		return
 	end
 
-	local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
+	local numObjectives = self.API and self.API.GetNumQuestLeaderBoards and self.API.GetNumQuestLeaderBoards(questLogIndex)
+		or 0
 	for objectiveIndex = 1, numObjectives do
-		local objectiveText, objectiveType, _, currentValue = GetQuestObjectiveInfo(questId, objectiveIndex, false)
+		local objectiveText, objectiveType, _, currentValue =
+			self.API.GetQuestObjectiveInfo and self.API.GetQuestObjectiveInfo(questId, objectiveIndex, false)
+		if objectiveText == nil and objectiveType == nil and currentValue == nil then
+			objectiveText = ""
+		end
 		if objectiveType == "progressbar" then
-			local progress = GetQuestProgressBarPercent(questId)
+			local progress = self.API.GetQuestProgressBarPercent and self.API.GetQuestProgressBarPercent(questId)
 			objectiveText = tostring(progress)
 				.. "% "
 				.. tostring(self:StripTrailingParentheticalPercent(objectiveText))

@@ -319,6 +319,36 @@ QuestTogether:RegisterTest("personal bubble anchor numeric parsing uses SafeToNu
 	end)
 end)
 
+QuestTogether:RegisterTest("wire message parsers fail soft on values that cannot be coerced", function()
+	local failingToString = setmetatable({}, {
+		__tostring = function()
+			error("boom")
+		end,
+	})
+
+	local command, payload = QuestTogether:DeserializeWireMessage(failingToString)
+	AssertEquals(command, nil)
+	AssertEquals(payload, nil)
+	AssertEquals(QuestTogether:EscapePayload(failingToString), "")
+	AssertEquals(QuestTogether:UnescapePayload(failingToString), "")
+	AssertEquals(QuestTogether:SanitizeAnnouncementText(failingToString), "")
+end)
+
+QuestTogether:RegisterTest("nameplate tooltip scan guid cache does not write custom fields on Blizzard frames", function()
+	local unitToken = "nameplate9"
+	local unitFrame = {
+		namePlateUnitGUID = "Creature-0-0-0-0-99999-0000000000",
+	}
+
+	local guid = QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
+	AssertEquals(guid, "Creature-0-0-0-0-99999-0000000000")
+	AssertEquals(unitFrame.qtTooltipScanGuid, nil)
+	AssertEquals(QuestTogether.nameplateTooltipGuidByUnitToken[unitToken], guid)
+
+	QuestTogether:OnNameplateRemoved(unitToken)
+	AssertEquals(QuestTogether.nameplateTooltipGuidByUnitToken[unitToken], nil)
+end)
+
 QuestTogether:RegisterTest("profile assignment is stored per character key", function()
 	QuestTogether.db.profiles = {}
 	QuestTogether.db.profileKeys = {}

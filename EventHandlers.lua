@@ -9,6 +9,24 @@ Responsibilities in this file:
 
 local QuestTogether = _G.QuestTogether
 
+local function SafeText(value, fallback)
+	return QuestTogether:SafeToString(value, fallback or "")
+end
+
+local function SafeMatch(text, pattern)
+	local safeText = SafeText(text, "")
+	if safeText == "" then
+		return nil
+	end
+
+	local ok, first, second = pcall(string.match, safeText, pattern)
+	if not ok then
+		return nil
+	end
+
+	return first, second
+end
+
 local function CountKeys(tableValue)
 	local count = 0
 	for _ in pairs(tableValue or {}) do
@@ -22,12 +40,12 @@ local function ParseObjectiveProgressFromText(objectiveText)
 		return nil
 	end
 
-	local amountCurrent = string.match(objectiveText, "(%d+)%s*/%s*%d+")
+	local amountCurrent = SafeMatch(objectiveText, "(%d+)%s*/%s*%d+")
 	if amountCurrent then
 		return QuestTogether:SafeToNumber(amountCurrent)
 	end
 
-	local percent = string.match(objectiveText, "(%d+)%%")
+	local percent = SafeMatch(objectiveText, "(%d+)%%")
 	if percent then
 		return QuestTogether:SafeToNumber(percent)
 	end
@@ -70,13 +88,13 @@ function QuestTogether:PlayLocalCompletionEmote(emoteToken)
 		self:Debug("Skipping local emote because emoteOnQuestCompletion is disabled.", "quest")
 		return false
 	end
-	self:Debugf("quest", "Playing completion emote token=%s", tostring(emoteToken))
+	self:Debugf("quest", "Playing completion emote token=%s", SafeText(emoteToken, "<none>"))
 	self.API.DoEmote(emoteToken, self:GetPlayerName())
 	return true
 end
 
 function QuestTogether:HandleQuestCompleted(questTitle, questId, extraData)
-	self:Debugf("quest", "Quest completed questId=%s title=%s", tostring(questId), tostring(questTitle))
+	self:Debugf("quest", "Quest completed questId=%s title=%s", SafeText(questId, "?"), SafeText(questTitle, "Unknown"))
 	local completionEmote = self:PickRandomCompletionEmote()
 	local announcementExtraData = {}
 	if type(extraData) == "table" then
@@ -88,21 +106,21 @@ function QuestTogether:HandleQuestCompleted(questTitle, questId, extraData)
 	if questId and self:IsWorldQuest(questId) then
 		self:PublishAnnouncementEvent(
 			"WORLD_QUEST_COMPLETED",
-			"World Quest Completed: " .. tostring(questTitle),
+			"World Quest Completed: " .. SafeText(questTitle, "Unknown"),
 			questId,
 			announcementExtraData
 		)
 	elseif questId and self:IsBonusObjective(questId) then
 		self:PublishAnnouncementEvent(
 			"BONUS_OBJECTIVE_COMPLETED",
-			"Bonus Objective Completed: " .. tostring(questTitle),
+			"Bonus Objective Completed: " .. SafeText(questTitle, "Unknown"),
 			questId,
 			announcementExtraData
 		)
 	else
 		self:PublishAnnouncementEvent(
 			"QUEST_COMPLETED",
-			"Quest Completed: " .. tostring(questTitle),
+			"Quest Completed: " .. SafeText(questTitle, "Unknown"),
 			questId,
 			announcementExtraData
 		)
@@ -112,8 +130,8 @@ function QuestTogether:HandleQuestCompleted(questTitle, questId, extraData)
 end
 
 function QuestTogether:HandleQuestRemoved(questTitle)
-	self:Debugf("quest", "Quest removed title=%s", tostring(questTitle))
-	self:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: " .. tostring(questTitle))
+	self:Debugf("quest", "Quest removed title=%s", SafeText(questTitle, "Unknown"))
+	self:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: " .. SafeText(questTitle, "Unknown"))
 end
 
 function QuestTogether:ShouldPublishObjectiveProgress(currentValue)
@@ -140,7 +158,7 @@ function QuestTogether:BuildTrackedQuestRemovalData(questId)
 	local iconAsset, iconKind = self:GetTrackedQuestAnnouncementIcon(trackedQuest)
 	return {
 		questId = questId,
-		title = trackedQuest.title or ("Quest " .. tostring(questId)),
+		title = trackedQuest.title or ("Quest " .. SafeText(questId, "?")),
 		taskAnnouncementType = trackedQuest.taskAnnouncementType or self:GetTaskAnnouncementType(questId),
 		iconAsset = iconAsset,
 		iconKind = iconKind,
@@ -181,17 +199,17 @@ function QuestTogether:ResolvePendingQuestRemoval(questId)
 
 	local completionData = self.questsCompleted[questId]
 	local completed = completionData ~= nil
-	local questTitle = removalData.title or (completionData and completionData.title) or ("Quest " .. tostring(questId))
+	local questTitle = removalData.title or (completionData and completionData.title) or ("Quest " .. SafeText(questId, "?"))
 	local iconAsset = (completionData and completionData.iconAsset) or removalData.iconAsset
 	local iconKind = (completionData and completionData.iconKind) or removalData.iconKind
 
 	self:Debugf(
 		"quest",
 		"Resolving removal questId=%s title=%s taskType=%s completed=%s",
-		tostring(questId),
-		tostring(questTitle),
-		tostring(removalData.taskAnnouncementType),
-		tostring(completed)
+		SafeText(questId, "?"),
+		SafeText(questTitle, "Unknown"),
+		SafeText(removalData.taskAnnouncementType, ""),
+		SafeText(completed, "false")
 	)
 
 	if completed then
@@ -200,7 +218,7 @@ function QuestTogether:ResolvePendingQuestRemoval(questId)
 			iconKind = iconKind,
 		})
 	elseif not removalData.taskAnnouncementType then
-		self:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: " .. tostring(questTitle), questId)
+		self:PublishAnnouncementEvent("QUEST_REMOVED", "Quest Removed: " .. SafeText(questTitle, "Unknown"), questId)
 	end
 
 	self:ClearTrackedQuestState(questId)
@@ -216,10 +234,10 @@ function QuestTogether:HandleGroupRosterChanged(reason)
 	self:Debugf(
 		"group",
 		"HandleGroupRosterChanged reason=%s changed=%s prev=%s new=%s",
-		tostring(reason),
-		tostring(previousFingerprint ~= newFingerprint),
-		tostring(previousFingerprint),
-		tostring(newFingerprint)
+		SafeText(reason, ""),
+		SafeText(previousFingerprint ~= newFingerprint, "false"),
+		SafeText(previousFingerprint, ""),
+		SafeText(newFingerprint, "")
 	)
 end
 
@@ -232,13 +250,20 @@ function QuestTogether:GetTaskAreaSnapshot(taskType)
 	-- We intentionally do not merge tracked-watch lists here because watched tasks
 	-- are shown by Blizzard even when out of area, which is not suitable for enter/leave.
 	if type(GetTasksTable) == "function" then
-		local tasksTable = GetTasksTable()
+		local okTasks, tasksTable = pcall(GetTasksTable)
+		if not okTasks then
+			tasksTable = nil
+		end
 		if type(tasksTable) == "table" then
 			for _, questId in ipairs(tasksTable) do
 				local matchesType = taskType == "world" and self:IsWorldQuest(questId)
 					or taskType == "bonus" and self:IsBonusObjective(questId)
 				if matchesType then
-					local inArea = type(GetTaskInfo) ~= "function" or (GetTaskInfo(questId) and true or false)
+					local inArea = true
+					if type(GetTaskInfo) == "function" then
+						local okTaskInfo, taskInfo = pcall(GetTaskInfo, questId)
+						inArea = okTaskInfo and taskInfo and true or false
+					end
 					if inArea then
 						activeByQuestId[questId] = self:GetQuestTitle(questId)
 					end
@@ -290,8 +315,8 @@ function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
 	self:Debugf(
 		"quest",
 		"RefreshTaskAreaState type=%s announce=%s prev=%d curr=%d",
-		tostring(taskType),
-		tostring(shouldAnnounce),
+		SafeText(taskType, ""),
+		SafeText(shouldAnnounce, "false"),
 		CountKeys(previousState),
 		CountKeys(currentState)
 	)
@@ -301,11 +326,11 @@ function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
 			self:Debugf(
 				"quest",
 				"%s area entered questId=%s title=%s",
-				tostring(config.debugLabel),
-				tostring(questId),
-				tostring(questTitle)
+				SafeText(config.debugLabel, ""),
+				SafeText(questId, "?"),
+				SafeText(questTitle, "Unknown")
 			)
-			self:PublishAnnouncementEvent(config.enterEvent, config.enterPrefix .. tostring(questTitle), questId)
+			self:PublishAnnouncementEvent(config.enterEvent, config.enterPrefix .. SafeText(questTitle, "Unknown"), questId)
 		end
 	end
 
@@ -317,11 +342,11 @@ function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
 				self:Debugf(
 					"quest",
 					"%s area left questId=%s title=%s",
-					tostring(config.debugLabel),
-					tostring(questId),
-					tostring(questTitle)
+					SafeText(config.debugLabel, ""),
+					SafeText(questId, "?"),
+					SafeText(questTitle, "Unknown")
 				)
-				self:PublishAnnouncementEvent(config.leftEvent, config.leftPrefix .. tostring(questTitle), questId)
+				self:PublishAnnouncementEvent(config.leftEvent, config.leftPrefix .. SafeText(questTitle, "Unknown"), questId)
 			end
 		end
 	end
@@ -344,7 +369,7 @@ function QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
 		if shouldAnnounce then
 			self.pendingTaskAreaRefreshShouldAnnounce = true
 		end
-		self:Debugf("quest", "Deferring task area refresh during combat announce=%s", tostring(shouldAnnounce))
+		self:Debugf("quest", "Deferring task area refresh during combat announce=%s", SafeText(shouldAnnounce, "false"))
 		return false
 	end
 
@@ -363,7 +388,7 @@ end
 function QuestTogether:PLAYER_REGEN_ENABLED()
 	if self.pendingTaskAreaRefresh then
 		local shouldAnnounce = self.pendingTaskAreaRefreshShouldAnnounce and true or false
-		self:Debugf("quest", "Resuming deferred task area refresh announce=%s", tostring(shouldAnnounce))
+		self:Debugf("quest", "Resuming deferred task area refresh announce=%s", SafeText(shouldAnnounce, "false"))
 		self.pendingTaskAreaRefresh = false
 		self.pendingTaskAreaRefreshShouldAnnounce = false
 		self:RefreshTaskAreaStates(shouldAnnounce)
@@ -372,7 +397,7 @@ end
 
 -- QUEST_ACCEPTED fires early; defer reads until QUEST_LOG_UPDATE.
 function QuestTogether:QUEST_ACCEPTED(_, questId)
-	self:Debugf("events", "QUEST_ACCEPTED questId=%s", tostring(questId))
+	self:Debugf("events", "QUEST_ACCEPTED questId=%s", SafeText(questId, "?"))
 
 	self:QueueQuestLogTask(function()
 		local tracker = self:GetPlayerTracker()
@@ -381,19 +406,19 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 		end
 
 		local taskAnnouncementType = self:GetTaskAnnouncementType(questId)
-		local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
+		local questLogIndex = self.API.GetQuestLogIndexForQuestID and self.API.GetQuestLogIndexForQuestID(questId)
 		if not questLogIndex then
 			if taskAnnouncementType then
 				local taskQuestTitle = self:GetQuestTitle(questId)
 				self:WatchQuest(questId, { title = taskQuestTitle })
 				self:RefreshTaskAreaState(taskAnnouncementType, true)
 			else
-				self:Debugf("quest", "Quest not found in log questId=%s during accept", tostring(questId))
+				self:Debugf("quest", "Quest not found in log questId=%s during accept", SafeText(questId, "?"))
 			end
 			return
 		end
 
-		local questInfo = C_QuestLog.GetInfo(questLogIndex)
+		local questInfo = self.API.GetQuestLogInfo and self.API.GetQuestLogInfo(questLogIndex)
 		if not questInfo then
 			return
 		end
@@ -403,8 +428,13 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 		end
 
 		if not taskAnnouncementType then
-			self:Debugf("quest", "Publishing accepted announcement questId=%s title=%s", tostring(questId), tostring(questInfo.title))
-			self:PublishAnnouncementEvent("QUEST_ACCEPTED", "Quest Accepted: " .. tostring(questInfo.title), questId)
+			self:Debugf(
+				"quest",
+				"Publishing accepted announcement questId=%s title=%s",
+				SafeText(questId, "?"),
+				SafeText(questInfo.title, "Unknown")
+			)
+			self:PublishAnnouncementEvent("QUEST_ACCEPTED", "Quest Accepted: " .. SafeText(questInfo.title, "Unknown"), questId)
 		end
 
 		self:WatchQuest(questId, questInfo)
@@ -415,7 +445,7 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 end
 
 function QuestTogether:QUEST_TURNED_IN(_, questId)
-	self:Debugf("events", "QUEST_TURNED_IN questId=%s", tostring(questId))
+	self:Debugf("events", "QUEST_TURNED_IN questId=%s", SafeText(questId, "?"))
 	local completionData = self:BuildTrackedQuestCompletionData(questId)
 	self.questsCompleted[questId] = completionData
 	if self.pendingQuestRemovals[questId] then
@@ -424,7 +454,7 @@ function QuestTogether:QUEST_TURNED_IN(_, questId)
 end
 
 function QuestTogether:QUEST_REMOVED(_, questId)
-	self:Debugf("events", "QUEST_REMOVED questId=%s", tostring(questId))
+	self:Debugf("events", "QUEST_REMOVED questId=%s", SafeText(questId, "?"))
 	local removalData = self:BuildTrackedQuestRemovalData(questId)
 	if not removalData then
 		return
@@ -445,7 +475,7 @@ end
 -- UNIT_QUEST_LOG_CHANGED indicates objective and completion changes.
 -- Emit local progress announcements only when numeric progress increases.
 function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
-	self:Debugf("events", "UNIT_QUEST_LOG_CHANGED unit=%s", tostring(unit))
+	self:Debugf("events", "UNIT_QUEST_LOG_CHANGED unit=%s", SafeText(unit, ""))
 
 	if unit ~= "player" then
 		return
@@ -455,22 +485,27 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 		local tracker = self:GetPlayerTracker()
 
 		for questId, questData in pairs(tracker) do
-			local questLogIndex = C_QuestLog.GetLogIndexForQuestID(questId)
+			local questLogIndex = self.API.GetQuestLogIndexForQuestID and self.API.GetQuestLogIndexForQuestID(questId)
 			if not questLogIndex then
-				self:Debugf("quest", "Quest not found in log questId=%s during objective scan", tostring(questId))
+				self:Debugf("quest", "Quest not found in log questId=%s during objective scan", SafeText(questId, "?"))
 			else
 				local changedObjectives = {}
-				local numObjectives = GetNumQuestLeaderBoards(questLogIndex)
+				local numObjectives = self.API.GetNumQuestLeaderBoards and self.API.GetNumQuestLeaderBoards(questLogIndex)
+					or 0
 
 				for objectiveIndex = 1, numObjectives do
 					local objectiveText, objectiveType, _, currentValue =
-						GetQuestObjectiveInfo(questId, objectiveIndex, false)
+						self.API.GetQuestObjectiveInfo and self.API.GetQuestObjectiveInfo(questId, objectiveIndex, false)
+					if objectiveText == nil and objectiveType == nil and currentValue == nil then
+						objectiveText = ""
+					end
 
 					if objectiveType == "progressbar" then
-						local progress = GetQuestProgressBarPercent(questId)
-						objectiveText = tostring(progress)
+						local progress = self.API.GetQuestProgressBarPercent
+							and self.API.GetQuestProgressBarPercent(questId)
+						objectiveText = SafeText(progress, "0")
 							.. "% "
-							.. tostring(self:StripTrailingParentheticalPercent(objectiveText))
+							.. SafeText(self:StripTrailingParentheticalPercent(objectiveText), "")
 						currentValue = progress
 					end
 
@@ -485,13 +520,13 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 						self:Debugf(
 							"quest",
 							"Objective delta questId=%s index=%d old=%s new=%s progress=%s initial=%s forward=%s",
-							tostring(questId),
+							SafeText(questId, "?"),
 							objectiveIndex,
-							tostring(oldObjectiveText),
-							tostring(objectiveText),
-							tostring(resolvedProgressValue),
-							tostring(isInitialObjectiveBaseline),
-							tostring(hasForwardProgress)
+							SafeText(oldObjectiveText, ""),
+							SafeText(objectiveText, ""),
+							SafeText(resolvedProgressValue, ""),
+							SafeText(isInitialObjectiveBaseline, "false"),
+							SafeText(hasForwardProgress, "false")
 						)
 						if (not isInitialObjectiveBaseline) and hasForwardProgress and self:ShouldPublishObjectiveProgress(
 							resolvedProgressValue
@@ -503,7 +538,12 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 							elseif taskAnnouncementType == "bonus" then
 								eventType = "BONUS_OBJECTIVE_PROGRESS"
 							end
-							self:Debugf("quest", "Publishing progress event questId=%s eventType=%s", tostring(questId), tostring(eventType))
+							self:Debugf(
+								"quest",
+								"Publishing progress event questId=%s eventType=%s",
+								SafeText(questId, "?"),
+								SafeText(eventType, "")
+							)
 							self:PublishAnnouncementEvent(eventType, objectiveText, questId)
 						end
 						questData.objectives[objectiveIndex] = objectiveText
@@ -527,7 +567,7 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 					end
 				end
 
-				local currentIsComplete = C_QuestLog.IsComplete(questId) and true or false
+				local currentIsComplete = self.API.IsQuestComplete and self.API.IsQuestComplete(questId) or false
 				local completionChanged = questData.isComplete ~= currentIsComplete
 				if completionChanged then
 					questData.isComplete = currentIsComplete
@@ -535,12 +575,13 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 					self:Debugf(
 						"quest",
 						"Completion state changed questId=%s isComplete=%s",
-						tostring(questId),
-						tostring(currentIsComplete)
+						SafeText(questId, "?"),
+						SafeText(currentIsComplete, "false")
 					)
 				end
 
-				local currentReadyForTurnIn = C_QuestLog.ReadyForTurnIn and C_QuestLog.ReadyForTurnIn(questId) and true
+				local currentReadyForTurnIn = self.API.IsQuestReadyForTurnIn
+					and self.API.IsQuestReadyForTurnIn(questId)
 					or false
 				local readyForTurnInChanged = questData.isReadyForTurnIn ~= currentReadyForTurnIn
 				if readyForTurnInChanged then
@@ -549,12 +590,16 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 					self:Debugf(
 						"quest",
 						"Ready for turn-in state changed questId=%s ready=%s",
-						tostring(questId),
-						tostring(currentReadyForTurnIn)
+						SafeText(questId, "?"),
+						SafeText(currentReadyForTurnIn, "false")
 					)
 					if currentReadyForTurnIn and not self:GetTaskAnnouncementType(questId) then
 						local questTitle = questData.title or self:GetQuestTitle(questId)
-						self:PublishAnnouncementEvent("QUEST_READY_TO_TURN_IN", "Ready to Turn In: " .. tostring(questTitle), questId)
+						self:PublishAnnouncementEvent(
+							"QUEST_READY_TO_TURN_IN",
+							"Ready to Turn In: " .. SafeText(questTitle, "Unknown"),
+							questId
+						)
 					end
 				end
 

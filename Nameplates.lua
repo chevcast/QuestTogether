@@ -13,6 +13,7 @@ Design constraints:
 
 local QuestTogether = _G.QuestTogether
 local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
+local ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK = true
 local ANNOUNCEMENT_BUBBLE_Y_OFFSET = 22
 local ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS = 0.2
 local ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS = 0.4
@@ -62,6 +63,71 @@ local function IsNonEmptyString(value)
 	return type(value) == "string" and value ~= ""
 end
 
+local function IsFrameForbidden(frame)
+	local frameType = type(frame)
+	if not frame or (frameType ~= "table" and frameType ~= "userdata") then
+		return false
+	end
+	if not frame.IsForbidden then
+		return false
+	end
+
+	-- Forbidden checks can be unavailable on some userdata-backed frames; fail open.
+	local ok, forbidden = pcall(frame.IsForbidden, frame)
+	return ok and forbidden and true or false
+end
+
+local function CanMutateFrame(frame)
+	return frame ~= nil and not IsFrameForbidden(frame)
+end
+
+local function SafeText(value, fallback)
+	if QuestTogether and QuestTogether.SafeToString then
+		return QuestTogether:SafeToString(value, fallback or "")
+	end
+
+	local ok, text = pcall(tostring, value)
+	if ok then
+		return text
+	end
+	return fallback or ""
+end
+
+local function SafeMatch(text, pattern)
+	local safeText = SafeText(text, "")
+	if safeText == "" then
+		return nil
+	end
+
+	local ok, first, second = pcall(string.match, safeText, pattern)
+	if not ok then
+		return nil
+	end
+
+	return first, second
+end
+
+local function SafeTrimText(text)
+	if QuestTogether and QuestTogether.SafeTrimString then
+		return QuestTogether:SafeTrimString(text, "")
+	end
+	return SafeText(text, "")
+end
+
+local function SafeFindPlain(text, pattern)
+	local safeText = SafeText(text, "")
+	if safeText == "" then
+		return nil
+	end
+
+	local ok, index = pcall(string.find, safeText, pattern, 1, true)
+	if not ok then
+		return nil
+	end
+
+	return index
+end
+
 SafeUiNumber = function(value, fallback)
 	local numericValue = nil
 	if QuestTogether and QuestTogether.SafeToNumber then
@@ -76,11 +142,14 @@ end
 QuestTogether.nameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache or {}
 QuestTogether.nameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache or {}
 QuestTogether.nameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken or {}
+QuestTogether.nameplateTooltipGuidByUnitToken = QuestTogether.nameplateTooltipGuidByUnitToken or {}
 QuestTogether.nameplateIconByUnitFrame = QuestTogether.nameplateIconByUnitFrame
 	or setmetatable({}, { __mode = "k" })
 QuestTogether.nameplateHealthOverlayByUnitFrame = QuestTogether.nameplateHealthOverlayByUnitFrame
 	or setmetatable({}, { __mode = "k" })
 QuestTogether.nameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
+	or setmetatable({}, { __mode = "k" })
+QuestTogether.personalBubbleSliderHandlesByFrame = QuestTogether.personalBubbleSliderHandlesByFrame
 	or setmetatable({}, { __mode = "k" })
 QuestTogether.nameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken or {}
 QuestTogether.nameplateRefreshGenerationByUnitToken = QuestTogether.nameplateRefreshGenerationByUnitToken or {}
@@ -99,10 +168,15 @@ local function GetAnnouncementBubbleLifetimeSeconds()
 end
 
 local function GetAnnouncementBubbleUnitFrame(hostFrame)
-	if not hostFrame then
+	if not hostFrame or IsFrameForbidden(hostFrame) then
 		return nil
 	end
-	return hostFrame.UnitFrame or hostFrame
+
+	local unitFrame = hostFrame.UnitFrame or hostFrame
+	if IsFrameForbidden(unitFrame) then
+		return nil
+	end
+	return unitFrame
 end
 
 local function ScaleBubbleMetric(baseValue, sizeScale, minimumValue)
@@ -341,11 +415,14 @@ local function ConfigureEditModeSlider(settingFrame, settingData, onValueChanged
 	if settingFrame.cbrHandles then
 		settingFrame.cbrHandles:Unregister()
 	end
-	if not settingFrame.qtCbrHandles then
-		settingFrame.qtCbrHandles = EventUtil.CreateCallbackHandleContainer()
+
+	local callbackHandles = QuestTogether.personalBubbleSliderHandlesByFrame[settingFrame]
+	if not callbackHandles then
+		callbackHandles = EventUtil.CreateCallbackHandleContainer()
+		QuestTogether.personalBubbleSliderHandlesByFrame[settingFrame] = callbackHandles
 	end
-	settingFrame.qtCbrHandles:Unregister()
-	settingFrame.qtCbrHandles:RegisterCallback(
+	callbackHandles:Unregister()
+	callbackHandles:RegisterCallback(
 		settingFrame.Slider,
 		MinimalSliderWithSteppersMixin.Event.OnValueChanged,
 		function(_, value)
@@ -355,14 +432,14 @@ local function ConfigureEditModeSlider(settingFrame, settingData, onValueChanged
 		end,
 		settingFrame
 	)
-	settingFrame.qtCbrHandles:RegisterCallback(
+	callbackHandles:RegisterCallback(
 		settingFrame.Slider,
 		MinimalSliderWithSteppersMixin.Event.OnInteractStart,
 		function()
 		end,
 		settingFrame
 	)
-	settingFrame.qtCbrHandles:RegisterCallback(
+	callbackHandles:RegisterCallback(
 		settingFrame.Slider,
 		MinimalSliderWithSteppersMixin.Event.OnInteractEnd,
 		function()
@@ -668,11 +745,11 @@ function QuestTogether:SavePersonalBubbleAnchorFromFrame(hostFrame)
 	self:Debugf(
 		"editmode",
 		"Saved personal bubble anchor point=%s relativePoint=%s x=%s y=%s changed=%s",
-		tostring(point),
-		tostring(relativePoint),
-		tostring(RoundOffset(offsetX)),
-		tostring(RoundOffset(offsetY)),
-		tostring(changed)
+		SafeText(point, ""),
+		SafeText(relativePoint, ""),
+		SafeText(RoundOffset(offsetX), "0"),
+		SafeText(RoundOffset(offsetY), "0"),
+		SafeText(changed, "false")
 	)
 	if changed and self:IsPersonalBubbleAnchorInEditMode() and not self.personalBubbleEditSessionRestoring then
 		UpdatePersonalBubbleEditSessionDirtyState()
@@ -704,10 +781,10 @@ function QuestTogether:AttachPersonalBubbleEditModeDialog()
 	self:Debugf(
 		"editmode",
 		"Attaching personal bubble dialog point=%s relativePoint=%s x=%s y=%s",
-		tostring(point),
-		tostring(relativePoint),
-		tostring(offsetX),
-		tostring(offsetY)
+		SafeText(point, ""),
+		SafeText(relativePoint, ""),
+		SafeText(offsetX, "0"),
+		SafeText(offsetY, "0")
 	)
 	dialog:ClearAllPoints()
 	dialog:SetPoint(point, relativeTo, relativePoint, offsetX, offsetY)
@@ -956,7 +1033,12 @@ end
 
 -- Returns true only for the dynamic nameplate unit tokens (nameplate1, nameplate2, ...).
 function QuestTogether:IsNameplateUnitToken(unitToken)
-	return type(unitToken) == "string" and string.find(unitToken, "^nameplate%d+$") ~= nil
+	if type(unitToken) ~= "string" then
+		return false
+	end
+
+	local ok, isMatch = pcall(string.find, unitToken, "^nameplate%d+$")
+	return ok and isMatch ~= nil
 end
 
 function QuestTogether:GetNameplateNowSeconds()
@@ -964,12 +1046,19 @@ function QuestTogether:GetNameplateNowSeconds()
 end
 
 function QuestTogether:DoesNameplateUnitExist(unitToken)
-	return UnitExists(unitToken) and true or false
+	if self.API and self.API.UnitExists then
+		return self.API.UnitExists(unitToken)
+	end
+	local ok, exists = pcall(UnitExists, unitToken)
+	return ok and exists and true or false
 end
 
 function QuestTogether:GetNameplateUnitGuid(unitToken)
 	-- Nameplate unit tokens can disappear between frames; guard transient UnitGUID errors.
 	local ok, unitGuid = pcall(UnitGUID, unitToken)
+	if self:IsSecretValue(unitGuid) then
+		return nil
+	end
 	if not ok or not IsNonEmptyString(unitGuid) then
 		return nil
 	end
@@ -1003,27 +1092,36 @@ function QuestTogether:IsNameplateUnitQuestBoss(unitToken)
 	if not UnitIsQuestBoss then
 		return false
 	end
-	return UnitIsQuestBoss(unitToken) and true or false
+	local ok, isQuestBoss = pcall(UnitIsQuestBoss, unitToken)
+	return ok and isQuestBoss and true or false
 end
 
 function QuestTogether:CanPlayerAttackNameplateUnit(unitToken)
-	return UnitCanAttack("player", unitToken) and true or false
+	local ok, canAttack = pcall(UnitCanAttack, "player", unitToken)
+	return ok and canAttack and true or false
 end
 
 function QuestTogether:IsNameplateUnitPlayer(unitToken)
-	return UnitIsPlayer(unitToken) and true or false
+	if self.API and self.API.UnitIsPlayer then
+		return self.API.UnitIsPlayer(unitToken)
+	end
+	local ok, isPlayer = pcall(UnitIsPlayer, unitToken)
+	return ok and isPlayer and true or false
 end
 
 function QuestTogether:IsNameplateUnitConnected(unitToken)
-	return UnitIsConnected(unitToken) and true or false
+	local ok, isConnected = pcall(UnitIsConnected, unitToken)
+	return ok and isConnected and true or false
 end
 
 function QuestTogether:IsNameplateUnitDead(unitToken)
-	return UnitIsDead(unitToken) and true or false
+	local ok, isDead = pcall(UnitIsDead, unitToken)
+	return ok and isDead and true or false
 end
 
 function QuestTogether:IsNameplateUnitTapDenied(unitToken)
-	return UnitIsTapDenied(unitToken) and true or false
+	local ok, isTapDenied = pcall(UnitIsTapDenied, unitToken)
+	return ok and isTapDenied and true or false
 end
 
 function QuestTogether:GetNameplateQuestHealthColor()
@@ -1042,6 +1140,9 @@ end
 
 function QuestTogether:CreateNameplateHealthOverlayTexture(parentFrame, drawLayer, subLevel)
 	if not parentFrame or not parentFrame.CreateTexture then
+		return nil
+	end
+	if IsFrameForbidden(parentFrame) then
 		return nil
 	end
 
@@ -1075,7 +1176,7 @@ local function GetObjectiveProgressState(text)
 		return "unknown"
 	end
 
-	local amountCurrent, amountTotal = string.match(text, "(%d+)%s*/%s*(%d+)")
+	local amountCurrent, amountTotal = SafeMatch(text, "(%d+)%s*/%s*(%d+)")
 	if amountCurrent and amountTotal then
 		local currentValue = SafeUiNumber(amountCurrent, nil)
 		local totalValue = SafeUiNumber(amountTotal, nil)
@@ -1088,7 +1189,7 @@ local function GetObjectiveProgressState(text)
 		return "complete"
 	end
 
-	local percentText = string.match(text, "(%d+)%%")
+	local percentText = SafeMatch(text, "(%d+)%%")
 	if percentText then
 		local percentValue = SafeUiNumber(percentText, nil)
 		if percentValue == nil then
@@ -1111,13 +1212,13 @@ end
 function QuestTogether:RebuildNameplateQuestTitleCache()
 	wipe(self.nameplateQuestTitleCache)
 
-	if not C_QuestLog or not C_QuestLog.GetNumQuestLogEntries or not C_QuestLog.GetInfo then
+	if not self.API or not self.API.GetNumQuestLogEntries or not self.API.GetQuestLogInfo then
 		return
 	end
 
-	local totalEntries = C_QuestLog.GetNumQuestLogEntries()
+	local totalEntries = SafeUiNumber(self.API.GetNumQuestLogEntries(), 0) or 0
 	for entryIndex = 1, totalEntries do
-		local questDetails = C_QuestLog.GetInfo(entryIndex)
+		local questDetails = self.API.GetQuestLogInfo(entryIndex)
 		if
 			questDetails
 			and not questDetails.isHeader
@@ -1135,17 +1236,24 @@ function QuestTogether:RebuildNameplateQuestTitleCache()
 		return
 	end
 
-	if C_Map and C_Map.GetBestMapForUnit and C_TaskQuest and C_TaskQuest.GetQuestInfoByQuestID then
-		local mapId = C_Map.GetBestMapForUnit("player")
+	if self.API and self.API.GetBestMapForUnit and C_TaskQuest and C_TaskQuest.GetQuestInfoByQuestID then
+		local mapId = self.API.GetBestMapForUnit("player")
 		if mapId then
 			local getQuestsForMap = C_TaskQuest.GetQuestsForPlayerByMapID or C_TaskQuest.GetQuestsOnMap
 			if getQuestsForMap then
-				local worldQuestList = getQuestsForMap(mapId)
+				local okQuests, worldQuestList = pcall(getQuestsForMap, mapId)
+				if not okQuests then
+					worldQuestList = nil
+				end
 				if type(worldQuestList) == "table" then
 					for _, questInfo in ipairs(worldQuestList) do
 						local questId = questInfo and questInfo.questId
 						if type(questId) == "number" and questId > 0 then
-							local questName = C_TaskQuest.GetQuestInfoByQuestID(questId)
+							-- Task-quest title lookups can fail transiently during map refresh.
+							local okTitle, questName = pcall(C_TaskQuest.GetQuestInfoByQuestID, questId)
+							if okTitle and self:IsSecretValue(questName) then
+								questName = nil
+							end
 							if type(questName) == "string" and questName ~= "" then
 								self.nameplateQuestTitleCache[questName] = true
 							end
@@ -1181,16 +1289,26 @@ function QuestTogether:SetCachedQuestObjectiveResult(guid, value)
 end
 
 function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
+	if IsFrameForbidden(unitFrame) then
+		unitFrame = nil
+	end
+
 	local plateFrame = unitFrame and unitFrame.PlateFrame or nil
+	if IsFrameForbidden(plateFrame) then
+		plateFrame = nil
+	end
+	local cachedGuidByToken = type(unitToken) == "string" and self.nameplateTooltipGuidByUnitToken[unitToken] or nil
 	local candidateGuids = {
+		cachedGuidByToken,
 		unitFrame and unitFrame.namePlateUnitGUID or nil,
-		unitFrame and unitFrame.qtTooltipScanGuid or nil,
 		plateFrame and plateFrame.namePlateUnitGUID or nil,
-		plateFrame and plateFrame.qtTooltipScanGuid or nil,
 	}
 
 	for index = 1, #candidateGuids do
 		local candidateGuid = candidateGuids[index]
+		if self:IsSecretValue(candidateGuid) then
+			candidateGuid = nil
+		end
 		if IsNonEmptyString(candidateGuid) then
 			return candidateGuid
 		end
@@ -1198,11 +1316,8 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 
 	local liveGuid = self:GetNameplateUnitGuid(unitToken)
 	if IsNonEmptyString(liveGuid) then
-		if unitFrame then
-			unitFrame.qtTooltipScanGuid = liveGuid
-		end
-		if plateFrame then
-			plateFrame.qtTooltipScanGuid = liveGuid
+		if type(unitToken) == "string" and unitToken ~= "" then
+			self.nameplateTooltipGuidByUnitToken[unitToken] = liveGuid
 		end
 		return liveGuid
 	end
@@ -1211,6 +1326,10 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 end
 
 function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
+	if not ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK then
+		return false
+	end
+
 	if not unitToken or not self:DoesNameplateUnitExist(unitToken) then
 		return false
 	end
@@ -1222,6 +1341,9 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 	end
 
 	local unitGuid = self:GetNameplateTooltipScanGuid(unitToken, unitFrame)
+	if self:IsSecretValue(unitGuid) then
+		return false
+	end
 	if not IsNonEmptyString(unitGuid) then
 		return false
 	end
@@ -1259,14 +1381,20 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 
 	local scanLines = {}
 	for _, lineData in ipairs(tooltipData.lines) do
-		local lineType = self:SafeToNumber(lineData and lineData.type)
+		local lineType = lineData and lineData.type
+		if self:IsSecretValue(lineType) then
+			break
+		end
 
 		if
 			lineType == Enum.TooltipDataLineType.QuestObjective
 			or lineType == Enum.TooltipDataLineType.QuestTitle
 			or lineType == Enum.TooltipDataLineType.QuestPlayer
 		then
-			local leftText = self:SafeToString(lineData and lineData.leftText, "")
+			local leftText = lineData and lineData.leftText
+			if self:IsSecretValue(leftText) then
+				leftText = nil
+			end
 			if IsNonEmptyString(leftText) then
 				scanLines[#scanLines + 1] = leftText
 			end
@@ -1414,6 +1542,9 @@ function QuestTogether:IsQuestObjectiveNameplate(unitToken, unitFrame)
 	if not unitFrame then
 		return false
 	end
+	if IsFrameForbidden(unitFrame) then
+		return false
+	end
 
 	-- Feature target is quest mobs/objective enemies, not friendly NPC nameplates.
 	if not self:CanPlayerAttackNameplateUnit(unitToken) then
@@ -1439,12 +1570,18 @@ function QuestTogether:ShouldApplyQuestHealthTint(frame, isQuestObjective)
 	if not frame or not frame.unit then
 		return false
 	end
+	if IsFrameForbidden(frame) then
+		return false
+	end
 
 	if not self:IsNameplateUnitToken(frame.unit) then
 		return false
 	end
 
 	if not frame.healthBar then
+		return false
+	end
+	if IsFrameForbidden(frame.healthBar) then
 		return false
 	end
 
@@ -1484,10 +1621,10 @@ function QuestTogether:ShouldApplyQuestHealthTint(frame, isQuestObjective)
 end
 
 local function GetIconBarAnchor(unitFrame)
-	if unitFrame.healthBar then
+	if unitFrame.healthBar and not IsFrameForbidden(unitFrame.healthBar) then
 		return unitFrame.healthBar
 	end
-	if unitFrame.HealthBarsContainer then
+	if unitFrame.HealthBarsContainer and not IsFrameForbidden(unitFrame.HealthBarsContainer) then
 		return unitFrame.HealthBarsContainer
 	end
 	return unitFrame
@@ -1495,7 +1632,8 @@ end
 
 local function ResolveNameplateUnitToken(namePlateFrameBase, unitFrame)
 	local candidateTokens = {
-		namePlateFrameBase and namePlateFrameBase.GetUnit and namePlateFrameBase:GetUnit() or nil,
+		namePlateFrameBase and not IsFrameForbidden(namePlateFrameBase) and namePlateFrameBase.GetUnit and namePlateFrameBase:GetUnit()
+			or nil,
 		unitFrame and unitFrame.unit or nil,
 		unitFrame and unitFrame.displayedUnit or nil,
 	}
@@ -1514,6 +1652,9 @@ function QuestTogether:ApplyNameplateQuestIconStyle(iconFrame, unitFrame)
 	if not iconFrame or not unitFrame then
 		return
 	end
+	if not CanMutateFrame(iconFrame) or IsFrameForbidden(unitFrame) then
+		return
+	end
 
 	local icon = iconFrame.Icon or iconFrame
 	local style = self:GetNameplateQuestIconStyle()
@@ -1524,12 +1665,21 @@ function QuestTogether:ApplyNameplateQuestIconStyle(iconFrame, unitFrame)
 
 	if style == "left" then
 		local barAnchor = GetIconBarAnchor(unitFrame)
+		if IsFrameForbidden(barAnchor) then
+			barAnchor = unitFrame
+		end
 		iconFrame:SetPoint("RIGHT", barAnchor, "LEFT", -1, 0)
 	elseif style == "right" then
 		local barAnchor = GetIconBarAnchor(unitFrame)
+		if IsFrameForbidden(barAnchor) then
+			barAnchor = unitFrame
+		end
 		iconFrame:SetPoint("LEFT", barAnchor, "RIGHT", 1, 0)
 	elseif style == "prefix" then
 		local nameText = unitFrame.name
+		if IsFrameForbidden(nameText) then
+			nameText = nil
+		end
 		if nameText then
 			-- Prefix places the icon directly against the unit name text.
 			width = math.max(7, math.floor(width * 0.75 + 0.5))
@@ -1549,11 +1699,16 @@ function QuestTogether:ApplyNameplateQuestIconStyle(iconFrame, unitFrame)
 	end
 
 	iconFrame:SetSize(width, height)
-	icon:SetAllPoints(iconFrame)
+	if icon and icon.SetAllPoints then
+		icon:SetAllPoints(iconFrame)
+	end
 end
 
 local function EnsureQuestIcon(unitFrame)
 	if not unitFrame then
+		return nil
+	end
+	if not CanMutateFrame(unitFrame) then
 		return nil
 	end
 
@@ -1593,6 +1748,9 @@ local function EnsureQuestHealthOverlay(unitFrame)
 	if not unitFrame or not unitFrame.healthBar then
 		return nil
 	end
+	if not CanMutateFrame(unitFrame) or not CanMutateFrame(unitFrame.healthBar) then
+		return nil
+	end
 
 	local existingOverlay = QuestTogether.nameplateHealthOverlayByUnitFrame[unitFrame]
 	if existingOverlay then
@@ -1630,6 +1788,9 @@ local function AnchorQuestHealthFillTexture(texture, anchorTarget)
 	if not texture or not anchorTarget then
 		return
 	end
+	if not CanMutateFrame(texture) or IsFrameForbidden(anchorTarget) then
+		return
+	end
 
 	texture:ClearAllPoints()
 	texture:SetPoint("TOPLEFT", anchorTarget, "TOPLEFT", 0, 0)
@@ -1640,6 +1801,9 @@ end
 
 local function GetQuestHealthOverlayAnchorTarget(unitFrame)
 	if not unitFrame or not unitFrame.healthBar then
+		return false
+	end
+	if IsFrameForbidden(unitFrame) or IsFrameForbidden(unitFrame.healthBar) then
 		return false
 	end
 
@@ -1750,6 +1914,9 @@ local function ApplyAnnouncementBubbleLayering(hostFrame, unitFrame, bubble)
 	if not hostFrame or not unitFrame or not bubble then
 		return
 	end
+	if not CanMutateFrame(hostFrame) or not CanMutateFrame(unitFrame) or not CanMutateFrame(bubble) then
+		return
+	end
 
 	local frameStrata = hostFrame:GetFrameStrata() or "LOW"
 	local frameLevel = SafeUiNumber(unitFrame:GetFrameLevel(), 0) + 20
@@ -1758,6 +1925,10 @@ local function ApplyAnnouncementBubbleLayering(hostFrame, unitFrame, bubble)
 end
 
 local function EnsureAnnouncementBubble(hostFrame)
+	if not CanMutateFrame(hostFrame) then
+		return nil
+	end
+
 	local unitFrame = GetAnnouncementBubbleUnitFrame(hostFrame)
 	if not hostFrame or not unitFrame then
 		return nil
@@ -1771,6 +1942,9 @@ local function EnsureAnnouncementBubble(hostFrame)
 
 	local bubble = CreateAnnouncementBubbleFrame(hostFrame)
 	if not bubble or not bubble.String then
+		return nil
+	end
+	if not CanMutateFrame(bubble) then
 		return nil
 	end
 
@@ -1854,11 +2028,11 @@ function QuestTogether:HideAnnouncementBubble(hostFrame)
 	if not bubble then
 		return
 	end
-	self:Debugf("bubble", "Hiding bubble host=%s", tostring(unitFrame.unit or unitFrame:GetName() or "<screen>"))
+	self:Debugf("bubble", "Hiding bubble host=%s", SafeText(unitFrame.unit or unitFrame:GetName() or "<screen>", "<screen>"))
 
 	if bubble.animationGroup and bubble.animationGroup:IsPlaying() then
 		bubble.animationGroup:Stop()
-	else
+	elseif CanMutateFrame(bubble) then
 		bubble:SetAlpha(0)
 		bubble:Hide()
 	end
@@ -1875,7 +2049,7 @@ function QuestTogether:RefreshActiveAnnouncementBubbles()
 			if bubble then
 				if bubble.animationGroup and bubble.animationGroup:IsPlaying() then
 					bubble.animationGroup:Stop()
-				else
+				elseif CanMutateFrame(bubble) then
 					bubble:SetAlpha(0)
 					bubble:Hide()
 				end
@@ -1913,12 +2087,25 @@ function QuestTogether:GetAnnouncementBubbleHostFrameForUnit(unitToken)
 		return GetAnnouncementBubbleScreenHostFrame()
 	end
 
-	local namePlateFrameBase = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit(unitToken, false)
-	if namePlateFrameBase and namePlateFrameBase.UnitFrame and namePlateFrameBase:IsShown() then
-		self:Debugf("bubble", "Resolved bubble host for unit=%s", tostring(unitToken))
+	local namePlateFrameBase = nil
+	if C_NamePlate and C_NamePlate.GetNamePlateForUnit then
+		-- Nameplate retrieval can fail in secure contexts; treat as "not visible".
+		local ok, frameOrNil = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
+		if ok then
+			namePlateFrameBase = frameOrNil
+		end
+	end
+	if
+		namePlateFrameBase
+		and namePlateFrameBase.UnitFrame
+		and not IsFrameForbidden(namePlateFrameBase)
+		and not IsFrameForbidden(namePlateFrameBase.UnitFrame)
+		and namePlateFrameBase:IsShown()
+	then
+		self:Debugf("bubble", "Resolved bubble host for unit=%s", SafeText(unitToken, ""))
 		return namePlateFrameBase
 	end
-	self:Debugf("bubble", "No bubble host found for unit=%s", tostring(unitToken))
+	self:Debugf("bubble", "No bubble host found for unit=%s", SafeText(unitToken, ""))
 	return nil
 end
 
@@ -1926,11 +2113,11 @@ function QuestTogether:TryShowAnnouncementBubbleOnUnitNameplate(unitToken, text,
 	local hostFrame = self:GetAnnouncementBubbleHostFrameForUnit(unitToken)
 	if hostFrame then
 		if not self:ShowAnnouncementBubbleOnNameplate(hostFrame, text, eventType, iconAsset, iconKind) then
-			self:Debugf("bubble", "Failed to show bubble on host for unit=%s", tostring(unitToken))
+			self:Debugf("bubble", "Failed to show bubble on host for unit=%s", SafeText(unitToken, ""))
 			return false, "Unable to show a bubble on that nameplate."
 		end
 		local unitName = self.API.UnitName and self.API.UnitName(unitToken) or nil
-		self:Debugf("bubble", "Showing bubble on unit=%s text=%s", tostring(unitToken), tostring(text))
+		self:Debugf("bubble", "Showing bubble on unit=%s text=%s", SafeText(unitToken, ""), SafeText(text, ""))
 		return true, unitName or unitToken
 	end
 
@@ -1945,14 +2132,15 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 	if not namePlateFrameBase or not unitFrame then
 		return false
 	end
+	if not CanMutateFrame(namePlateFrameBase) or not CanMutateFrame(unitFrame) then
+		return false
+	end
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
 		self:Debug("Skipping announcement bubble in blocked nameplate context", "bubble")
 		return false
 	end
 
-	local message = tostring(text or "")
-	message = string.gsub(message, "^%s+", "")
-	message = string.gsub(message, "%s+$", "")
+	local message = SafeTrimText(text)
 	if message == "" then
 		self:Debug("Skipping empty bubble message", "bubble")
 		return false
@@ -1963,6 +2151,9 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 		self:Debug("Failed to create or resolve bubble frame", "bubble")
 		return false
 	end
+	if IsFrameForbidden(bubble) or IsFrameForbidden(bubble.String) then
+		return false
+	end
 	bubble.qtCurrentText = message
 	bubble.qtCurrentEventType = eventType
 	bubble.qtCurrentIconAsset = iconAsset
@@ -1970,6 +2161,12 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 	bubble.qtHostFrame = namePlateFrameBase
 
 	local anchorFrame = unitFrame.HealthBarsContainer or unitFrame
+	if IsFrameForbidden(anchorFrame) then
+		anchorFrame = unitFrame
+	end
+	if IsFrameForbidden(anchorFrame) then
+		return false
+	end
 	local visualConfig = GetAnnouncementBubbleVisualConfig()
 	local inset = SafeUiNumber(visualConfig.inset, 16)
 	local minTextWidth = SafeUiNumber(visualConfig.minTextWidth, 48)
@@ -2001,7 +2198,10 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 
 	local measuredUnboundedWidth = nil
 	if bubble.String.GetUnboundedStringWidth then
-		measuredUnboundedWidth = SafeUiNumber(bubble.String:GetUnboundedStringWidth(), nil)
+		local okWidth, widthValue = pcall(bubble.String.GetUnboundedStringWidth, bubble.String)
+		if okWidth then
+			measuredUnboundedWidth = SafeUiNumber(widthValue, nil)
+		end
 	end
 	local unboundedWidth = measuredUnboundedWidth
 		or EstimateBubbleTextWidth(message, fontSize, minTextWidth, maxTextWidth)
@@ -2011,7 +2211,13 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 	)
 	bubble.String:SetWidth(targetTextWidth)
 
-	local measuredTextHeight = SafeUiNumber(bubble.String:GetStringHeight(), nil)
+	local measuredTextHeight = nil
+	if bubble.String.GetStringHeight then
+		local okHeight, textHeightValue = pcall(bubble.String.GetStringHeight, bubble.String)
+		if okHeight then
+			measuredTextHeight = SafeUiNumber(textHeightValue, nil)
+		end
+	end
 	local textHeight = measuredTextHeight
 		or EstimateBubbleTextHeight(message, targetTextWidth, fontSize)
 	local contentHeight = math.max(iconSize, textHeight)
@@ -2021,12 +2227,12 @@ function QuestTogether:ShowAnnouncementBubbleOnNameplate(namePlateFrameBase, tex
 	self:Debugf(
 		"bubble",
 		"Render bubble host=%s width=%d height=%d font=%d duration=%.1f text=%s",
-		tostring(unitFrame.unit or unitFrame:GetName() or "<screen>"),
+		SafeText(unitFrame.unit or unitFrame:GetName() or "<screen>", "<screen>"),
 		bubbleWidth,
 		bubbleHeight,
 		fontSize,
 		lifetimeSeconds,
-		tostring(message)
+		SafeText(message, "")
 	)
 
 	bubble:ClearAllPoints()
@@ -2122,6 +2328,9 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 	if not unitFrame then
 		return false
 	end
+	if IsFrameForbidden(unitFrame) or IsFrameForbidden(unitFrame.healthBar) then
+		return false
+	end
 
 	local overlay = EnsureQuestHealthOverlay(unitFrame)
 	if not overlay then
@@ -2142,20 +2351,24 @@ function QuestTogether:ApplyQuestTintToNameplate(unitFrame)
 	AnchorQuestHealthFillTexture(overlay.Highlight, anchorTarget)
 
 	if overlay.FillTexture then
-		if overlay.FillTexture.SetVertexColor then
+		if overlay.FillTexture.SetVertexColor and not IsFrameForbidden(overlay.FillTexture) then
 			overlay.FillTexture:SetVertexColor(color.r, color.g, color.b, 1)
 		end
-		overlay.FillTexture:Show()
+		if not IsFrameForbidden(overlay.FillTexture) then
+			overlay.FillTexture:Show()
+		end
 	end
-	overlay.Highlight:SetColorTexture(highlightRed, highlightGreen, highlightBlue, 0.14)
-	overlay.Highlight:Show()
+	if overlay.Highlight and not IsFrameForbidden(overlay.Highlight) then
+		overlay.Highlight:SetColorTexture(highlightRed, highlightGreen, highlightBlue, 0.14)
+		overlay.Highlight:Show()
+	end
 
 	if healthBar and healthBar.GetAlpha then
 		local alpha = healthBar:GetAlpha() or 1
-		if overlay.FillTexture and overlay.FillTexture.SetAlpha then
+		if overlay.FillTexture and overlay.FillTexture.SetAlpha and not IsFrameForbidden(overlay.FillTexture) then
 			overlay.FillTexture:SetAlpha(alpha)
 		end
-		if overlay.Highlight.SetAlpha then
+		if overlay.Highlight and overlay.Highlight.SetAlpha and not IsFrameForbidden(overlay.Highlight) then
 			overlay.Highlight:SetAlpha(alpha)
 		end
 	end
@@ -2172,13 +2385,16 @@ function QuestTogether:RestoreNameplateHealthColor(unitFrame)
 	if not unitFrame then
 		return
 	end
+	if IsFrameForbidden(unitFrame) then
+		return
+	end
 
 	local overlay = self.nameplateHealthOverlayByUnitFrame[unitFrame]
 	if overlay then
-		if overlay.FillTexture and overlay.FillTexture.Hide then
+		if overlay.FillTexture and overlay.FillTexture.Hide and not IsFrameForbidden(overlay.FillTexture) then
 			overlay.FillTexture:Hide()
 		end
-		if overlay.Highlight and overlay.Highlight.Hide then
+		if overlay.Highlight and overlay.Highlight.Hide and not IsFrameForbidden(overlay.Highlight) then
 			overlay.Highlight:Hide()
 		end
 	end
@@ -2186,6 +2402,9 @@ end
 
 function QuestTogether:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObjective)
 	if not namePlateFrameBase or not namePlateFrameBase.UnitFrame then
+		return
+	end
+	if IsFrameForbidden(namePlateFrameBase) or IsFrameForbidden(namePlateFrameBase.UnitFrame) then
 		return
 	end
 
@@ -2224,8 +2443,17 @@ function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken, delaySecond
 			return
 		end
 
-		local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
-		if not namePlateFrameBase or not namePlateFrameBase.UnitFrame or not namePlateFrameBase:IsShown() then
+		local okFrame, namePlateFrameBase = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
+		if not okFrame then
+			return
+		end
+		if
+			not namePlateFrameBase
+			or not namePlateFrameBase.UnitFrame
+			or IsFrameForbidden(namePlateFrameBase)
+			or IsFrameForbidden(namePlateFrameBase.UnitFrame)
+			or not namePlateFrameBase:IsShown()
+		then
 			return
 		end
 
@@ -2287,8 +2515,17 @@ function QuestTogether:ScheduleNameplateRefresh(unitToken)
 				return
 			end
 
-			local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
-			if not namePlateFrameBase or not namePlateFrameBase.UnitFrame or not namePlateFrameBase:IsShown() then
+			local okFrame, namePlateFrameBase = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
+			if not okFrame then
+				return
+			end
+			if
+				not namePlateFrameBase
+				or not namePlateFrameBase.UnitFrame
+				or IsFrameForbidden(namePlateFrameBase)
+				or IsFrameForbidden(namePlateFrameBase.UnitFrame)
+				or not namePlateFrameBase:IsShown()
+			then
 				return
 			end
 
@@ -2299,6 +2536,9 @@ end
 
 function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 	if not namePlateFrameBase or not namePlateFrameBase.UnitFrame then
+		return
+	end
+	if IsFrameForbidden(namePlateFrameBase) or IsFrameForbidden(namePlateFrameBase.UnitFrame) then
 		return
 	end
 
@@ -2324,9 +2564,13 @@ function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 		if not icon then
 			return
 		end
-		icon:Show()
+		if not IsFrameForbidden(icon) then
+			icon:Show()
+		end
 	elseif icon then
-		icon:Hide()
+		if not IsFrameForbidden(icon) then
+			icon:Hide()
+		end
 	end
 end
 
@@ -2334,9 +2578,12 @@ function QuestTogether:HideNameplateIcon(namePlateFrameBase)
 	if not namePlateFrameBase or not namePlateFrameBase.UnitFrame then
 		return
 	end
+	if IsFrameForbidden(namePlateFrameBase) or IsFrameForbidden(namePlateFrameBase.UnitFrame) then
+		return
+	end
 
 	local icon = self.nameplateIconByUnitFrame[namePlateFrameBase.UnitFrame]
-	if icon then
+	if icon and not IsFrameForbidden(icon) then
 		icon:Hide()
 	end
 	self:HideAnnouncementBubble(namePlateFrameBase)
@@ -2348,8 +2595,15 @@ function QuestTogether:ForEachVisibleNamePlate(callback)
 		return
 	end
 
-	for _, frame in pairs(C_NamePlate.GetNamePlates(false)) do
-		callback(frame)
+	local ok, nameplates = pcall(C_NamePlate.GetNamePlates, false)
+	if not ok or type(nameplates) ~= "table" then
+		return
+	end
+
+	for _, frame in pairs(nameplates) do
+		if frame and not IsFrameForbidden(frame) then
+			callback(frame)
+		end
 	end
 end
 
@@ -2371,17 +2625,17 @@ function QuestTogether:FindVisiblePlayerNameplateForSender(senderGUID, senderNam
 		end
 
 		local unitGUID = self:GetNameplateUnitGuid(unitToken)
-		if senderGUID and senderGUID ~= "" and unitGUID == senderGUID then
-			matchedFrame = frame
-			return
-		end
+			if senderGUID and senderGUID ~= "" and unitGUID == senderGUID then
+				matchedFrame = frame
+				return
+			end
 
 			if normalizedSenderName then
 				local unitName, unitRealm = self.API.UnitFullName(unitToken)
 				local fullUnitName = nil
 				if unitName then
 					local realmName = self:SafeStripWhitespace(unitRealm or self.API.GetRealmName() or "", "")
-					fullUnitName = tostring(unitName) .. "-" .. tostring(realmName)
+					fullUnitName = SafeText(unitName, "") .. "-" .. SafeText(realmName, "")
 				else
 					fullUnitName = self:NormalizeMemberName(self.API.UnitName(unitToken))
 				end
@@ -2389,14 +2643,14 @@ function QuestTogether:FindVisiblePlayerNameplateForSender(senderGUID, senderNam
 					matchedFrame = frame
 				end
 			end
-	end)
+		end)
 
 	self:Debugf(
 		"nameplate",
 		"FindVisiblePlayerNameplateForSender guid=%s sender=%s matched=%s",
-		tostring(senderGUID),
-		tostring(normalizedSenderName),
-		tostring(matchedFrame ~= nil)
+		SafeText(senderGUID, ""),
+		SafeText(normalizedSenderName, ""),
+		SafeText(matchedFrame ~= nil, "false")
 	)
 	return matchedFrame
 end
@@ -2412,7 +2666,13 @@ function QuestTogether:DoesUnitTokenMatchSender(unitToken, senderGUID, senderNam
 		return false
 	end
 
-	local unitGUID = self.API.UnitGUID and self.API.UnitGUID(unitToken) or nil
+	local unitGUID = nil
+	if self.API.UnitGUID then
+		local okGuid, guidValue = pcall(self.API.UnitGUID, unitToken)
+		if okGuid and not self:IsSecretValue(guidValue) then
+			unitGUID = guidValue
+		end
+	end
 	if senderGUID and senderGUID ~= "" and unitGUID == senderGUID then
 		return true
 	end
@@ -2426,7 +2686,7 @@ function QuestTogether:DoesUnitTokenMatchSender(unitToken, senderGUID, senderNam
 	local fullUnitName = nil
 	if unitName then
 		local realmName = self:SafeStripWhitespace(unitRealm or self.API.GetRealmName() or "", "")
-		fullUnitName = tostring(unitName) .. "-" .. tostring(realmName)
+		fullUnitName = SafeText(unitName, "") .. "-" .. SafeText(realmName, "")
 	else
 		fullUnitName = self:NormalizeMemberName(self.API.UnitName and self.API.UnitName(unitToken) or nil)
 	end
@@ -2443,12 +2703,12 @@ function QuestTogether:FindNearbyPlayerUnitTokenForSender(senderGUID, senderName
 
 	for _, unitToken in ipairs(candidateUnits) do
 		if self:DoesUnitTokenMatchSender(unitToken, senderGUID, senderName) then
-			self:Debugf("nameplate", "Nearby player unit token match sender=%s unit=%s", tostring(senderName), tostring(unitToken))
+			self:Debugf("nameplate", "Nearby player unit token match sender=%s unit=%s", SafeText(senderName, ""), SafeText(unitToken, ""))
 			return unitToken
 		end
 	end
 
-	self:Debugf("nameplate", "No nearby unit token match sender=%s", tostring(senderName))
+	self:Debugf("nameplate", "No nearby unit token match sender=%s", SafeText(senderName, ""))
 	return nil
 end
 
@@ -2470,7 +2730,7 @@ end
 function QuestTogether:RefreshNameplatesForQuestStateChange(reason)
 	if self.API and self.API.InCombatLockdown and self.API.InCombatLockdown() then
 		self.pendingNameplateRefreshAfterCombat = true
-		self:Debugf("nameplate", "Deferring nameplate refresh during combat reason=%s", tostring(reason))
+		self:Debugf("nameplate", "Deferring nameplate refresh during combat reason=%s", SafeText(reason, ""))
 		return false
 	end
 
@@ -2527,10 +2787,12 @@ function QuestTogether:OnNameplateAdded(unitToken)
 	end
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
 		self.nameplateQuestStateByUnitToken[unitToken] = nil
+		self.nameplateTooltipGuidByUnitToken[unitToken] = nil
 		return
 	end
 
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
+	self.nameplateTooltipGuidByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 
 	self:ScheduleNameplateRefresh(unitToken)
@@ -2542,12 +2804,19 @@ function QuestTogether:OnNameplateRemoved(unitToken)
 	end
 
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
+	self.nameplateTooltipGuidByUnitToken[unitToken] = nil
 	self.nameplateRefreshPendingByUnitToken[unitToken] = nil
 	self.nameplateRefreshGenerationByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 
-	local namePlateFrameBase = C_NamePlate.GetNamePlateForUnit(unitToken, false)
+	local namePlateFrameBase = nil
+	if C_NamePlate and C_NamePlate.GetNamePlateForUnit then
+		local okFrame, frameOrNil = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
+		if okFrame then
+			namePlateFrameBase = frameOrNil
+		end
+	end
 	if namePlateFrameBase then
 		self:HideNameplateIcon(namePlateFrameBase)
 	end
@@ -2634,8 +2903,8 @@ function QuestTogether:EnableNameplateAugmentation()
 				self:ScheduleFullNameplateRefresh(0.05)
 			elseif eventName == "CVAR_UPDATE" then
 				local cvarName = ...
-				if type(cvarName) == "string" and string.find(string.lower(cvarName), "nameplate", 1, true) then
-					self:Debugf("nameplate", "Refreshing nameplate augmentation after CVar change=%s", tostring(cvarName))
+				if SafeFindPlain(string.lower(SafeText(cvarName, "")), "nameplate") then
+					self:Debugf("nameplate", "Refreshing nameplate augmentation after CVar change=%s", SafeText(cvarName, ""))
 					self:ScheduleFullNameplateRefresh(0.05)
 				end
 			elseif eventName == "UNIT_HEALTH" or eventName == "UNIT_MAXHEALTH" or eventName == "UNIT_CONNECTION" then
@@ -2657,10 +2926,10 @@ function QuestTogether:EnableNameplateAugmentation()
 		local ok = pcall(addon.nameplateEventFrame.RegisterEvent, addon.nameplateEventFrame, eventName)
 		if ok then
 			addon.nameplateRegisteredEvents[eventName] = true
-			addon:Debugf("nameplate", "Registered augmentation event=%s", tostring(eventName))
+			addon:Debugf("nameplate", "Registered augmentation event=%s", SafeText(eventName, ""))
 		else
 			addon.nameplateRegisteredEvents[eventName] = nil
-			addon:Debugf("nameplate", "Failed to register augmentation event=%s", tostring(eventName))
+			addon:Debugf("nameplate", "Failed to register augmentation event=%s", SafeText(eventName, ""))
 		end
 	end
 
@@ -2697,7 +2966,7 @@ function QuestTogether:DisableNameplateAugmentation()
 	for eventName in pairs(self.nameplateRegisteredEvents or {}) do
 		-- Unregister should never break disable flow if an event was already invalidated.
 		pcall(self.nameplateEventFrame.UnregisterEvent, self.nameplateEventFrame, eventName)
-		self:Debugf("nameplate", "Unregistered augmentation event=%s", tostring(eventName))
+		self:Debugf("nameplate", "Unregistered augmentation event=%s", SafeText(eventName, ""))
 	end
 	if self.nameplateRegisteredEvents then
 		wipe(self.nameplateRegisteredEvents)
@@ -2705,6 +2974,7 @@ function QuestTogether:DisableNameplateAugmentation()
 
 	-- Hide our icon overlays and clear cached quest objective state.
 	wipe(self.nameplateQuestStateByUnitToken)
+	wipe(self.nameplateTooltipGuidByUnitToken)
 	wipe(self.nameplateRefreshPendingByUnitToken)
 	wipe(self.nameplateRefreshGenerationByUnitToken)
 	wipe(self.nameplateHealthTintRefreshPendingByUnitToken)

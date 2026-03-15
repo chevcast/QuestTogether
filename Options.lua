@@ -8,6 +8,10 @@ QuestTogether.optionControls = QuestTogether.optionControls or {}
 QuestTogether.profileControls = QuestTogether.profileControls or {}
 QuestTogether.profileUIState = QuestTogether.profileUIState or {}
 
+local function SafeText(value, fallback)
+	return QuestTogether:SafeToString(value, fallback or "")
+end
+
 local function CreateSectionLabel(parent, text, x, y)
 	local label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 	label:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
@@ -85,7 +89,12 @@ local function CreateCheckbox(parent, optionKey, labelText, tooltipText, x, y)
 	end
 
 	checkbox:SetScript("OnClick", function(self)
-		QuestTogether:Debugf("options", "Checkbox clicked key=%s checked=%s", tostring(optionKey), tostring(self:GetChecked() == true))
+		QuestTogether:Debugf(
+			"options",
+			"Checkbox clicked key=%s checked=%s",
+			SafeText(optionKey, ""),
+			SafeText(self:GetChecked() == true, "false")
+		)
 		QuestTogether:SetOption(optionKey, self:GetChecked() == true)
 		QuestTogether:RefreshOptionsWindow()
 	end)
@@ -162,7 +171,7 @@ local function CreateColorSwatch(parent, optionKey, labelText, tooltipText, fall
 		QuestTogether:Debugf(
 			"options",
 			"Color option changed key=%s r=%.3f g=%.3f b=%.3f",
-			tostring(optionKey),
+			SafeText(optionKey, ""),
 			QuestTogether:SafeToNumber(r) or 0,
 			QuestTogether:SafeToNumber(g) or 0,
 			QuestTogether:SafeToNumber(b) or 0
@@ -241,7 +250,12 @@ local function CreateOptionDropdown(parent, titleText, tooltipText, x, y, width,
 				local info = UIDropDownMenu_CreateInfo()
 				info.text = getLabel(value)
 				info.func = function()
-					QuestTogether:Debugf("options", "Dropdown selected key=%s value=%s", tostring(optionKey), tostring(value))
+					QuestTogether:Debugf(
+						"options",
+						"Dropdown selected key=%s value=%s",
+						SafeText(optionKey, ""),
+						SafeText(value, "")
+					)
 					QuestTogether:SetOption(optionKey, value)
 					QuestTogether:RefreshOptionsWindow()
 					CloseDropDownMenus()
@@ -454,9 +468,14 @@ function QuestTogether:RefreshProfilesWindow()
 	controls.copyButton:SetEnabled(canCopy)
 	controls.deleteButton:SetEnabled(canDelete)
 
-	local characterKey = tostring(self.activeCharacterKey or self:GetCurrentCharacterKey() or "Unknown")
+	local characterKey = SafeText(self.activeCharacterKey or self:GetCurrentCharacterKey() or "Unknown", "Unknown")
 	controls.profileSummary:SetText(
-		string.format("Character: %s\nActive profile: %s\nSaved profiles: %d", characterKey, tostring(currentProfileKey), #allProfileKeys)
+		string.format(
+			"Character: %s\nActive profile: %s\nSaved profiles: %d",
+			characterKey,
+			SafeText(currentProfileKey, ""),
+			#allProfileKeys
+		)
 	)
 end
 
@@ -497,7 +516,7 @@ function QuestTogether:InitializeProfilesWindow(parentCategory)
 				info.func = function()
 					local ok, err = QuestTogether:SetActiveProfile(profileKey)
 					if not ok then
-						QuestTogether:Print(tostring(err))
+						QuestTogether:Print(SafeText(err, "Unknown error"))
 					end
 					QuestTogether:RefreshProfilesWindow()
 					CloseDropDownMenus()
@@ -538,10 +557,10 @@ function QuestTogether:InitializeProfilesWindow(parentCategory)
 		local sourceProfileKey = QuestTogether.profileUIState.copyFromProfileKey
 		local ok, err = QuestTogether:CopyProfileIntoActiveProfile(sourceProfileKey)
 		if not ok then
-			QuestTogether:Print(tostring(err))
+			QuestTogether:Print(SafeText(err, "Unknown error"))
 			return
 		end
-		QuestTogether:Print("Copied profile settings from " .. tostring(sourceProfileKey) .. ".")
+		QuestTogether:Print("Copied profile settings from " .. SafeText(sourceProfileKey, "") .. ".")
 		QuestTogether:RefreshProfilesWindow()
 	end)
 
@@ -564,18 +583,18 @@ function QuestTogether:InitializeProfilesWindow(parentCategory)
 		local requestedProfileName = createProfileEdit:GetText() or ""
 		local ok, err = QuestTogether:CreateProfile(requestedProfileName, QuestTogether:GetCurrentProfileKey())
 		if not ok then
-			QuestTogether:Print(tostring(err))
+			QuestTogether:Print(SafeText(err, "Unknown error"))
 			return
 		end
 
 		local switchOk, switchErr = QuestTogether:SetActiveProfile(requestedProfileName)
 		if not switchOk then
-			QuestTogether:Print(tostring(switchErr))
+			QuestTogether:Print(SafeText(switchErr, "Unknown error"))
 			return
 		end
 
 		createProfileEdit:SetText("")
-		QuestTogether:Print("Created and switched to profile " .. tostring(QuestTogether:GetCurrentProfileKey()) .. ".")
+		QuestTogether:Print("Created and switched to profile " .. SafeText(QuestTogether:GetCurrentProfileKey(), "") .. ".")
 		QuestTogether:RefreshProfilesWindow()
 	end
 
@@ -592,10 +611,10 @@ function QuestTogether:InitializeProfilesWindow(parentCategory)
 	resetButton:SetScript("OnClick", function()
 		local ok, err = QuestTogether:ResetActiveProfile()
 		if not ok then
-			QuestTogether:Print(tostring(err))
+			QuestTogether:Print(SafeText(err, "Unknown error"))
 			return
 		end
-		QuestTogether:Print("Reset profile " .. tostring(QuestTogether:GetCurrentProfileKey()) .. " to defaults.")
+		QuestTogether:Print("Reset profile " .. SafeText(QuestTogether:GetCurrentProfileKey(), "") .. " to defaults.")
 		QuestTogether:RefreshProfilesWindow()
 	end)
 
@@ -630,10 +649,10 @@ function QuestTogether:InitializeProfilesWindow(parentCategory)
 		local deleteProfileKey = QuestTogether.profileUIState.deleteProfileKey
 		local ok, err = QuestTogether:DeleteProfile(deleteProfileKey)
 		if not ok then
-			QuestTogether:Print(tostring(err))
+			QuestTogether:Print(SafeText(err, "Unknown error"))
 			return
 		end
-		QuestTogether:Print("Deleted profile " .. tostring(deleteProfileKey) .. ".")
+		QuestTogether:Print("Deleted profile " .. SafeText(deleteProfileKey, "") .. ".")
 		QuestTogether.profileUIState.deleteProfileKey = nil
 		QuestTogether.profileUIState.copyFromProfileKey = nil
 		QuestTogether:RefreshProfilesWindow()

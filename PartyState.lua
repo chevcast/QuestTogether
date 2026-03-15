@@ -13,6 +13,24 @@ QuestTogether.partyMembers = QuestTogether.partyMembers or {}
 QuestTogether.partyMemberOrder = QuestTogether.partyMemberOrder or {}
 QuestTogether.partyRosterFingerprint = QuestTogether.partyRosterFingerprint or ""
 
+local function SafeText(value, fallback)
+	return QuestTogether:SafeToString(value, fallback or "")
+end
+
+local function SafeMatch(text, pattern)
+	local safeText = SafeText(text, "")
+	if safeText == "" then
+		return nil
+	end
+
+	local ok, first, second = pcall(string.match, safeText, pattern)
+	if not ok then
+		return nil
+	end
+
+	return first, second
+end
+
 local function NormalizeRealmName(addon, realmName)
 	if not realmName or realmName == "" then
 		realmName = addon.API.GetRealmName() or ""
@@ -34,7 +52,7 @@ end
 
 local function SortNames(nameList)
 	table.sort(nameList, function(left, right)
-		return tostring(left) < tostring(right)
+		return SafeText(left, "") < SafeText(right, "")
 	end)
 end
 
@@ -43,7 +61,7 @@ function QuestTogether:NormalizeMemberName(name)
 		return nil
 	end
 
-	local baseName, realmName = string.match(name, "^([^%-]+)%-(.+)$")
+	local baseName, realmName = SafeMatch(name, "^([^%-]+)%-(.+)$")
 	if not baseName then
 		baseName = name
 		realmName = NormalizeRealmName(self, nil)
@@ -51,7 +69,7 @@ function QuestTogether:NormalizeMemberName(name)
 		realmName = NormalizeRealmName(self, realmName)
 	end
 
-	local normalized = tostring(baseName) .. "-" .. tostring(realmName)
+	local normalized = SafeText(baseName, "") .. "-" .. SafeText(realmName, "")
 	return normalized
 end
 
@@ -60,7 +78,7 @@ function QuestTogether:GetPlayerFullName()
 	if not name then
 		return nil
 	end
-	return tostring(name) .. "-" .. tostring(NormalizeRealmName(self, realm))
+	return SafeText(name, "") .. "-" .. SafeText(NormalizeRealmName(self, realm), "")
 end
 
 function QuestTogether:InitializePartyState()
@@ -78,7 +96,7 @@ local function AddUnitToRoster(addon, unitToken, membersByName, orderedNames)
 	local fullName
 	local unitName, unitRealm = addon.API.UnitFullName(unitToken)
 	if unitName then
-		fullName = tostring(unitName) .. "-" .. tostring(NormalizeRealmName(addon, unitRealm))
+		fullName = SafeText(unitName, "") .. "-" .. SafeText(NormalizeRealmName(addon, unitRealm), "")
 	else
 		fullName = addon:NormalizeMemberName(addon.API.UnitName(unitToken))
 	end
@@ -104,11 +122,11 @@ function QuestTogether:RefreshPartyRoster()
 
 	if self.API.IsInRaid() then
 		for raidIndex = 1, 40 do
-			AddUnitToRoster(self, "raid" .. tostring(raidIndex), membersByName, orderedNames)
+			AddUnitToRoster(self, "raid" .. SafeText(raidIndex, ""), membersByName, orderedNames)
 		end
 	else
 		for partyIndex = 1, 4 do
-			AddUnitToRoster(self, "party" .. tostring(partyIndex), membersByName, orderedNames)
+			AddUnitToRoster(self, "party" .. SafeText(partyIndex, ""), membersByName, orderedNames)
 		end
 	end
 
@@ -117,7 +135,7 @@ function QuestTogether:RefreshPartyRoster()
 	self.partyMemberOrder = orderedNames
 	self.partyRosterFingerprint = table.concat(orderedNames, "|")
 	self:DebugState("group", "partyMemberOrder", orderedNames)
-	self:Debugf("group", "Refreshed party roster fingerprint=%s", tostring(self.partyRosterFingerprint))
+	self:Debugf("group", "Refreshed party roster fingerprint=%s", SafeText(self.partyRosterFingerprint, ""))
 end
 
 function QuestTogether:GetPartyRosterFingerprint()
