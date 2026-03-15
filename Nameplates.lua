@@ -1204,6 +1204,99 @@ local function GetObjectiveProgressState(text)
 	return "unknown"
 end
 
+local function LooksLikeProgressText(text)
+	if type(text) ~= "string" or text == "" then
+		return false
+	end
+	if SafeMatch(text, "(%d+)%s*/%s*(%d+)") then
+		return true
+	end
+	if SafeMatch(text, "(%d+%.?%d*)%%") then
+		return true
+	end
+	return false
+end
+
+local function IsTooltipObjectiveOrPlayerLineType(lineType)
+	if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(lineType) then
+		return false
+	end
+
+	if Enum and Enum.TooltipDataLineType then
+		return lineType == Enum.TooltipDataLineType.QuestObjective or lineType == Enum.TooltipDataLineType.QuestPlayer
+	end
+
+	local normalizedType = SafeText(lineType, "")
+	return normalizedType == "QuestObjective" or normalizedType == "QuestPlayer"
+end
+
+function QuestTogether:EvaluateTooltipQuestObjectiveLines(tooltipLines)
+	if type(tooltipLines) ~= "table" then
+		return false
+	end
+
+	for _, lineData in ipairs(tooltipLines) do
+		if self:IsSecretValue(lineData) then
+			break
+		end
+
+		local lineType = lineData and lineData.type
+		if self:IsSecretValue(lineType) then
+			break
+		end
+
+		if IsTooltipObjectiveOrPlayerLineType(lineType) then
+			local leftText = lineData and lineData.leftText or nil
+			local rightText = lineData and lineData.rightText or nil
+			local centerText = lineData and lineData.text or nil
+			if self:IsSecretValue(leftText) then
+				leftText = nil
+			end
+			if self:IsSecretValue(rightText) then
+				rightText = nil
+			end
+			if self:IsSecretValue(centerText) then
+				centerText = nil
+			end
+
+			if type(leftText) ~= "string" then
+				leftText = nil
+			end
+			if type(rightText) ~= "string" then
+				rightText = nil
+			end
+			if type(centerText) ~= "string" then
+				centerText = nil
+			end
+
+			local textCandidates = {
+				SafeTrimText(rightText),
+				SafeTrimText(leftText),
+				SafeTrimText(centerText),
+			}
+			local lineTypeIsPlayer = (Enum and Enum.TooltipDataLineType and lineType == Enum.TooltipDataLineType.QuestPlayer)
+				or SafeText(lineType, "") == "QuestPlayer"
+
+			for candidateIndex = 1, #textCandidates do
+				local candidateText = textCandidates[candidateIndex]
+				if candidateText ~= "" then
+					local progressState = GetObjectiveProgressState(candidateText)
+					if progressState == "unfinished" then
+						return true
+					end
+					if progressState == "unknown" then
+						if not lineTypeIsPlayer or LooksLikeProgressText(candidateText) then
+							return true
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return false
+end
+
 function QuestTogether:ClearNameplateQuestObjectiveCache()
 	wipe(self.nameplateQuestObjectiveCache)
 	wipe(self.nameplateQuestStateByUnitToken)
@@ -1353,15 +1446,7 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 		return cachedValue
 	end
 
-	if not next(self.nameplateQuestTitleCache) then
-		self:RebuildNameplateQuestTitleCache()
-	end
-	if not next(self.nameplateQuestTitleCache) then
-		self:SetCachedQuestObjectiveResult(unitGuid, false)
-		return false
-	end
-
-	if not (C_TooltipInfo and C_TooltipInfo.GetHyperlink and Enum and Enum.TooltipDataLineType) then
+	if not (C_TooltipInfo and C_TooltipInfo.GetHyperlink) then
 		self:SetCachedQuestObjectiveResult(unitGuid, false)
 		return false
 	end
@@ -1374,75 +1459,20 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 		self:SetCachedQuestObjectiveResult(unitGuid, false)
 		return false
 	end
-	if not tooltipData or type(tooltipData.lines) ~= "table" then
+	if self:IsSecretValue(tooltipData) then
 		self:SetCachedQuestObjectiveResult(unitGuid, false)
 		return false
 	end
 
-	local scanLines = {}
-	for _, lineData in ipairs(tooltipData.lines) do
-		local lineType = lineData and lineData.type
-		if self:IsSecretValue(lineType) then
-			break
-		end
-
-		if
-			lineType == Enum.TooltipDataLineType.QuestObjective
-			or lineType == Enum.TooltipDataLineType.QuestTitle
-			or lineType == Enum.TooltipDataLineType.QuestPlayer
-		then
-			local leftText = lineData and lineData.leftText
-			if self:IsSecretValue(leftText) then
-				leftText = nil
-			end
-			if IsNonEmptyString(leftText) then
-				scanLines[#scanLines + 1] = leftText
-			end
-		end
-	end
-
-	if #scanLines == 0 then
+	local tooltipLines = tooltipData and tooltipData.lines or nil
+	if self:IsSecretValue(tooltipLines) or type(tooltipLines) ~= "table" then
 		self:SetCachedQuestObjectiveResult(unitGuid, false)
 		return false
 	end
 
-	local isQuestUnit = false
-	local hasUnfinishedObjective = false
-
-	for lineIndex = 1, #scanLines do
-		local lineText = scanLines[lineIndex]
-		if self.nameplateQuestTitleCache[lineText] then
-			isQuestUnit = true
-
-			local objectiveIndex = lineIndex + 1
-			local sawUnknownObjectiveLine = false
-			while objectiveIndex <= #scanLines do
-				local objectiveLineText = scanLines[objectiveIndex]
-				if self.nameplateQuestTitleCache[objectiveLineText] then
-					break
-				end
-
-				local progressState = GetObjectiveProgressState(objectiveLineText)
-				if progressState == "unfinished" then
-					hasUnfinishedObjective = true
-					break
-				elseif progressState == "unknown" and objectiveLineText ~= "" then
-					sawUnknownObjectiveLine = true
-				end
-				objectiveIndex = objectiveIndex + 1
-			end
-
-			if not hasUnfinishedObjective and sawUnknownObjectiveLine then
-				hasUnfinishedObjective = true
-			end
-
-			if hasUnfinishedObjective then
-				break
-			end
-		end
-	end
-
-	local result = isQuestUnit and hasUnfinishedObjective
+	-- Consider any unfinished quest objective text (including QuestPlayer party progress lines)
+	-- as objective evidence so cross-party/cross-realm tooltip data is respected.
+	local result = self:EvaluateTooltipQuestObjectiveLines(tooltipLines)
 	self:SetCachedQuestObjectiveResult(unitGuid, result)
 	return result
 end

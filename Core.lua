@@ -21,6 +21,7 @@ _G.QuestTogether = QuestTogether
 local raw_tostring = tostring
 local raw_string_match = string.match
 local raw_string_find = string.find
+local raw_issecretvalue = type(issecretvalue) == "function" and issecretvalue or nil
 
 local function SafeText(value, fallback)
 	if QuestTogether and QuestTogether.SafeToString then
@@ -972,48 +973,42 @@ QuestTogether.API = QuestTogether.API or {
 }
 
 function QuestTogether:IsSecretValue(value)
-	if type(issecretvalue) ~= "function" then
+	if not raw_issecretvalue then
 		return false
 	end
 
-	local ok, result = pcall(issecretvalue, value)
-	return ok and result and true or false
+	return raw_issecretvalue(value) and true or false
 end
 
 function QuestTogether:SafeToNumber(value)
+	if self:IsSecretValue(value) then
+		return nil
+	end
+
 	local valueType = type(value)
 	if valueType == "number" then
-		-- Validate with protected arithmetic; secret numbers can throw when used numerically.
-		local okNumber, normalizedValue = pcall(function()
-			return value + 0
-		end)
-		if not okNumber then
+		-- Reject NaN/inf to keep downstream math safe and deterministic.
+		if value ~= value or value == math.huge or value == -math.huge then
 			return nil
 		end
-		return normalizedValue
+		return value
 	end
 
 	if valueType ~= "string" then
 		return nil
 	end
 
-	-- Trim operations are guarded because protected strings can error on pattern APIs.
-	local okLeadingTrim, trimmedValue = pcall(string.gsub, value, "^%s+", "")
-	if not okLeadingTrim then
-		return nil
-	end
-	local okTrailingTrim = false
-	okTrailingTrim, trimmedValue = pcall(string.gsub, trimmedValue, "%s+$", "")
-	if not okTrailingTrim then
-		return nil
-	end
+	local trimmedValue = self:SafeTrimString(value, "")
 	if trimmedValue == "" then
 		return nil
 	end
 
-	-- tonumber may throw on protected values; return nil instead of propagating here.
-	local ok, numericValue = pcall(tonumber, trimmedValue)
-	if not ok then
+	local numericValue = tonumber(trimmedValue)
+	if type(numericValue) ~= "number" then
+		return nil
+	end
+
+	if numericValue ~= numericValue or numericValue == math.huge or numericValue == -math.huge then
 		return nil
 	end
 
@@ -1021,6 +1016,21 @@ function QuestTogether:SafeToNumber(value)
 end
 
 function QuestTogether:SafeToString(value, fallback)
+	if self:IsSecretValue(value) then
+		if fallback ~= nil then
+			return fallback
+		end
+		return "<secret>"
+	end
+
+	local valueType = type(value)
+	if valueType == "string" then
+		return value
+	end
+	if valueType == "number" or valueType == "boolean" or valueType == "nil" then
+		return raw_tostring(value)
+	end
+
 	-- String coercion is intentionally shielded so debug/log paths never trigger taint errors.
 	local ok, stringValue = pcall(raw_tostring, value)
 	if ok then
@@ -1035,18 +1045,12 @@ end
 
 function QuestTogether:SafeTrimString(value, fallback)
 	local fallbackValue = fallback or ""
-	if type(value) ~= "string" then
+	if type(value) ~= "string" or self:IsSecretValue(value) then
 		return fallbackValue
 	end
 
-	-- Guard trim calls for protected string values.
-	local okLeadingTrim, trimmedValue = pcall(string.gsub, value, "^%s+", "")
-	if not okLeadingTrim then
-		return fallbackValue
-	end
-	local okTrailingTrim = false
-	okTrailingTrim, trimmedValue = pcall(string.gsub, trimmedValue, "%s+$", "")
-	if not okTrailingTrim then
+	local trimmedValue = string.match(value, "^%s*(.-)%s*$")
+	if type(trimmedValue) ~= "string" or self:IsSecretValue(trimmedValue) then
 		return fallbackValue
 	end
 	return trimmedValue
@@ -1054,13 +1058,12 @@ end
 
 function QuestTogether:SafeStripWhitespace(value, fallback)
 	local fallbackValue = fallback or ""
-	if type(value) ~= "string" then
+	if type(value) ~= "string" or self:IsSecretValue(value) then
 		return fallbackValue
 	end
 
-	-- Guard whitespace stripping for protected string values.
-	local ok, stripped = pcall(string.gsub, value, "%s+", "")
-	if not ok then
+	local stripped = string.gsub(value, "%s+", "")
+	if type(stripped) ~= "string" or self:IsSecretValue(stripped) then
 		return fallbackValue
 	end
 	return stripped
@@ -1086,6 +1089,10 @@ local function SortDebugKeys(keys)
 end
 
 local function FormatDebugValue(value, depth, visited)
+	if QuestTogether:IsSecretValue(value) then
+		return "<secret>"
+	end
+
 	local valueType = type(value)
 	if valueType == "nil" then
 		return "nil"
@@ -2250,10 +2257,7 @@ end
 function QuestTogether:NormalizeQuestLinkTitleText(titleText)
 	local normalizedText = self:SafeTrimString(titleText, "")
 	if SafeMatch(normalizedText, "^%[.+%]$") then
-		local ok, trimmedTitle = pcall(string.sub, normalizedText, 2, -2)
-		if ok and type(trimmedTitle) == "string" then
-			normalizedText = trimmedTitle
-		end
+		normalizedText = string.sub(normalizedText, 2, -2)
 	end
 	return normalizedText
 end
@@ -2963,15 +2967,11 @@ function QuestTogether:NormalizeQuestProgressPercent(progressValue)
 end
 
 function QuestTogether:StripTrailingParentheticalPercent(objectiveText)
-	if type(objectiveText) ~= "string" or objectiveText == "" then
+	if type(objectiveText) ~= "string" or objectiveText == "" or self:IsSecretValue(objectiveText) then
 		return objectiveText
 	end
 
-	-- Objective text can occasionally contain protected values; strip safely.
-	local ok, strippedText = pcall(string.gsub, objectiveText, "%s*%(%d+%%%s*%)%s*$", "")
-	if not ok then
-		return objectiveText
-	end
+	local strippedText = string.gsub(objectiveText, "%s*%(%d+%%%s*%)%s*$", "")
 	if strippedText == "" then
 		return objectiveText
 	end

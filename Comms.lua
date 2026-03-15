@@ -28,13 +28,36 @@ local ANNOUNCEMENT_CHANNEL_FILTER_EVENTS = {
 	"CHAT_MSG_CHANNEL_NOTICE",
 	"CHAT_MSG_CHANNEL_NOTICE_USER",
 }
+local GROUP_ANNOUNCEMENT_DISTRIBUTIONS = {
+	PARTY = true,
+	RAID = true,
+	INSTANCE_CHAT = true,
+}
+local COMM_DUPLICATE_WINDOW_SECONDS = 0.75
+local COMM_DUPLICATE_PRUNE_THRESHOLD = 200
+local raw_issecretvalue = type(issecretvalue) == "function" and issecretvalue or nil
+
+local function IsSecretValue(value)
+	if not raw_issecretvalue then
+		return false
+	end
+	return raw_issecretvalue(value) and true or false
+end
 
 local function SafeDebugString(value)
 	if QuestTogether and QuestTogether.SafeToString then
 		return QuestTogether:SafeToString(value, "<secret>")
 	end
 
-	-- Debug logging must never throw when formatting potentially protected values.
+	if IsSecretValue(value) then
+		return "<secret>"
+	end
+
+	local valueType = type(value)
+	if valueType == "string" or valueType == "number" or valueType == "boolean" or valueType == "nil" then
+		return tostring(value)
+	end
+
 	local ok, stringValue = pcall(tostring, value)
 	if ok then
 		return stringValue
@@ -45,6 +68,15 @@ end
 local function SafeAddonString(addon, value, fallback)
 	if addon and addon.SafeToString then
 		return addon:SafeToString(value, fallback or "")
+	end
+
+	if IsSecretValue(value) then
+		return fallback or ""
+	end
+
+	local valueType = type(value)
+	if valueType == "string" or valueType == "number" or valueType == "boolean" or valueType == "nil" then
+		return tostring(value)
 	end
 
 	local ok, textValue = pcall(tostring, value)
@@ -66,9 +98,12 @@ local function SafeChannelNumber(addon, value)
 		return addon:SafeToNumber(value)
 	end
 
-	-- Fallback numeric coercion should never throw on protected values.
-	local ok, numberValue = pcall(tonumber, value)
-	if not ok then
+	if IsSecretValue(value) then
+		return nil
+	end
+
+	local numberValue = tonumber(value)
+	if type(numberValue) ~= "number" then
 		return nil
 	end
 
@@ -129,9 +164,12 @@ local function SafeNumber(addon, value)
 		return addon:SafeToNumber(value)
 	end
 
-	-- Fallback numeric coercion should never throw on protected values.
-	local ok, numberValue = pcall(tonumber, value)
-	if not ok then
+	if IsSecretValue(value) then
+		return nil
+	end
+
+	local numberValue = tonumber(value)
+	if type(numberValue) ~= "number" then
 		return nil
 	end
 
@@ -146,16 +184,10 @@ local function NormalizeRealmName(addon, realmName)
 	if addon and addon.SafeStripWhitespace then
 		return addon:SafeStripWhitespace(sourceRealm, "")
 	end
-	-- Realm normalization is called from chat/nameplate paths; keep failures non-fatal.
-	local okText, textValue = pcall(tostring, sourceRealm)
-	if not okText then
+	if IsSecretValue(sourceRealm) then
 		return ""
 	end
-	local okStrip, stripped = pcall(string.gsub, textValue, "%s+", "")
-	if not okStrip then
-		return ""
-	end
-	return stripped
+	return string.gsub(tostring(sourceRealm), "%s+", "")
 end
 
 function QuestTogether:EscapePayload(value)
@@ -580,6 +612,64 @@ function QuestTogether:GetAnnouncementChannelTarget()
 	end
 
 	return self.announcementChannelName
+end
+
+function QuestTogether:GetGroupAnnouncementDistribution()
+	if self.API and self.API.IsInInstanceGroup and self.API.IsInInstanceGroup() then
+		return "INSTANCE_CHAT"
+	end
+	if self.API and self.API.IsInRaid and self.API.IsInRaid() then
+		return "RAID"
+	end
+	if self.API and self.API.IsInParty and self.API.IsInParty() then
+		return "PARTY"
+	end
+	return nil
+end
+
+function QuestTogether:GetAnnouncementWireRoutes()
+	local groupedDistribution = self:GetGroupAnnouncementDistribution()
+	local routes = {}
+	if groupedDistribution then
+		routes[#routes + 1] = {
+			distribution = groupedDistribution,
+			target = nil,
+			requiresChannelJoin = false,
+		}
+	end
+	routes[#routes + 1] = {
+		distribution = "CHANNEL",
+		target = self:GetAnnouncementChannelTarget(),
+		requiresChannelJoin = true,
+	}
+	return routes
+end
+
+function QuestTogether:ShouldSuppressDuplicateCommMessage(sender, message)
+	local nowSeconds = self.API and self.API.GetTime and self.API.GetTime() or 0
+	self.recentCommMessageSignatures = self.recentCommMessageSignatures or {}
+
+	local signatures = self.recentCommMessageSignatures
+	local signatureCount = 0
+	for _ in pairs(signatures) do
+		signatureCount = signatureCount + 1
+	end
+	if signatureCount > COMM_DUPLICATE_PRUNE_THRESHOLD then
+		for signature, seenAt in pairs(signatures) do
+			if (nowSeconds - (seenAt or 0)) > COMM_DUPLICATE_WINDOW_SECONDS then
+				signatures[signature] = nil
+			end
+		end
+	end
+
+	local signature = SafeAddonString(self, sender or "", "") .. "|" .. SafeAddonString(self, message or "", "")
+	local seenAt = signatures[signature]
+	if seenAt and (nowSeconds - seenAt) <= COMM_DUPLICATE_WINDOW_SECONDS then
+		return true
+	end
+
+	signatures[signature] = nowSeconds
+	return false
 end
 
 function QuestTogether:AnnouncementChannelChatFilter(_, _, ...)
@@ -1027,6 +1117,10 @@ function QuestTogether:RequestQuestCompare(speakerName)
 end
 
 function QuestTogether:IsAnnouncementChannelEvent(channel, localID, name)
+	if GROUP_ANNOUNCEMENT_DISTRIBUTIONS[channel] then
+		return true
+	end
+
 	if channel ~= "CHANNEL" then
 		return false
 	end
@@ -1122,22 +1216,33 @@ function QuestTogether:SendAnnouncementWireEvent(eventData)
 		return false
 	end
 
-	if not self:EnsureAnnouncementChannelJoined() then
-		self:Debugf("comms", "Unable to send eventType=%s because channel join failed", SafeAddonString(self, eventData.eventType, ""))
-		return false
+	local wireMessage = self:SerializeWireMessage(ANNOUNCEMENT_COMMAND, self:EncodeAnnouncementPayload(eventData))
+	local routes = self:GetAnnouncementWireRoutes()
+	local sentCount = 0
+
+	for _, route in ipairs(routes) do
+		if route.requiresChannelJoin and not self:EnsureAnnouncementChannelJoined() then
+			self:Debugf(
+				"comms",
+				"Unable to send eventType=%s because channel join failed",
+				SafeAddonString(self, eventData.eventType, "")
+			)
+		else
+			self:Debugf(
+				"comms",
+				"Sending wire eventType=%s sender=%s distribution=%s target=%s bytes=%d",
+				SafeAddonString(self, eventData.eventType, ""),
+				SafeAddonString(self, eventData.senderName, ""),
+				SafeAddonString(self, route.distribution or "", ""),
+				SafeAddonString(self, route.target or "", ""),
+				#wireMessage
+			)
+			self.API.SendAddonMessage(self.commPrefix, wireMessage, route.distribution, route.target)
+			sentCount = sentCount + 1
+		end
 	end
 
-	local wireMessage = self:SerializeWireMessage(ANNOUNCEMENT_COMMAND, self:EncodeAnnouncementPayload(eventData))
-	self:Debugf(
-		"comms",
-		"Sending wire eventType=%s sender=%s target=%s bytes=%d",
-		SafeAddonString(self, eventData.eventType, ""),
-		SafeAddonString(self, eventData.senderName, ""),
-		SafeAddonString(self, self:GetAnnouncementChannelTarget(), ""),
-		#wireMessage
-	)
-	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
-	return true
+	return sentCount > 0
 end
 
 function QuestTogether:SendPingRequest()
@@ -1473,6 +1578,11 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 	end
 
 	local command, payload = self:DeserializeWireMessage(safeMessage)
+	if command == ANNOUNCEMENT_COMMAND and self:ShouldSuppressDuplicateCommMessage(sender, safeMessage) then
+		self:Debugf("comms", "Suppressed duplicate announcement sender=%s", SafeDebugString(sender))
+		return
+	end
+
 	if command == ANNOUNCEMENT_COMMAND then
 		local eventData = self:DecodeAnnouncementPayload(payload)
 		if not eventData then

@@ -269,6 +269,18 @@ QuestTogether:RegisterTest("SafeToNumber accepts numeric values without conversi
 	AssertEquals(QuestTogether:SafeToNumber({}), nil)
 end)
 
+QuestTogether:RegisterTest("Safe conversions short-circuit values marked secret", function()
+	WithPatchedMethod(QuestTogether, "IsSecretValue", function(_, value)
+		return value == "secret-text" or value == 99
+	end, function()
+		AssertEquals(QuestTogether:SafeToNumber(99), nil)
+		AssertEquals(QuestTogether:SafeToNumber("secret-text"), nil)
+		AssertEquals(QuestTogether:SafeToString("secret-text", "fallback"), "fallback")
+		AssertEquals(QuestTogether:SafeTrimString("secret-text", "fallback"), "fallback")
+		AssertEquals(QuestTogether:SafeStripWhitespace("secret-text", "fallback"), "fallback")
+	end)
+end)
+
 QuestTogether:RegisterTest("SafeTrimString and SafeStripWhitespace handle normal and failing values", function()
 	AssertEquals(QuestTogether:SafeTrimString("  hello there  "), "hello there")
 	AssertEquals(QuestTogether:SafeStripWhitespace(" a b\tc \n d "), "abcd")
@@ -872,6 +884,67 @@ QuestTogether:RegisterTest("tooltip quest detection prefers frame guid over live
 			QuestTogether:GetNameplateTooltipScanGuid("nameplate1", unitFrame),
 			"Creature-0-0-0-0-12345-0000000000"
 		)
+		end)
+end)
+
+QuestTogether:RegisterTest("tooltip objective evaluation accepts party-member progress lines", function()
+	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
+	local playerLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestPlayer or "QuestPlayer"
+
+	local hasObjective = QuestTogether:EvaluateTooltipQuestObjectiveLines({
+		{
+			type = objectiveLineType,
+			leftText = "0/8 Digested Object",
+		},
+		{
+			type = playerLineType,
+			leftText = "Friend-Realm",
+			rightText = "3/8 Digested Object",
+		},
+	})
+
+	AssertTrue(hasObjective)
+end)
+
+QuestTogether:RegisterTest("tooltip objective evaluation ignores complete-only objective blocks", function()
+	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
+	local playerLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestPlayer or "QuestPlayer"
+
+	local hasObjective = QuestTogether:EvaluateTooltipQuestObjectiveLines({
+		{
+			type = objectiveLineType,
+			leftText = "8/8 Digested Object",
+		},
+		{
+			type = playerLineType,
+			leftText = "Friend-Realm",
+			rightText = "8/8 Digested Object",
+		},
+	})
+
+	AssertFalse(hasObjective)
+end)
+
+QuestTogether:RegisterTest("tooltip objective evaluation stops when tooltip line metadata is secret", function()
+	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
+	local secretLine = {}
+	setmetatable(secretLine, {
+		__index = function()
+			error("secret line should not be indexed")
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "IsSecretValue", function(_, value)
+		return value == secretLine
+	end, function()
+		local hasObjective = QuestTogether:EvaluateTooltipQuestObjectiveLines({
+			secretLine,
+			{
+				type = objectiveLineType,
+				leftText = "1/1 Should Never Be Read",
+			},
+		})
+		AssertFalse(hasObjective)
 	end)
 end)
 
@@ -2223,10 +2296,19 @@ end)
 QuestTogether:RegisterTest("bubble test announcement uses target player when available", function()
 	local sent = {}
 	QuestTogether.isEnabled = true
-	QuestTogether.API = CreateApiWithOverrides({
-		GetChannelName = function(channelName)
-			AssertEquals(channelName, QuestTogether.announcementChannelName)
-			return 7
+		QuestTogether.API = CreateApiWithOverrides({
+			IsInInstanceGroup = function()
+				return false
+			end,
+			IsInRaid = function()
+				return false
+			end,
+			IsInParty = function()
+				return false
+			end,
+			GetChannelName = function(channelName)
+				AssertEquals(channelName, QuestTogether.announcementChannelName)
+				return 7
 		end,
 		SendAddonMessage = function(prefix, message, channel, target)
 			sent[#sent + 1] = {
@@ -2260,6 +2342,66 @@ QuestTogether:RegisterTest("bubble test announcement uses target player when ava
 	AssertTrue(string.find(sent[1].message, "^ANN|", 1) ~= nil)
 end)
 
+QuestTogether:RegisterTest("announcement wire uses both party and channel routes when grouped", function()
+	local sent = {}
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstanceGroup = function()
+			return false
+		end,
+		IsInRaid = function()
+			return false
+		end,
+		IsInParty = function()
+			return true
+		end,
+		GetChannelName = function(channelName)
+			AssertEquals(channelName, QuestTogether.announcementChannelName)
+			return 8
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+			return 0
+		end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "MyPlayer", "Realm"
+		end,
+		UnitClass = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Mage", "MAGE"
+		end,
+		UnitGUID = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Player-1-ABC"
+		end,
+	})
+
+	local success = QuestTogether:SendAnnouncementEvent("QUEST_PROGRESS", "9/9 Things")
+	AssertTrue(success)
+	AssertEquals(#sent, 2)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "PARTY")
+	AssertEquals(sent[1].target, nil)
+	AssertTrue(string.find(sent[1].message, "^ANN|", 1) ~= nil)
+	AssertEquals(sent[2].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[2].channel, "CHANNEL")
+	AssertEquals(sent[2].target, 8)
+	AssertTrue(string.find(sent[2].message, "^ANN|", 1) ~= nil)
+end)
+
+QuestTogether:RegisterTest("announcement comm filter accepts grouped distributions", function()
+	AssertTrue(QuestTogether:IsAnnouncementChannelEvent("PARTY"))
+	AssertTrue(QuestTogether:IsAnnouncementChannelEvent("RAID"))
+	AssertTrue(QuestTogether:IsAnnouncementChannelEvent("INSTANCE_CHAT"))
+	AssertFalse(QuestTogether:IsAnnouncementChannelEvent("SAY"))
+end)
+
 QuestTogether:RegisterTest("publish announcement sends even when local option is disabled", function()
 	local sent = {}
 	local printed = {}
@@ -2269,6 +2411,15 @@ QuestTogether:RegisterTest("publish announcement sends even when local option is
 	QuestTogether.db.profile.showChatLogs = true
 
 	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstanceGroup = function()
+			return false
+		end,
+		IsInRaid = function()
+			return false
+		end,
+		IsInParty = function()
+			return false
+		end,
 		GetChannelName = function()
 			return 4
 		end,
@@ -2294,6 +2445,58 @@ QuestTogether:RegisterTest("publish announcement sends even when local option is
 	AssertTrue(success)
 	AssertEquals(#sent, 1)
 	AssertEquals(#printed, 0)
+end)
+
+QuestTogether:RegisterTest("duplicate announcements from party and channel are processed once", function()
+	local handledCount = 0
+	QuestTogether.isEnabled = true
+	QuestTogether.announcementChannelLocalID = 6
+
+	local payload = QuestTogether:EncodeAnnouncementPayload({
+		version = 3,
+		eventType = "QUEST_PROGRESS",
+		senderGUID = "Player-2-DEF",
+		classFile = "WARRIOR",
+		senderName = "Friend-Realm",
+		text = "6/8 Things",
+		questId = "12345",
+		iconAsset = "",
+		iconKind = "",
+		zoneName = "",
+		coordX = "",
+		coordY = "",
+		warMode = "0",
+		emoteToken = "",
+	})
+	local wireMessage = QuestTogether:SerializeWireMessage("ANN", payload)
+
+	WithPatchedMethod(QuestTogether, "IsSelfSender", function()
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "HandleAnnouncementEvent", function()
+			handledCount = handledCount + 1
+			return true
+		end, function()
+			QuestTogether:OnCommReceived(
+				QuestTogether.commPrefix,
+				wireMessage,
+				"PARTY",
+				"Friend-Realm",
+				nil,
+				nil
+			)
+			QuestTogether:OnCommReceived(
+				QuestTogether.commPrefix,
+				wireMessage,
+				"CHANNEL",
+				"Friend-Realm",
+				6,
+				QuestTogether.announcementChannelName
+			)
+		end)
+	end)
+
+	AssertEquals(handledCount, 1)
 end)
 
 QuestTogether:RegisterTest("publish announcement is suppressed while player is dead", function()
@@ -2394,10 +2597,19 @@ QuestTogether:RegisterTest("target test announcement sends target payload and ha
 	local handledEvent = nil
 
 	QuestTogether.isEnabled = true
-	QuestTogether.API = CreateApiWithOverrides({
-		UnitExists = function(unitToken)
-			AssertEquals(unitToken, "target")
-			return true
+		QuestTogether.API = CreateApiWithOverrides({
+			IsInInstanceGroup = function()
+				return false
+			end,
+			IsInRaid = function()
+				return false
+			end,
+			IsInParty = function()
+				return false
+			end,
+			UnitExists = function(unitToken)
+				AssertEquals(unitToken, "target")
+				return true
 		end,
 		UnitFullName = function(unitToken)
 			AssertEquals(unitToken, "target")
