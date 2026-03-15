@@ -680,8 +680,13 @@ QuestTogether.API = QuestTogether.API or {
 			return ok and result and true or false
 		end,
 		GetQuestLogIndexForQuestID = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return nil
+			end
 			if C_QuestLog and C_QuestLog.GetLogIndexForQuestID then
-				local ok, questLogIndex = pcall(C_QuestLog.GetLogIndexForQuestID, questID)
+				local ok, questLogIndex = pcall(C_QuestLog.GetLogIndexForQuestID, numericQuestID)
 				if not ok then
 					return nil
 				end
@@ -693,36 +698,61 @@ QuestTogether.API = QuestTogether.API or {
 			return nil
 		end,
 		IsQuestFlaggedCompleted = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return false
+			end
 			if C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted then
-				local ok, isCompleted = pcall(C_QuestLog.IsQuestFlaggedCompleted, questID)
+				local ok, isCompleted = pcall(C_QuestLog.IsQuestFlaggedCompleted, numericQuestID)
 				return ok and isCompleted and true or false
 			end
 			return false
 		end,
 		IsQuestReadyForTurnIn = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return false
+			end
 			if C_QuestLog and C_QuestLog.ReadyForTurnIn then
-				local ok, isReady = pcall(C_QuestLog.ReadyForTurnIn, questID)
+				local ok, isReady = pcall(C_QuestLog.ReadyForTurnIn, numericQuestID)
 				return ok and isReady and true or false
 			end
 			return false
 		end,
 		IsQuestComplete = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return false
+			end
 			if C_QuestLog and C_QuestLog.IsComplete then
-				local ok, isComplete = pcall(C_QuestLog.IsComplete, questID)
+				local ok, isComplete = pcall(C_QuestLog.IsComplete, numericQuestID)
 				return ok and isComplete and true or false
 			end
 			return false
 		end,
 		IsOnQuest = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return false
+			end
 			if C_QuestLog and C_QuestLog.IsOnQuest then
-				local ok, isOnQuest = pcall(C_QuestLog.IsOnQuest, questID)
+				local ok, isOnQuest = pcall(C_QuestLog.IsOnQuest, numericQuestID)
 				return ok and isOnQuest and true or false
 			end
 			return false
 		end,
 		IsPushableQuest = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return false
+			end
 			if C_QuestLog and C_QuestLog.IsPushableQuest then
-				local ok, isPushable = pcall(C_QuestLog.IsPushableQuest, questID)
+				local ok, isPushable = pcall(C_QuestLog.IsPushableQuest, numericQuestID)
 				return ok and isPushable and true or false
 			end
 			return false
@@ -744,12 +774,36 @@ QuestTogether.API = QuestTogether.API or {
 			return 0
 		end,
 		GetQuestLogInfo = function(questLogIndex)
+			local numericQuestLogIndex = QuestTogether and QuestTogether.SafeToNumber
+				and QuestTogether:SafeToNumber(questLogIndex)
+				or nil
+			if numericQuestLogIndex == nil then
+				return nil
+			end
+			numericQuestLogIndex = math.floor(numericQuestLogIndex + 0.5)
+			if numericQuestLogIndex <= 0 then
+				return nil
+			end
+
 			if C_QuestLog and C_QuestLog.GetInfo then
-				local ok, questInfo = pcall(C_QuestLog.GetInfo, questLogIndex)
+				local ok, questInfo = pcall(C_QuestLog.GetInfo, numericQuestLogIndex)
 				if not ok then
 					return nil
 				end
-				return questInfo
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(questInfo) then
+					return nil
+				end
+				if type(questInfo) ~= "table" then
+					return nil
+				end
+
+				local sanitizedInfo = {}
+				for key, value in pairs(questInfo) do
+					if not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(value)) then
+						sanitizedInfo[key] = value
+					end
+				end
+				return sanitizedInfo
 			end
 			return nil
 		end,
@@ -770,11 +824,28 @@ QuestTogether.API = QuestTogether.API or {
 			return objectiveCount
 		end,
 		GetQuestObjectiveInfo = function(questID, objectiveIndex, displayComplete)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return nil, nil, nil, nil
+			end
+
+			local numericObjectiveIndex = QuestTogether and QuestTogether.SafeToNumber
+				and QuestTogether:SafeToNumber(objectiveIndex)
+				or nil
+			if numericObjectiveIndex == nil then
+				return nil, nil, nil, nil
+			end
+			numericObjectiveIndex = math.floor(numericObjectiveIndex + 0.5)
+			if numericObjectiveIndex <= 0 then
+				return nil, nil, nil, nil
+			end
+
 			if type(GetQuestObjectiveInfo) ~= "function" then
 				return nil, nil, nil, nil
 			end
 			local ok, text, objectiveType, finished, currentValue =
-				pcall(GetQuestObjectiveInfo, questID, objectiveIndex, displayComplete)
+				pcall(GetQuestObjectiveInfo, numericQuestID, numericObjectiveIndex, displayComplete)
 			if not ok then
 				return nil, nil, nil, nil
 			end
@@ -795,10 +866,16 @@ QuestTogether.API = QuestTogether.API or {
 			return text, objectiveType, finished, currentValue
 		end,
 		GetQuestProgressBarPercent = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return nil
+			end
+
 			if type(GetQuestProgressBarPercent) ~= "function" then
 				return nil
 			end
-			local ok, progressValue = pcall(GetQuestProgressBarPercent, questID)
+			local ok, progressValue = pcall(GetQuestProgressBarPercent, numericQuestID)
 			if not ok then
 				return nil
 			end
@@ -2908,36 +2985,43 @@ function QuestTogether:ShouldDisplayAnnouncementType(eventType)
 end
 
 function QuestTogether:IsWorldQuest(questId)
-	if not questId or not C_QuestLog or not C_QuestLog.IsWorldQuest then
+	local numericQuestId = self:NormalizeQuestID(questId)
+	if not numericQuestId or not C_QuestLog or not C_QuestLog.IsWorldQuest then
 		return false
 	end
 
 	-- Quest APIs may throw on IDs that disappear mid-update; treat as false.
-	local ok, isWorldQuest = pcall(C_QuestLog.IsWorldQuest, questId)
+	local ok, isWorldQuest = pcall(C_QuestLog.IsWorldQuest, numericQuestId)
 	return ok and isWorldQuest and true or false
 end
 
 function QuestTogether:IsBonusObjective(questId)
-	if not questId or not C_QuestLog or not C_QuestLog.IsQuestTask then
+	local numericQuestId = self:NormalizeQuestID(questId)
+	if not numericQuestId or not C_QuestLog or not C_QuestLog.IsQuestTask then
 		return false
 	end
 
 	-- Quest APIs may throw on IDs that disappear mid-update; treat as false.
-	local ok, isTaskQuest = pcall(C_QuestLog.IsQuestTask, questId)
+	local ok, isTaskQuest = pcall(C_QuestLog.IsQuestTask, numericQuestId)
 	if not (ok and isTaskQuest) then
 		return false
 	end
 
-	return not self:IsWorldQuest(questId)
+	return not self:IsWorldQuest(numericQuestId)
 end
 
 function QuestTogether:GetQuestTitle(questId, questInfo)
+	local numericQuestId = self:NormalizeQuestID(questId)
+	if not numericQuestId then
+		return "Quest " .. tostring(questId)
+	end
+
 	if questInfo and type(questInfo.title) == "string" and questInfo.title ~= "" then
 		return questInfo.title
 	end
 
 	if C_TaskQuest and C_TaskQuest.GetQuestInfoByQuestID then
-		local okTaskTitle, taskTitle = pcall(C_TaskQuest.GetQuestInfoByQuestID, questId)
+		local okTaskTitle, taskTitle = pcall(C_TaskQuest.GetQuestInfoByQuestID, numericQuestId)
 		if okTaskTitle and self:IsSecretValue(taskTitle) then
 			taskTitle = nil
 		end
@@ -2947,7 +3031,7 @@ function QuestTogether:GetQuestTitle(questId, questInfo)
 	end
 
 	if C_QuestLog and C_QuestLog.GetTitleForQuestID then
-		local okLogTitle, logTitle = pcall(C_QuestLog.GetTitleForQuestID, questId)
+		local okLogTitle, logTitle = pcall(C_QuestLog.GetTitleForQuestID, numericQuestId)
 		if okLogTitle and self:IsSecretValue(logTitle) then
 			logTitle = nil
 		end
@@ -2956,7 +3040,7 @@ function QuestTogether:GetQuestTitle(questId, questInfo)
 		end
 	end
 
-	return "Quest " .. tostring(questId)
+	return "Quest " .. tostring(numericQuestId)
 end
 
 function QuestTogether:NormalizeQuestProgressPercent(progressValue)

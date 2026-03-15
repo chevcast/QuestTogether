@@ -1340,8 +1340,8 @@ function QuestTogether:RebuildNameplateQuestTitleCache()
 				end
 				if type(worldQuestList) == "table" then
 					for _, questInfo in ipairs(worldQuestList) do
-						local questId = questInfo and questInfo.questId
-						if type(questId) == "number" and questId > 0 then
+						local questId = self:NormalizeQuestID(questInfo and questInfo.questId)
+						if questId then
 							-- Task-quest title lookups can fail transiently during map refresh.
 							local okTitle, questName = pcall(C_TaskQuest.GetQuestInfoByQuestID, questId)
 							if okTitle and self:IsSecretValue(questName) then
