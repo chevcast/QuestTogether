@@ -1015,6 +1015,15 @@ function QuestTogether:SafeToNumber(value)
 	return numericValue
 end
 
+function QuestTogether:NormalizeQuestID(questId)
+	local numericQuestId = self:SafeToNumber(questId)
+	if not numericQuestId or numericQuestId <= 0 then
+		return nil
+	end
+
+	return math.floor(numericQuestId + 0.5)
+end
+
 function QuestTogether:SafeToString(value, fallback)
 	if self:IsSecretValue(value) then
 		if fallback ~= nil then
@@ -3626,28 +3635,32 @@ end
 
 -- Store the current objective text state for one quest.
 function QuestTogether:WatchQuest(questId, questInfo)
-	self:Debugf("quest", "WatchQuest questId=%s", tostring(questId))
+	local numericQuestId = self:NormalizeQuestID(questId)
+	self:Debugf("quest", "WatchQuest questId=%s", tostring(numericQuestId or questId))
 
-	if not questId or not questInfo then
+	if not numericQuestId or not questInfo then
 		return
 	end
 
 	local tracker = self:GetPlayerTracker()
-	local questLogIndex = self.API and self.API.GetQuestLogIndexForQuestID and self.API.GetQuestLogIndexForQuestID(questId)
-	local questTitle = self:GetQuestTitle(questId, questInfo)
+	local questLogIndex = self.API
+		and self.API.GetQuestLogIndexForQuestID
+		and self.API.GetQuestLogIndexForQuestID(numericQuestId)
+	local questTitle = self:GetQuestTitle(numericQuestId, questInfo)
 
-	tracker[questId] = {
+	tracker[numericQuestId] = {
 		title = questTitle,
-		taskAnnouncementType = self:GetTaskAnnouncementType(questId),
+		taskAnnouncementType = self:GetTaskAnnouncementType(numericQuestId),
 		objectives = {},
 		-- Cached numeric objective values used to gate progress announcements.
 		-- This avoids noisy chat lines caused by text-only objective rewrites.
 		objectiveValues = {},
-		isComplete = self.API and self.API.IsQuestComplete and self.API.IsQuestComplete(questId) or false,
-		isReadyForTurnIn = self.API and self.API.IsQuestReadyForTurnIn and self.API.IsQuestReadyForTurnIn(questId) or false,
+		isComplete = self.API and self.API.IsQuestComplete and self.API.IsQuestComplete(numericQuestId) or false,
+		isReadyForTurnIn = self.API and self.API.IsQuestReadyForTurnIn and self.API.IsQuestReadyForTurnIn(numericQuestId)
+			or false,
 	}
-	self:RefreshTrackedQuestAnnouncementIcon(questId, tracker[questId])
-	self:DebugState("quest", "trackedQuest", tracker[questId])
+	self:RefreshTrackedQuestAnnouncementIcon(numericQuestId, tracker[numericQuestId])
+	self:DebugState("quest", "trackedQuest", tracker[numericQuestId])
 
 	if not questLogIndex then
 		return
@@ -3657,20 +3670,20 @@ function QuestTogether:WatchQuest(questId, questInfo)
 		or 0
 	for objectiveIndex = 1, numObjectives do
 		local objectiveText, objectiveType, _, currentValue =
-			self.API.GetQuestObjectiveInfo and self.API.GetQuestObjectiveInfo(questId, objectiveIndex, false)
+			self.API.GetQuestObjectiveInfo and self.API.GetQuestObjectiveInfo(numericQuestId, objectiveIndex, false)
 		if objectiveText == nil and objectiveType == nil and currentValue == nil then
 			objectiveText = ""
 		end
 		if objectiveType == "progressbar" then
-			local progress = self.API.GetQuestProgressBarPercent and self.API.GetQuestProgressBarPercent(questId)
+			local progress = self.API.GetQuestProgressBarPercent and self.API.GetQuestProgressBarPercent(numericQuestId)
 			local roundedProgress = self:NormalizeQuestProgressPercent(progress) or 0
 			objectiveText = tostring(roundedProgress)
 				.. "% "
 				.. tostring(self:StripTrailingParentheticalPercent(objectiveText))
 			currentValue = roundedProgress
 		end
-		tracker[questId].objectives[objectiveIndex] = objectiveText
-		tracker[questId].objectiveValues[objectiveIndex] = self:SafeToNumber(currentValue)
+		tracker[numericQuestId].objectives[objectiveIndex] = objectiveText
+		tracker[numericQuestId].objectiveValues[objectiveIndex] = self:SafeToNumber(currentValue)
 	end
 end
 

@@ -269,6 +269,26 @@ QuestTogether:RegisterTest("SafeToNumber accepts numeric values without conversi
 	AssertEquals(QuestTogether:SafeToNumber({}), nil)
 end)
 
+QuestTogether:RegisterTest("NormalizeQuestID coerces and validates quest ids", function()
+	AssertEquals(QuestTogether:NormalizeQuestID(12345), 12345)
+	AssertEquals(QuestTogether:NormalizeQuestID("12345"), 12345)
+	AssertEquals(QuestTogether:NormalizeQuestID(12345.4), 12345)
+	AssertEquals(QuestTogether:NormalizeQuestID(0), nil)
+	AssertEquals(QuestTogether:NormalizeQuestID(-3), nil)
+	AssertEquals(QuestTogether:NormalizeQuestID("abc"), nil)
+end)
+
+QuestTogether:RegisterTest("WatchQuest stores tracker entries under normalized numeric quest ids", function()
+	local tracker = QuestTogether:GetPlayerTracker()
+	QuestTogether:WatchQuest("12345", { title = "Any Quest" })
+
+	AssertTrue(tracker[12345] ~= nil)
+	AssertEquals(tracker["12345"], nil)
+
+	QuestTogether:WatchQuest("bad-id", { title = "Ignored Quest" })
+	AssertEquals(tracker["bad-id"], nil)
+end)
+
 QuestTogether:RegisterTest("Safe conversions short-circuit values marked secret", function()
 	WithPatchedMethod(QuestTogether, "IsSecretValue", function(_, value)
 		return value == "secret-text" or value == 99
