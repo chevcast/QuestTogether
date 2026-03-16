@@ -14,6 +14,7 @@ Design constraints:
 local QuestTogether = _G.QuestTogether
 local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
 local ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK = true
+local QUEST_SCAN_TOOLTIP_FRAME_NAME = "QuestTogetherQuestScanTooltip"
 local ANNOUNCEMENT_BUBBLE_Y_OFFSET = 22
 local ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS = 0.2
 local ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS = 0.4
@@ -21,6 +22,7 @@ local PERSONAL_BUBBLE_SETTINGS_DIALOG_WIDTH = 380
 local PERSONAL_BUBBLE_SETTINGS_DIALOG_HEIGHT = 220
 local ApplyQuestIconVisual
 local SafeUiNumber
+local questScanTooltipFrame = nil
 
 -- Original icon used by this addon's first nameplate implementation.
 QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE = "Interface\\OPTIONSFRAME\\UI-OptionsFrame-NewFeatureIcon"
@@ -185,6 +187,67 @@ local function ScaleBubbleMetric(baseValue, sizeScale, minimumValue)
 		return math.max(minimumValue, scaledValue)
 	end
 	return scaledValue
+end
+
+local function GetQuestScanTooltipFrame()
+	if questScanTooltipFrame and not IsFrameForbidden(questScanTooltipFrame) then
+		return questScanTooltipFrame
+	end
+
+	local existingTooltip = _G[QUEST_SCAN_TOOLTIP_FRAME_NAME]
+	if existingTooltip and not IsFrameForbidden(existingTooltip) then
+		questScanTooltipFrame = existingTooltip
+		return questScanTooltipFrame
+	end
+
+	if type(CreateFrame) ~= "function" then
+		return nil
+	end
+
+	local tooltipFrame = CreateFrame("GameTooltip", QUEST_SCAN_TOOLTIP_FRAME_NAME, nil, "GameTooltipTemplate")
+	if not tooltipFrame or IsFrameForbidden(tooltipFrame) then
+		return nil
+	end
+
+	questScanTooltipFrame = tooltipFrame
+	return questScanTooltipFrame
+end
+
+local function BuildPseudoTooltipLinesFromHiddenTooltip(tooltipFrame)
+	if
+		not tooltipFrame
+		or IsFrameForbidden(tooltipFrame)
+		or not tooltipFrame.GetName
+		or not tooltipFrame.NumLines
+	then
+		return {}
+	end
+
+	local tooltipName = tooltipFrame:GetName()
+	if type(tooltipName) ~= "string" or tooltipName == "" then
+		return {}
+	end
+
+	local lineCount = SafeUiNumber(tooltipFrame:NumLines(), 0) or 0
+	local pseudoLines = {}
+	for lineIndex = 1, lineCount do
+		local leftRegion = _G[tooltipName .. "TextLeft" .. tostring(lineIndex)]
+		local rightRegion = _G[tooltipName .. "TextRight" .. tostring(lineIndex)]
+		local leftText = leftRegion and leftRegion.GetText and leftRegion:GetText() or nil
+		local rightText = rightRegion and rightRegion.GetText and rightRegion:GetText() or nil
+		if type(leftText) == "string" or type(rightText) == "string" then
+			pseudoLines[#pseudoLines + 1] = {
+				-- Hidden tooltip scans do not expose structured line types; map them into the
+				-- objective parser as generic quest-objective candidates.
+				type = "QuestObjective",
+				leftText = leftText,
+				rightText = rightText,
+				text = leftText,
+			}
+		end
+	end
+
+	return pseudoLines
 end
 
 local function GetPersonalBubbleAnchorFontDefinition()
@@ -1510,32 +1573,33 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 		return cachedValue
 	end
 
-	if not (C_TooltipInfo and C_TooltipInfo.GetHyperlink) then
+	local scanTooltip = GetQuestScanTooltipFrame()
+	if not scanTooltip then
 		self:SetCachedQuestObjectiveResult(unitGuid, false)
 		return false
 	end
 
-	-- Tooltip retrieval can throw for stale GUID hyperlinks; skip tooltip fallback on failure.
-	local okTooltip, tooltipData = pcall(function()
-		return C_TooltipInfo.GetHyperlink("unit:" .. unitGuid)
+	local okScan = pcall(function()
+		if scanTooltip.ClearLines then
+			scanTooltip:ClearLines()
+		end
+		if scanTooltip.SetOwner then
+			scanTooltip:SetOwner(WorldFrame or UIParent, "ANCHOR_NONE")
+		end
+		scanTooltip:SetHyperlink("unit:" .. unitGuid)
 	end)
-	if not okTooltip then
-		self:SetCachedQuestObjectiveResult(unitGuid, false)
-		return false
-	end
-	if self:IsSecretValue(tooltipData) then
+	if not okScan then
 		self:SetCachedQuestObjectiveResult(unitGuid, false)
 		return false
 	end
 
-	local tooltipLines = tooltipData and tooltipData.lines or nil
-	if self:IsSecretValue(tooltipLines) or type(tooltipLines) ~= "table" then
-		self:SetCachedQuestObjectiveResult(unitGuid, false)
-		return false
+	local tooltipLines = BuildPseudoTooltipLinesFromHiddenTooltip(scanTooltip)
+	if scanTooltip.Hide then
+		pcall(scanTooltip.Hide, scanTooltip)
 	end
 
-	-- Consider any unfinished quest objective text (including QuestPlayer party progress lines)
-	-- as objective evidence so cross-party/cross-realm tooltip data is respected.
+	-- Consider any unfinished quest objective text (including party-progress style lines)
+	-- as objective evidence while avoiding direct interaction with structured tooltip tables.
 	local result = self:EvaluateTooltipQuestObjectiveLines(tooltipLines)
 	self:SetCachedQuestObjectiveResult(unitGuid, result)
 	return result
