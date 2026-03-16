@@ -1217,6 +1217,56 @@ local function LooksLikeProgressText(text)
 	return false
 end
 
+local function IsKnownQuestTitleLine(text)
+	local trimmedText = SafeTrimText(text)
+	if trimmedText == "" then
+		return false
+	end
+	return QuestTogether and QuestTogether.nameplateQuestTitleCache and QuestTogether.nameplateQuestTitleCache[trimmedText]
+		or false
+end
+
+local function NormalizeObjectiveTextForCompare(addon, text)
+	local normalizedText = SafeTrimText(text)
+	if normalizedText == "" then
+		return ""
+	end
+
+	if addon and addon.StripTrailingParentheticalPercent then
+		normalizedText = addon:StripTrailingParentheticalPercent(normalizedText)
+	end
+	return SafeTrimText(normalizedText)
+end
+
+function QuestTogether:IsTooltipObjectiveTextFromTrackedQuest(candidateText)
+	local normalizedCandidateText = NormalizeObjectiveTextForCompare(self, candidateText)
+	if normalizedCandidateText == "" then
+		return false
+	end
+	if IsKnownQuestTitleLine(normalizedCandidateText) then
+		return false
+	end
+
+	local tracker = self.GetPlayerTracker and self:GetPlayerTracker() or nil
+	if type(tracker) ~= "table" then
+		return false
+	end
+
+	for _, questData in pairs(tracker) do
+		local objectives = questData and questData.objectives or nil
+		if type(objectives) == "table" then
+			for _, objectiveText in pairs(objectives) do
+				local normalizedObjectiveText = NormalizeObjectiveTextForCompare(self, objectiveText)
+				if normalizedObjectiveText ~= "" and normalizedObjectiveText == normalizedCandidateText then
+					return true
+				end
+			end
+		end
+	end
+
+	return false
+end
+
 local function IsTooltipObjectiveOrPlayerLineType(lineType)
 	if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(lineType) then
 		return false
@@ -1277,20 +1327,25 @@ function QuestTogether:EvaluateTooltipQuestObjectiveLines(tooltipLines)
 			local lineTypeIsPlayer = (Enum and Enum.TooltipDataLineType and lineType == Enum.TooltipDataLineType.QuestPlayer)
 				or SafeText(lineType, "") == "QuestPlayer"
 
-			for candidateIndex = 1, #textCandidates do
-				local candidateText = textCandidates[candidateIndex]
-				if candidateText ~= "" then
-					local progressState = GetObjectiveProgressState(candidateText)
-					if progressState == "unfinished" then
-						return true
-					end
-					if progressState == "unknown" then
-						if not lineTypeIsPlayer or LooksLikeProgressText(candidateText) then
+				for candidateIndex = 1, #textCandidates do
+					local candidateText = textCandidates[candidateIndex]
+					if candidateText ~= "" then
+						local progressState = GetObjectiveProgressState(candidateText)
+						if progressState == "unfinished" then
 							return true
+						end
+						if progressState == "unknown" then
+							if lineTypeIsPlayer and LooksLikeProgressText(candidateText) then
+								return true
+							end
+							-- For non-player objective lines without explicit progress numbers, require the
+							-- text to match an active tracked objective to avoid broad false positives.
+							if not lineTypeIsPlayer and self:IsTooltipObjectiveTextFromTrackedQuest(candidateText) then
+								return true
+							end
 						end
 					end
 				end
-			end
 		end
 	end
 
@@ -1390,9 +1445,7 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 	if IsFrameForbidden(plateFrame) then
 		plateFrame = nil
 	end
-	local cachedGuidByToken = type(unitToken) == "string" and self.nameplateTooltipGuidByUnitToken[unitToken] or nil
 	local candidateGuids = {
-		cachedGuidByToken,
 		unitFrame and unitFrame.namePlateUnitGUID or nil,
 		plateFrame and plateFrame.namePlateUnitGUID or nil,
 	}
@@ -1403,6 +1456,9 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 			candidateGuid = nil
 		end
 		if IsNonEmptyString(candidateGuid) then
+			if type(unitToken) == "string" and unitToken ~= "" then
+				self.nameplateTooltipGuidByUnitToken[unitToken] = candidateGuid
+			end
 			return candidateGuid
 		end
 	end
@@ -1413,6 +1469,14 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 			self.nameplateTooltipGuidByUnitToken[unitToken] = liveGuid
 		end
 		return liveGuid
+	end
+
+	local cachedGuidByToken = type(unitToken) == "string" and self.nameplateTooltipGuidByUnitToken[unitToken] or nil
+	if self:IsSecretValue(cachedGuidByToken) then
+		cachedGuidByToken = nil
+	end
+	if IsNonEmptyString(cachedGuidByToken) then
+		return cachedGuidByToken
 	end
 
 	return nil
@@ -2824,6 +2888,15 @@ function QuestTogether:OnNameplateAdded(unitToken)
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
 	self.nameplateTooltipGuidByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
+
+	if C_NamePlate and C_NamePlate.GetNamePlateForUnit then
+		local okFrame, namePlateFrameBase = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
+		if okFrame and namePlateFrameBase then
+			-- Nameplate frames are recycled. Clear any stale icon/tint immediately so visuals
+			-- from a previous unit cannot carry over while the deferred refresh resolves.
+			self:HideNameplateIcon(namePlateFrameBase)
+		end
+	end
 
 	self:ScheduleNameplateRefresh(unitToken)
 end

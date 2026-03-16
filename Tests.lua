@@ -945,6 +945,68 @@ QuestTogether:RegisterTest("tooltip objective evaluation ignores complete-only o
 	AssertFalse(hasObjective)
 end)
 
+QuestTogether:RegisterTest("tooltip objective evaluation ignores quest-title-only lines", function()
+	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
+	QuestTogether.nameplateQuestTitleCache["Tracking the Trail"] = true
+
+	local hasObjective = QuestTogether:EvaluateTooltipQuestObjectiveLines({
+		{
+			type = objectiveLineType,
+			leftText = "Tracking the Trail",
+		},
+	})
+
+	AssertFalse(hasObjective)
+end)
+
+QuestTogether:RegisterTest("tooltip objective evaluation accepts tracked non-progress objective text", function()
+	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
+	local hasObjective = false
+
+	WithPatchedMethod(QuestTogether, "GetPlayerTracker", function()
+		return {
+			[12345] = {
+				objectives = {
+					[1] = "Collect Arcane Remnants",
+				},
+			},
+		}
+	end, function()
+		hasObjective = QuestTogether:EvaluateTooltipQuestObjectiveLines({
+			{
+				type = objectiveLineType,
+				leftText = "Collect Arcane Remnants",
+			},
+		})
+	end)
+
+	AssertTrue(hasObjective)
+end)
+
+QuestTogether:RegisterTest("tooltip objective evaluation rejects unknown non-progress objective text", function()
+	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
+	local hasObjective = false
+
+	WithPatchedMethod(QuestTogether, "GetPlayerTracker", function()
+		return {
+			[12345] = {
+				objectives = {
+					[1] = "Collect Arcane Remnants",
+				},
+			},
+		}
+	end, function()
+		hasObjective = QuestTogether:EvaluateTooltipQuestObjectiveLines({
+			{
+				type = objectiveLineType,
+				leftText = "Speak to Teyla",
+			},
+		})
+	end)
+
+	AssertFalse(hasObjective)
+end)
+
 QuestTogether:RegisterTest("tooltip objective evaluation stops when tooltip line metadata is secret", function()
 	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
 	local secretLine = {}
@@ -966,6 +1028,22 @@ QuestTogether:RegisterTest("tooltip objective evaluation stops when tooltip line
 		})
 		AssertFalse(hasObjective)
 	end)
+end)
+
+QuestTogether:RegisterTest("tooltip quest scan guid prefers live frame guid over stale token cache", function()
+	QuestTogether.nameplateTooltipGuidByUnitToken["nameplate1"] = "Creature-0-0-0-0-11111-0000000000"
+	local unitFrame = {
+		namePlateUnitGUID = "Creature-0-0-0-0-22222-0000000000",
+	}
+
+	AssertEquals(
+		QuestTogether:GetNameplateTooltipScanGuid("nameplate1", unitFrame),
+		"Creature-0-0-0-0-22222-0000000000"
+	)
+	AssertEquals(
+		QuestTogether.nameplateTooltipGuidByUnitToken["nameplate1"],
+		"Creature-0-0-0-0-22222-0000000000"
+	)
 end)
 
 QuestTogether:RegisterTest("personal bubble anchor persists per character and resets to defaults", function()
