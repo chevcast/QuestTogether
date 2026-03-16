@@ -645,6 +645,38 @@ function QuestTogether:GetAnnouncementWireRoutes()
 	return routes
 end
 
+function QuestTogether:SendWireMessageToAnnouncementRoutes(wireMessage, debugContext)
+	if type(wireMessage) ~= "string" or wireMessage == "" then
+		return false
+	end
+	if not self.API or not self.API.SendAddonMessage then
+		return false
+	end
+
+	local contextLabel = SafeAddonString(self, debugContext or "wire message", "wire message")
+	local routes = self:GetAnnouncementWireRoutes()
+	local sentCount = 0
+
+	for _, route in ipairs(routes) do
+		if route.requiresChannelJoin and not self:EnsureAnnouncementChannelJoined() then
+			self:Debugf("comms", "Skipping %s route=%s because channel join failed", contextLabel, route.distribution or "")
+		else
+			self:Debugf(
+				"comms",
+				"Sending %s distribution=%s target=%s bytes=%d",
+				contextLabel,
+				SafeAddonString(self, route.distribution or "", ""),
+				SafeAddonString(self, route.target or "", ""),
+				#wireMessage
+			)
+			self.API.SendAddonMessage(self.commPrefix, wireMessage, route.distribution, route.target)
+			sentCount = sentCount + 1
+		end
+	end
+
+	return sentCount > 0
+end
+
 function QuestTogether:ShouldSuppressDuplicateCommMessage(sender, message)
 	local nowSeconds = self.API and self.API.GetTime and self.API.GetTime() or 0
 	self.recentCommMessageSignatures = self.recentCommMessageSignatures or {}
@@ -964,8 +996,10 @@ function QuestTogether:SendQuestCompareEntry(requestId, entryData)
 			isPushable = entryData.isPushable and true or false,
 		})
 	)
-	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
-	return true
+	return self:SendWireMessageToAnnouncementRoutes(
+		wireMessage,
+		"quest compare entry requestId=" .. SafeAddonString(self, requestId, "")
+	)
 end
 
 function QuestTogether:SendQuestCompareDone(requestId, count)
@@ -982,8 +1016,10 @@ function QuestTogether:SendQuestCompareDone(requestId, count)
 			count = SafeNumber(self, count) or 0,
 		})
 	)
-	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
-	return true
+	return self:SendWireMessageToAnnouncementRoutes(
+		wireMessage,
+		"quest compare done requestId=" .. SafeAddonString(self, requestId, "")
+	)
 end
 
 function QuestTogether:HandleQuestCompareRequest(requestData)
@@ -995,9 +1031,6 @@ function QuestTogether:HandleQuestCompareRequest(requestData)
 	local playerName = self:GetPlayerFullName() or self:GetPlayerName() or ""
 	local normalizedPlayerName = self:NormalizeMemberName(playerName) or playerName
 	if targetName ~= normalizedPlayerName then
-		return false
-	end
-	if not self:EnsureAnnouncementChannelJoined() then
 		return false
 	end
 
@@ -1086,7 +1119,7 @@ function QuestTogether:RequestQuestCompare(speakerName)
 		return true
 	end
 
-	if not self.isEnabled or not self:EnsureAnnouncementChannelJoined() then
+	if not self.isEnabled then
 		return false
 	end
 
@@ -1112,7 +1145,16 @@ function QuestTogether:RequestQuestCompare(speakerName)
 			targetName = targetName,
 		})
 	)
-	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
+	if
+		not self:SendWireMessageToAnnouncementRoutes(
+			wireMessage,
+			"quest compare request requestId=" .. SafeAddonString(self, requestId, "")
+		)
+	then
+		self.pendingQuestCompareRequests[requestId] = nil
+		return false
+	end
+
 	return true
 end
 
@@ -1217,40 +1259,18 @@ function QuestTogether:SendAnnouncementWireEvent(eventData)
 	end
 
 	local wireMessage = self:SerializeWireMessage(ANNOUNCEMENT_COMMAND, self:EncodeAnnouncementPayload(eventData))
-	local routes = self:GetAnnouncementWireRoutes()
-	local sentCount = 0
-
-	for _, route in ipairs(routes) do
-		if route.requiresChannelJoin and not self:EnsureAnnouncementChannelJoined() then
-			self:Debugf(
-				"comms",
-				"Unable to send eventType=%s because channel join failed",
-				SafeAddonString(self, eventData.eventType, "")
-			)
-		else
-			self:Debugf(
-				"comms",
-				"Sending wire eventType=%s sender=%s distribution=%s target=%s bytes=%d",
-				SafeAddonString(self, eventData.eventType, ""),
-				SafeAddonString(self, eventData.senderName, ""),
-				SafeAddonString(self, route.distribution or "", ""),
-				SafeAddonString(self, route.target or "", ""),
-				#wireMessage
-			)
-			self.API.SendAddonMessage(self.commPrefix, wireMessage, route.distribution, route.target)
-			sentCount = sentCount + 1
-		end
-	end
-
-	return sentCount > 0
+	return self:SendWireMessageToAnnouncementRoutes(
+		wireMessage,
+		"announcement eventType="
+			.. SafeAddonString(self, eventData.eventType, "")
+			.. " sender="
+			.. SafeAddonString(self, eventData.senderName, "")
+	)
 end
 
 function QuestTogether:SendPingRequest()
 	if not self.isEnabled then
 		return false, "QuestTogether is disabled."
-	end
-	if not self:EnsureAnnouncementChannelJoined() then
-		return false, "Unable to join the QuestTogether announcement channel."
 	end
 
 	local requestId = self:BuildChannelRequestId("ping")
@@ -1268,8 +1288,10 @@ function QuestTogether:SendPingRequest()
 		requesterName = requesterName,
 	}
 	local wireMessage = self:SerializeWireMessage(PING_REQUEST_COMMAND, self:EncodePingRequestPayload(requestData))
-	self:Debugf("comms", "Sending ping request id=%s", SafeAddonString(self, requestId, ""))
-	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
+	if not self:SendWireMessageToAnnouncementRoutes(wireMessage, "ping request id=" .. SafeAddonString(self, requestId, "")) then
+		self.pendingPingRequests[requestId] = nil
+		return false, "Unable to send ping request over any QuestTogether comm route."
+	end
 
 	local localResponse = self:BuildPingResponse(requestId)
 	if localResponse and self.HandlePingResponse then
@@ -1292,15 +1314,14 @@ function QuestTogether:SendPingResponse(requestId)
 		SafeAddonString(self, requestId, ""),
 		SafeAddonString(self, responseData.senderName, "")
 	)
-	self.API.SendAddonMessage(self.commPrefix, wireMessage, "CHANNEL", self:GetAnnouncementChannelTarget())
-	return true
+	return self:SendWireMessageToAnnouncementRoutes(
+		wireMessage,
+		"ping response id=" .. SafeAddonString(self, requestId, "")
+	)
 end
 
 function QuestTogether:HandlePingRequest(requestData)
 	if type(requestData) ~= "table" or type(requestData.requestId) ~= "string" or requestData.requestId == "" then
-		return false
-	end
-	if not self:EnsureAnnouncementChannelJoined() then
 		return false
 	end
 	return self:SendPingResponse(requestData.requestId)
@@ -1578,8 +1599,17 @@ function QuestTogether:OnCommReceived(prefix, message, channel, sender, localID,
 	end
 
 	local command, payload = self:DeserializeWireMessage(safeMessage)
-	if command == ANNOUNCEMENT_COMMAND and self:ShouldSuppressDuplicateCommMessage(sender, safeMessage) then
-		self:Debugf("comms", "Suppressed duplicate announcement sender=%s", SafeDebugString(sender))
+	if not command then
+		self:Debug("Failed to deserialize incoming comm payload", "comms")
+		return
+	end
+	if self:ShouldSuppressDuplicateCommMessage(sender, safeMessage) then
+		self:Debugf(
+			"comms",
+			"Suppressed duplicate comm command=%s sender=%s",
+			SafeAddonString(self, command, ""),
+			SafeDebugString(sender)
+		)
 		return
 	end
 

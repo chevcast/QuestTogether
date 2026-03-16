@@ -1418,6 +1418,15 @@ QuestTogether:RegisterTest("request quest compare sends compare request for remo
 		},
 	}
 	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstanceGroup = function()
+			return false
+		end,
+		IsInRaid = function()
+			return false
+		end,
+		IsInParty = function()
+			return false
+		end,
 		GetChannelName = function(channelName)
 			AssertEquals(channelName, QuestTogether.announcementChannelName)
 			return 9
@@ -2415,6 +2424,379 @@ QuestTogether:RegisterTest("announcement wire uses both party and channel routes
 	AssertTrue(string.find(sent[2].message, "^ANN|", 1) ~= nil)
 end)
 
+QuestTogether:RegisterTest("ping request uses both party and channel routes when grouped", function()
+	local sent = {}
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstanceGroup = function()
+			return false
+		end,
+		IsInRaid = function()
+			return false
+		end,
+		IsInParty = function()
+			return true
+		end,
+		GetChannelName = function(channelName)
+			AssertEquals(channelName, QuestTogether.announcementChannelName)
+			return 12
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+			return 0
+		end,
+		Delay = function() end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "MyPlayer", "Realm"
+		end,
+		UnitName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "MyPlayer"
+		end,
+		UnitClass = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Mage", "MAGE"
+		end,
+		UnitRace = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Human"
+		end,
+		UnitLevel = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return 70
+		end,
+		UnitGUID = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Player-1-ABC"
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetPlayerAnnouncementLocationInfo", function()
+		return {}
+	end, function()
+		WithPatchedMethod(QuestTogether, "HandlePingResponse", function()
+			return true
+		end, function()
+			local success, requestId = QuestTogether:SendPingRequest()
+			AssertTrue(success)
+			AssertTrue(type(requestId) == "string" and requestId ~= "")
+		end)
+	end)
+
+	AssertEquals(#sent, 2)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "PARTY")
+	AssertEquals(sent[1].target, nil)
+	AssertTrue(string.find(sent[1].message, "^PING|", 1) ~= nil)
+	AssertEquals(sent[2].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[2].channel, "CHANNEL")
+	AssertEquals(sent[2].target, 12)
+	AssertTrue(string.find(sent[2].message, "^PING|", 1) ~= nil)
+end)
+
+QuestTogether:RegisterTest("ping request still sends to group when channel join is unavailable", function()
+	local sent = {}
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstanceGroup = function()
+			return false
+		end,
+		IsInRaid = function()
+			return false
+		end,
+		IsInParty = function()
+			return true
+		end,
+		GetChannelName = function()
+			return nil
+		end,
+		JoinPermanentChannel = function() end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+			return 0
+		end,
+		Delay = function() end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "MyPlayer", "Realm"
+		end,
+		UnitName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "MyPlayer"
+		end,
+		UnitClass = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Mage", "MAGE"
+		end,
+		UnitRace = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Human"
+		end,
+		UnitLevel = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return 70
+		end,
+		UnitGUID = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "Player-1-ABC"
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetPlayerAnnouncementLocationInfo", function()
+		return {}
+	end, function()
+		WithPatchedMethod(QuestTogether, "HandlePingResponse", function()
+			return true
+		end, function()
+			local success, requestId = QuestTogether:SendPingRequest()
+			AssertTrue(success)
+			AssertTrue(type(requestId) == "string" and requestId ~= "")
+		end)
+	end)
+
+	AssertEquals(#sent, 1)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "PARTY")
+	AssertEquals(sent[1].target, nil)
+	AssertTrue(string.find(sent[1].message, "^PING|", 1) ~= nil)
+end)
+
+QuestTogether:RegisterTest("ping response uses both party and channel routes when grouped", function()
+	local sent = {}
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstanceGroup = function()
+			return false
+		end,
+		IsInRaid = function()
+			return false
+		end,
+		IsInParty = function()
+			return true
+		end,
+		GetChannelName = function(channelName)
+			AssertEquals(channelName, QuestTogether.announcementChannelName)
+			return 14
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "BuildPingResponse", function(_, requestId)
+		return {
+			requestId = requestId,
+			senderName = "LocalPlayer-Realm",
+			realmName = "Realm",
+			raceName = "Human",
+			classFile = "MAGE",
+			className = "Mage",
+			level = "70",
+			zoneName = "Elwynn Forest",
+			coordX = "50.0",
+			coordY = "50.0",
+			warMode = "0",
+			mapID = "37",
+			addonVersion = "1.0.0",
+		}
+	end, function()
+		AssertTrue(QuestTogether:SendPingResponse("ping-2"))
+	end)
+
+	AssertEquals(#sent, 2)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "PARTY")
+	AssertEquals(sent[1].target, nil)
+	AssertTrue(string.find(sent[1].message, "^PONG|", 1) ~= nil)
+	AssertEquals(sent[2].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[2].channel, "CHANNEL")
+	AssertEquals(sent[2].target, 14)
+	AssertTrue(string.find(sent[2].message, "^PONG|", 1) ~= nil)
+end)
+
+QuestTogether:RegisterTest("quest compare request uses both party and channel routes when grouped", function()
+	local sent = {}
+	QuestTogether.isEnabled = true
+	QuestTogether.partyMembers = {
+		["Remote-Realm"] = {
+			fullName = "Remote-Realm",
+			classFile = "DRUID",
+		},
+	}
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstanceGroup = function()
+			return false
+		end,
+		IsInRaid = function()
+			return false
+		end,
+		IsInParty = function()
+			return true
+		end,
+		GetChannelName = function(channelName)
+			AssertEquals(channelName, QuestTogether.announcementChannelName)
+			return 13
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+		end,
+		Delay = function() end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "LocalPlayer", "Realm"
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "PrintQuestCompareStart", function() end, function()
+		AssertTrue(QuestTogether:RequestQuestCompare("Remote-Realm"))
+	end)
+
+	AssertEquals(#sent, 2)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "PARTY")
+	AssertEquals(sent[1].target, nil)
+	AssertTrue(string.find(sent[1].message, "^QCMP|", 1) ~= nil)
+	AssertEquals(sent[2].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[2].channel, "CHANNEL")
+	AssertEquals(sent[2].target, 13)
+	AssertTrue(string.find(sent[2].message, "^QCMP|", 1) ~= nil)
+end)
+
+QuestTogether:RegisterTest("quest compare request still sends to group when channel join is unavailable", function()
+	local sent = {}
+	QuestTogether.isEnabled = true
+	QuestTogether.partyMembers = {
+		["Remote-Realm"] = {
+			fullName = "Remote-Realm",
+			classFile = "DRUID",
+		},
+	}
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstanceGroup = function()
+			return false
+		end,
+		IsInRaid = function()
+			return false
+		end,
+		IsInParty = function()
+			return true
+		end,
+		GetChannelName = function()
+			return nil
+		end,
+		JoinPermanentChannel = function() end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+		end,
+		Delay = function() end,
+		UnitFullName = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return "LocalPlayer", "Realm"
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "PrintQuestCompareStart", function() end, function()
+		AssertTrue(QuestTogether:RequestQuestCompare("Remote-Realm"))
+	end)
+
+	AssertEquals(#sent, 1)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "PARTY")
+	AssertEquals(sent[1].target, nil)
+	AssertTrue(string.find(sent[1].message, "^QCMP|", 1) ~= nil)
+end)
+
+QuestTogether:RegisterTest("quest compare entry and done use both party and channel routes when grouped", function()
+	local sent = {}
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstanceGroup = function()
+			return false
+		end,
+		IsInRaid = function()
+			return false
+		end,
+		IsInParty = function()
+			return true
+		end,
+		GetChannelName = function(channelName)
+			AssertEquals(channelName, QuestTogether.announcementChannelName)
+			return 15
+		end,
+		SendAddonMessage = function(prefix, message, channel, target)
+			sent[#sent + 1] = {
+				prefix = prefix,
+				message = message,
+				channel = channel,
+				target = target,
+			}
+			return 0
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "GetPlayerFullName", function()
+		return "LocalPlayer-Realm"
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetPlayerName", function()
+			return "LocalPlayer"
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetPlayerClassFile", function()
+				return "MAGE"
+			end, function()
+				AssertTrue(QuestTogether:SendQuestCompareEntry("qcmp-1", {
+					questId = "12345",
+					questTitle = "A Test Quest",
+					isComplete = false,
+					isPushable = true,
+				}))
+				AssertTrue(QuestTogether:SendQuestCompareDone("qcmp-1", 1))
+			end)
+		end)
+	end)
+
+	AssertEquals(#sent, 4)
+	AssertEquals(sent[1].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[1].channel, "PARTY")
+	AssertTrue(string.find(sent[1].message, "^QCQE|", 1) ~= nil)
+	AssertEquals(sent[2].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[2].channel, "CHANNEL")
+	AssertEquals(sent[2].target, 15)
+	AssertTrue(string.find(sent[2].message, "^QCQE|", 1) ~= nil)
+	AssertEquals(sent[3].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[3].channel, "PARTY")
+	AssertTrue(string.find(sent[3].message, "^QCDN|", 1) ~= nil)
+	AssertEquals(sent[4].prefix, QuestTogether.commPrefix)
+	AssertEquals(sent[4].channel, "CHANNEL")
+	AssertEquals(sent[4].target, 15)
+	AssertTrue(string.find(sent[4].message, "^QCDN|", 1) ~= nil)
+end)
+
 QuestTogether:RegisterTest("announcement comm filter accepts grouped distributions", function()
 	AssertTrue(QuestTogether:IsAnnouncementChannelEvent("PARTY"))
 	AssertTrue(QuestTogether:IsAnnouncementChannelEvent("RAID"))
@@ -2494,6 +2876,114 @@ QuestTogether:RegisterTest("duplicate announcements from party and channel are p
 		return false
 	end, function()
 		WithPatchedMethod(QuestTogether, "HandleAnnouncementEvent", function()
+			handledCount = handledCount + 1
+			return true
+		end, function()
+			QuestTogether:OnCommReceived(
+				QuestTogether.commPrefix,
+				wireMessage,
+				"PARTY",
+				"Friend-Realm",
+				nil,
+				nil
+			)
+			QuestTogether:OnCommReceived(
+				QuestTogether.commPrefix,
+				wireMessage,
+				"CHANNEL",
+				"Friend-Realm",
+				6,
+				QuestTogether.announcementChannelName
+			)
+		end)
+	end)
+
+	AssertEquals(handledCount, 1)
+end)
+
+QuestTogether:RegisterTest("duplicate ping responses from party and channel are processed once", function()
+	local handledCount = 0
+	QuestTogether.isEnabled = true
+	QuestTogether.announcementChannelLocalID = 6
+	QuestTogether.pendingPingRequests = {
+		["ping-1"] = true,
+	}
+
+	local payload = QuestTogether:EncodePingResponsePayload({
+		version = 2,
+		requestId = "ping-1",
+		senderName = "Friend-Realm",
+		realmName = "Realm",
+		raceName = "Night Elf",
+		classFile = "DRUID",
+		className = "Druid",
+		level = "70",
+		zoneName = "Elwynn Forest",
+		coordX = "50.0",
+		coordY = "50.0",
+		warMode = "0",
+		mapID = "37",
+		addonVersion = "1.0.0",
+	})
+	local wireMessage = QuestTogether:SerializeWireMessage("PONG", payload)
+
+	WithPatchedMethod(QuestTogether, "IsSelfSender", function()
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "HandlePingResponse", function()
+			handledCount = handledCount + 1
+			return true
+		end, function()
+			QuestTogether:OnCommReceived(
+				QuestTogether.commPrefix,
+				wireMessage,
+				"PARTY",
+				"Friend-Realm",
+				nil,
+				nil
+			)
+			QuestTogether:OnCommReceived(
+				QuestTogether.commPrefix,
+				wireMessage,
+				"CHANNEL",
+				"Friend-Realm",
+				6,
+				QuestTogether.announcementChannelName
+			)
+		end)
+	end)
+
+	AssertEquals(handledCount, 1)
+end)
+
+QuestTogether:RegisterTest("duplicate quest compare entries from party and channel are processed once", function()
+	local handledCount = 0
+	QuestTogether.isEnabled = true
+	QuestTogether.announcementChannelLocalID = 6
+	QuestTogether.pendingQuestCompareRequests = {
+		["qcmp-dup"] = {
+			targetName = "Friend-Realm",
+			classFile = "WARRIOR",
+			count = 0,
+		},
+	}
+
+	local payload = QuestTogether:EncodeQuestCompareEntryPayload({
+		version = 1,
+		requestId = "qcmp-dup",
+		senderName = "Friend-Realm",
+		classFile = "WARRIOR",
+		questId = "12345",
+		questTitle = "Test Quest",
+		isComplete = false,
+		isPushable = false,
+	})
+	local wireMessage = QuestTogether:SerializeWireMessage("QCQE", payload)
+
+	WithPatchedMethod(QuestTogether, "IsSelfSender", function()
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "HandleQuestCompareEntry", function()
 			handledCount = handledCount + 1
 			return true
 		end, function()
