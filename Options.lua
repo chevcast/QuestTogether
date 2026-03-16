@@ -5,6 +5,11 @@ QuestTogether Options Panel (Esc > Options > AddOns)
 local QuestTogether = _G.QuestTogether
 
 QuestTogether.optionControls = QuestTogether.optionControls or {}
+QuestTogether.announcementControls = QuestTogether.announcementControls or {}
+QuestTogether.whereToAnnounceControls = QuestTogether.whereToAnnounceControls or {}
+QuestTogether.questPlateControls = QuestTogether.questPlateControls or {}
+QuestTogether.miscControls = QuestTogether.miscControls or {}
+QuestTogether.homeControls = QuestTogether.homeControls or {}
 QuestTogether.profileControls = QuestTogether.profileControls or {}
 QuestTogether.profileUIState = QuestTogether.profileUIState or {}
 
@@ -12,11 +17,81 @@ local function SafeText(value, fallback)
 	return QuestTogether:SafeToString(value, fallback or "")
 end
 
-local function CreateSectionLabel(parent, text, x, y)
-	local label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	label:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
-	label:SetText(text)
-	return label
+local function IsFrameMutable(frame)
+	if not frame then
+		return false
+	end
+
+	-- Avoid touching forbidden Blizzard frames to reduce taint propagation.
+	if frame.IsForbidden and frame:IsForbidden() then
+		return false
+	end
+
+	return true
+end
+
+local QUEST_PLATE_PREVIEW_SCALE = 1.35
+local NAMEPLATE_STYLE_MODERN = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Modern or 1
+local NAMEPLATE_STYLE_BLOCK = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Block or 3
+local NAMEPLATE_STYLE_HEALTH_FOCUS = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.HealthFocus or 4
+local NAMEPLATE_STYLE_LEGACY = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Legacy or 6
+local NAMEPLATE_SIZE_MEDIUM = Enum and Enum.NamePlateSize and Enum.NamePlateSize.Medium or 2
+local NAMEPLATE_INFO_PERCENT = Enum and Enum.NamePlateInfoDisplay and Enum.NamePlateInfoDisplay.CurrentHealthPercent or 1
+local NAMEPLATE_INFO_VALUE = Enum and Enum.NamePlateInfoDisplay and Enum.NamePlateInfoDisplay.CurrentHealthValue or 2
+
+local NAMEPLATE_PREVIEW_SCALES = {
+	[1] = { horizontal = 0.75, vertical = 0.8 },
+	[2] = { horizontal = 1.0, vertical = 1.0 },
+	[3] = { horizontal = 1.25, vertical = 1.25 },
+	[4] = { horizontal = 1.4, vertical = 1.4 },
+	[5] = { horizontal = 1.6, vertical = 1.6 },
+}
+
+local function HasBit(mask, bitValue)
+	if type(mask) ~= "number" or type(bitValue) ~= "number" or bitValue <= 0 then
+		return false
+	end
+
+	if bit and bit.band then
+		return bit.band(mask, bitValue) ~= 0
+	end
+	if bit32 and bit32.band then
+		return bit32.band(mask, bitValue) ~= 0
+	end
+
+	local remainder = mask % (bitValue * 2)
+	return remainder >= bitValue
+end
+
+local function GetNumericCVarValue(cvarName, fallbackValue)
+	if not (C_CVar and C_CVar.GetCVar and type(cvarName) == "string" and cvarName ~= "") then
+		return fallbackValue
+	end
+
+	local rawValue = C_CVar.GetCVar(cvarName)
+	local numericValue = QuestTogether:SafeToNumber(rawValue)
+	if numericValue == nil then
+		return fallbackValue
+	end
+
+	return numericValue
+end
+
+local function AnchorPreviewFillTexture(texture, healthBar)
+	if not (texture and healthBar and texture.ClearAllPoints and texture.SetPoint) then
+		return
+	end
+
+	local fillTexture = healthBar.GetStatusBarTexture and healthBar:GetStatusBarTexture() or nil
+	if not fillTexture then
+		return
+	end
+
+	texture:ClearAllPoints()
+	texture:SetPoint("TOPLEFT", fillTexture, "TOPLEFT", 0, 0)
+	texture:SetPoint("BOTTOMLEFT", fillTexture, "BOTTOMLEFT", 0, 0)
+	texture:SetPoint("TOPRIGHT", fillTexture, "TOPRIGHT", 0, 0)
+	texture:SetPoint("BOTTOMRIGHT", fillTexture, "BOTTOMRIGHT", 0, 0)
 end
 
 local function ApplyAnnouncementGroupIcon(texture, iconType)
@@ -349,6 +424,10 @@ local CHECKBOX_OPTION_KEYS = {
 }
 
 local function RefreshCheckboxOptions(controls)
+	if type(controls) ~= "table" then
+		return
+	end
+
 	for _, optionKey in ipairs(CHECKBOX_OPTION_KEYS) do
 		local control = controls[optionKey]
 		if control then
@@ -362,55 +441,371 @@ local function RefreshDropdownControl(dropdown, labelText)
 	UIDropDownMenu_SetText(dropdown, labelText)
 end
 
+local function RefreshQuestPlatesPreview(controls)
+	if type(controls) ~= "table" then
+		return
+	end
+
+	local previewFrame = controls.previewFrame
+	local previewUnitFrame = controls.previewUnitFrame
+	if not IsFrameMutable(previewUnitFrame) or not previewUnitFrame.healthBar then
+		return
+	end
+
+	if previewUnitFrame.SetScale then
+		previewUnitFrame:SetScale(QUEST_PLATE_PREVIEW_SCALE)
+	end
+
+	local nameplateStyle = GetNumericCVarValue("nameplateStyle", NAMEPLATE_STYLE_MODERN)
+	local nameplateSize = GetNumericCVarValue("nameplateSize", NAMEPLATE_SIZE_MEDIUM)
+	local infoDisplayMask = GetNumericCVarValue("nameplateInfoDisplay", 0)
+	local scaleData = NAMEPLATE_PREVIEW_SCALES[nameplateSize] or NAMEPLATE_PREVIEW_SCALES[NAMEPLATE_SIZE_MEDIUM]
+	local horizontalScale = scaleData.horizontal or 1
+	local verticalScale = scaleData.vertical or 1
+	local largeHealthBar = nameplateStyle == NAMEPLATE_STYLE_MODERN
+		or nameplateStyle == NAMEPLATE_STYLE_BLOCK
+		or nameplateStyle == NAMEPLATE_STYLE_HEALTH_FOCUS
+	local nameInsideHealthBar = nameplateStyle == NAMEPLATE_STYLE_MODERN or nameplateStyle == NAMEPLATE_STYLE_BLOCK
+	local barWidth = math.max(120, math.floor((230 * horizontalScale) + 0.5))
+	local barHeight = math.max(8, math.floor(((largeHealthBar and 20 or 10) * verticalScale) + 0.5))
+	local nameFontSize = math.max(10, math.floor((12 * verticalScale) + 0.5))
+
+	local healthContainer = previewUnitFrame.HealthBarsContainer
+	if healthContainer and healthContainer.SetSize then
+		healthContainer:SetSize(barWidth, barHeight)
+		healthContainer:ClearAllPoints()
+		healthContainer:SetPoint("CENTER", previewUnitFrame, "CENTER", 0, nameInsideHealthBar and 0 or -6)
+	end
+
+	if previewUnitFrame.SetSize then
+		local frameWidth = barWidth + 140
+		local frameHeight = math.max(72, barHeight + (nameInsideHealthBar and 34 or 50))
+		previewUnitFrame:SetSize(frameWidth, frameHeight)
+	end
+
+	local nameLabel = previewUnitFrame.name
+	local healthText = previewUnitFrame.questPreviewHealthText
+	if nameLabel then
+		local fontPath, _, fontFlags = nameLabel:GetFont()
+		if fontPath and nameLabel.SetFont then
+			nameLabel:SetFont(fontPath, nameFontSize, fontFlags)
+		end
+		nameLabel:ClearAllPoints()
+		if nameLabel.SetDrawLayer then
+			nameLabel:SetDrawLayer("OVERLAY", 7)
+		end
+		if nameLabel.SetJustifyH then
+			nameLabel:SetJustifyH("LEFT")
+		end
+		if nameLabel.SetWidth then
+			nameLabel:SetWidth(math.max(40, barWidth - 72))
+		end
+		if nameInsideHealthBar and healthContainer then
+			nameLabel:SetPoint("LEFT", healthContainer, "LEFT", 6, 0)
+		elseif healthContainer then
+			nameLabel:SetPoint("BOTTOMLEFT", healthContainer, "TOPLEFT", 6, 2)
+		else
+			nameLabel:SetPoint("TOP", previewUnitFrame, "TOP", 0, 0)
+		end
+		if nameplateStyle == NAMEPLATE_STYLE_LEGACY and nameLabel.SetTextColor then
+			nameLabel:SetTextColor(1, 0, 0, 1)
+		elseif nameLabel.SetTextColor then
+			nameLabel:SetTextColor(1, 1, 1, 1)
+		end
+	end
+
+	local healthBar = previewUnitFrame.healthBar
+	local baseFill = previewUnitFrame.questPreviewBaseFillTexture
+	local tintOverlay = previewUnitFrame.questPreviewTintTexture
+	local tintHighlight = previewUnitFrame.questPreviewTintHighlight
+	if baseFill then
+		AnchorPreviewFillTexture(baseFill, healthBar)
+		baseFill:Show()
+	end
+	if tintOverlay then
+		AnchorPreviewFillTexture(tintOverlay, healthBar)
+	end
+	if tintHighlight then
+		AnchorPreviewFillTexture(tintHighlight, healthBar)
+	end
+
+	local tintEnabled = QuestTogether:GetOption("nameplateQuestHealthColorEnabled") == true
+	local enemyBarColor = { r = 0.82, g = 0.14, b = 0.14 }
+	local previewBarColor = enemyBarColor
+	if tintEnabled then
+		previewBarColor = GetColorOption("nameplateQuestHealthColor", QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR)
+	end
+	if baseFill and baseFill.SetVertexColor then
+		baseFill:SetVertexColor(previewBarColor.r, previewBarColor.g, previewBarColor.b, 1)
+	end
+
+	-- For preview accuracy keep the fill opaque and avoid additive tints.
+	if tintOverlay and tintOverlay.Hide then
+		tintOverlay:Hide()
+	end
+	if tintHighlight and tintHighlight.Hide then
+		tintHighlight:Hide()
+	end
+
+	if healthText then
+		if healthText.SetDrawLayer then
+			healthText:SetDrawLayer("OVERLAY", 7)
+		end
+		if healthText.SetJustifyH then
+			healthText:SetJustifyH("RIGHT")
+		end
+		healthText:ClearAllPoints()
+		if nameInsideHealthBar and healthContainer then
+			healthText:SetPoint("RIGHT", healthContainer, "RIGHT", -6, 0)
+		elseif healthContainer then
+			healthText:SetPoint("BOTTOMRIGHT", healthContainer, "TOPRIGHT", -6, 2)
+		end
+
+		local showPercent = HasBit(infoDisplayMask, NAMEPLATE_INFO_PERCENT)
+		local showValue = HasBit(infoDisplayMask, NAMEPLATE_INFO_VALUE)
+		if showPercent or showValue then
+			if showPercent and showValue then
+				healthText:SetText("241 K  68%")
+			elseif showValue then
+				healthText:SetText("241 K")
+			else
+				healthText:SetText("68%")
+			end
+			healthText:Show()
+		else
+			healthText:Hide()
+		end
+	end
+
+	local previewIconFrame = controls.previewIconFrame
+	local previewIcon = controls.previewIconTexture
+	if not previewIconFrame or controls.previewIconOwner ~= previewUnitFrame then
+		local iconParent = previewFrame or previewUnitFrame
+		previewIconFrame = CreateFrame("Frame", nil, iconParent)
+		previewIconFrame:SetFrameStrata("HIGH")
+		local parentFrameLevel = 0
+		if healthContainer and healthContainer.GetFrameLevel and QuestTogether.SafeToNumber then
+			parentFrameLevel = QuestTogether:SafeToNumber(healthContainer:GetFrameLevel()) or 0
+		elseif iconParent and iconParent.GetFrameLevel and QuestTogether.SafeToNumber then
+			parentFrameLevel = QuestTogether:SafeToNumber(iconParent:GetFrameLevel()) or 0
+		end
+		previewIconFrame:SetFrameLevel(parentFrameLevel + 30)
+
+		previewIcon = previewIconFrame:CreateTexture(nil, "OVERLAY")
+		previewIcon:SetAllPoints()
+		previewIconFrame.Icon = previewIcon
+
+		controls.previewIconFrame = previewIconFrame
+		controls.previewIconTexture = previewIcon
+		controls.previewIconOwner = previewUnitFrame
+	end
+
+	local showIcon = QuestTogether:GetOption("nameplateQuestIconEnabled") == true
+	if showIcon then
+		ApplyAnnouncementGroupIcon(previewIcon, "nameplatePreview")
+		if QuestTogether.ApplyNameplateQuestIconStyle then
+			QuestTogether:ApplyNameplateQuestIconStyle(previewIconFrame, previewUnitFrame)
+		else
+			previewIconFrame:ClearAllPoints()
+			previewIconFrame:SetPoint("BOTTOM", previewUnitFrame.HealthBarsContainer, "TOP", 0, 11)
+		end
+		previewIconFrame:Show()
+	else
+		previewIconFrame:Hide()
+	end
+
+	if IsFrameMutable(previewFrame) and previewFrame.Preview then
+		previewFrame.Preview:SetText("Previewing - Quest Mob")
+	end
+end
+
 function QuestTogether:RefreshOptionsWindow()
+	self:Debug("Refreshing options window", "options")
+
+	self:RefreshHomeWindow()
+	self:RefreshAnnouncementsWindow()
+	self:RefreshWhereToAnnounceWindow()
+	self:RefreshQuestPlatesWindow()
+	self:RefreshMiscWindow()
+end
+
+function QuestTogether:RefreshHomeWindow()
 	if not self.optionsFrame then
 		return
 	end
-	self:Debug("Refreshing options window", "options")
 
-	local controls = self.optionControls
+	local controls = self.homeControls
+	if type(controls) ~= "table" then
+		return
+	end
+
+	local activeProfile = SafeText(self:GetCurrentProfileKey() or self.activeProfileKey or "Unknown", "Unknown")
+	local showProgressForLabel = self:GetShowProgressForLabel(self:GetOption("showProgressFor"))
+	local chatLogsEnabled = self:GetOption("showChatLogs") and "On" or "Off"
+	local chatLogDestination = self:GetChatLogDestinationLabel(self:GetOption("chatLogDestination"))
+	local chatBubblesEnabled = self:GetOption("showChatBubbles") and "On" or "Off"
+	local questIconEnabled = self:GetOption("nameplateQuestIconEnabled") and "On" or "Off"
+	local questIconStyle = self:GetNameplateQuestIconStyleLabel(self:GetNameplateQuestIconStyle())
+	local questTintEnabled = self:GetOption("nameplateQuestHealthColorEnabled") and "On" or "Off"
+
+	if controls.statusText then
+		controls.statusText:SetText(
+			string.format(
+				"Active profile: %s\nShow progress for: %s\nChat logs: %s (%s)\nChat bubbles: %s\nQuest icon: %s (%s)\nQuest health tint: %s",
+				activeProfile,
+				SafeText(showProgressForLabel, "Unknown"),
+				chatLogsEnabled,
+				SafeText(chatLogDestination, "Unknown"),
+				chatBubblesEnabled,
+				questIconEnabled,
+				SafeText(questIconStyle, "Unknown"),
+				questTintEnabled
+			)
+		)
+	end
+
+	if controls.openHudEditMode then
+		local bubblesEnabled = self:GetOption("showChatBubbles") == true
+		controls.openHudEditMode:SetEnabled(bubblesEnabled)
+		controls.openHudEditMode:SetAlpha(bubblesEnabled and 1 or 0.5)
+	end
+end
+
+function QuestTogether:RefreshWhereToAnnounceWindow()
+	if not self.whereToAnnounceFrame then
+		return
+	end
+
+	local controls = self.whereToAnnounceControls
 	RefreshCheckboxOptions(controls)
 
-	RefreshDropdownControl(
-		controls.showProgressForDropdown,
-		self:GetShowProgressForLabel(self:GetOption("showProgressFor"))
-	)
+	if controls.showProgressForDropdown then
+		RefreshDropdownControl(
+			controls.showProgressForDropdown,
+			self:GetShowProgressForLabel(self:GetOption("showProgressFor"))
+		)
+	end
 
-	RefreshDropdownControl(
-		controls.chatLogDestinationDropdown,
-		self:GetChatLogDestinationLabel(self:GetOption("chatLogDestination"))
-	)
-
-	RefreshDropdownControl(
-		controls.nameplateQuestIconStyleDropdown,
-		self:GetNameplateQuestIconStyleLabel(self:GetNameplateQuestIconStyle())
-	)
-
-	local color = GetColorOption("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR)
-	controls.nameplateQuestHealthColor.ColorTexture:SetColorTexture(color.r, color.g, color.b, 1)
-
-	if IsColorOptionAtDefault("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR) then
-		controls.resetNameplateQuestHealthColor:Hide()
-	else
-		controls.resetNameplateQuestHealthColor:Show()
+	if controls.chatLogDestinationDropdown then
+		RefreshDropdownControl(
+			controls.chatLogDestinationDropdown,
+			self:GetChatLogDestinationLabel(self:GetOption("chatLogDestination"))
+		)
 	end
 
 	local showBubbleControls = self:GetOption("showChatBubbles")
-	controls.hideMyOwnChatBubbles:SetShown(showBubbleControls)
-	controls.hideMyOwnChatBubbles.Label:SetShown(showBubbleControls)
-	controls.personalBubbleEditHint:SetShown(showBubbleControls)
-	controls.openHudEditMode:SetShown(showBubbleControls)
-
-	local showChatLogControls = self:GetOption("showChatLogs")
-	if UIDropDownMenu_EnableDropDown and UIDropDownMenu_DisableDropDown then
-		if showChatLogControls then
-			UIDropDownMenu_EnableDropDown(controls.chatLogDestinationDropdown)
-		else
-			UIDropDownMenu_DisableDropDown(controls.chatLogDestinationDropdown)
+	if controls.hideMyOwnChatBubbles then
+		controls.hideMyOwnChatBubbles:SetShown(showBubbleControls)
+		if controls.hideMyOwnChatBubbles.Label then
+			controls.hideMyOwnChatBubbles.Label:SetShown(showBubbleControls)
 		end
 	end
-	controls.chatLogDestinationDropdown:SetAlpha(showChatLogControls and 1 or 0.5)
-	controls.chatLogDestinationDropdown.title:SetAlpha(showChatLogControls and 1 or 0.5)
+	if controls.personalBubbleEditHint then
+		controls.personalBubbleEditHint:SetShown(showBubbleControls)
+	end
+	if controls.openHudEditMode then
+		controls.openHudEditMode:SetShown(showBubbleControls)
+	end
+
+	local showChatLogControls = self:GetOption("showChatLogs")
+	if controls.chatLogDestinationDropdown then
+		if UIDropDownMenu_EnableDropDown and UIDropDownMenu_DisableDropDown then
+			if showChatLogControls then
+				UIDropDownMenu_EnableDropDown(controls.chatLogDestinationDropdown)
+			else
+				UIDropDownMenu_DisableDropDown(controls.chatLogDestinationDropdown)
+			end
+		end
+		controls.chatLogDestinationDropdown:SetAlpha(showChatLogControls and 1 or 0.5)
+		if controls.chatLogDestinationDropdown.title then
+			controls.chatLogDestinationDropdown.title:SetAlpha(showChatLogControls and 1 or 0.5)
+		end
+	end
+end
+
+function QuestTogether:RefreshQuestPlatesWindow()
+	if not self.questPlatesFrame then
+		return
+	end
+
+	local controls = self.questPlateControls
+	RefreshCheckboxOptions(controls)
+
+	if controls.nameplateQuestIconStyleDropdown then
+		RefreshDropdownControl(
+			controls.nameplateQuestIconStyleDropdown,
+			self:GetNameplateQuestIconStyleLabel(self:GetNameplateQuestIconStyle())
+		)
+	end
+
+	if not controls.nameplateQuestHealthColor then
+		return
+	end
+	local color = GetColorOption("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR)
+	controls.nameplateQuestHealthColor.ColorTexture:SetColorTexture(color.r, color.g, color.b, 1)
+
+	if controls.resetNameplateQuestHealthColor then
+		if IsColorOptionAtDefault("nameplateQuestHealthColor", self.NAMEPLATE_QUEST_HEALTH_COLOR) then
+			controls.resetNameplateQuestHealthColor:Hide()
+		else
+			controls.resetNameplateQuestHealthColor:Show()
+		end
+	end
+
+	RefreshQuestPlatesPreview(controls)
+end
+
+function QuestTogether:RefreshMiscWindow()
+	if not self.miscFrame then
+		return
+	end
+
+	RefreshCheckboxOptions(self.miscControls)
+end
+
+function QuestTogether:RefreshAnnouncementsWindow()
+	if not self.announcementsFrame then
+		return
+	end
+
+	RefreshCheckboxOptions(self.announcementControls)
+end
+
+local function RegisterSubcategory(parentCategory, frame, categoryName)
+	if not (Settings and Settings.RegisterCanvasLayoutSubcategory and parentCategory and frame) then
+		return nil
+	end
+
+	local subcategory = nil
+	local ok, categoryOrError =
+		pcall(Settings.RegisterCanvasLayoutSubcategory, parentCategory, frame, categoryName, categoryName)
+	if ok then
+		subcategory = categoryOrError
+	end
+	if not subcategory then
+		-- Older signatures omit the extra name parameter.
+		ok, categoryOrError = pcall(Settings.RegisterCanvasLayoutSubcategory, parentCategory, frame, categoryName)
+		if ok then
+			subcategory = categoryOrError
+		end
+	end
+	if not subcategory then
+		return nil
+	end
+
+	if Settings.RegisterAddOnCategory then
+		Settings.RegisterAddOnCategory(subcategory)
+	end
+	return subcategory
+end
+
+local function OpenSettingsCategory(category)
+	if not (Settings and Settings.OpenToCategory and category and category.GetID) then
+		return false
+	end
+
+	Settings.OpenToCategory(category:GetID())
+	return true
 end
 
 local function BuildProfileKeyList(excludedKey)
@@ -551,7 +946,11 @@ function QuestTogether:InitializeProfilesWindow(parentCategory)
 
 	local copyButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	copyButton:SetSize(90, 22)
-	copyButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 280, -186)
+	if copyFromDropdown and copyFromDropdown.Button then
+		copyButton:SetPoint("LEFT", copyFromDropdown.Button, "RIGHT", 16, 0)
+	else
+		copyButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 280, -185)
+	end
 	copyButton:SetText("Copy")
 	copyButton:SetScript("OnClick", function()
 		local sourceProfileKey = QuestTogether.profileUIState.copyFromProfileKey
@@ -643,7 +1042,11 @@ function QuestTogether:InitializeProfilesWindow(parentCategory)
 
 	local deleteButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	deleteButton:SetSize(90, 22)
-	deleteButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 280, -396)
+	if deleteProfileDropdown and deleteProfileDropdown.Button then
+		deleteButton:SetPoint("LEFT", deleteProfileDropdown.Button, "RIGHT", 16, 0)
+	else
+		deleteButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 280, -395)
+	end
 	deleteButton:SetText("Delete")
 	deleteButton:SetScript("OnClick", function()
 		local deleteProfileKey = QuestTogether.profileUIState.deleteProfileKey
@@ -681,30 +1084,434 @@ function QuestTogether:InitializeProfilesWindow(parentCategory)
 		QuestTogether:RefreshProfilesWindow()
 	end)
 
-	local profileCategory = nil
-	if Settings and Settings.RegisterCanvasLayoutSubcategory and parentCategory then
-		-- API signatures differ across client versions; probe both safely.
-		local ok, categoryOrError = pcall(Settings.RegisterCanvasLayoutSubcategory, parentCategory, frame, frame.name, frame.name)
-		if ok then
-			profileCategory = categoryOrError
-		end
-		if not profileCategory then
-			-- Older signatures omit the extra name parameter.
-			ok, categoryOrError = pcall(Settings.RegisterCanvasLayoutSubcategory, parentCategory, frame, frame.name)
-			if ok then
-				profileCategory = categoryOrError
-			end
-		end
-	end
+	local profileCategory = RegisterSubcategory(parentCategory, frame, frame.name)
 	if not profileCategory and Settings and Settings.RegisterCanvasLayoutCategory then
 		profileCategory = Settings.RegisterCanvasLayoutCategory(frame, "QuestTogether Profiles", "QuestTogether Profiles")
-	end
-	if profileCategory and Settings and Settings.RegisterAddOnCategory then
-		Settings.RegisterAddOnCategory(profileCategory)
 	end
 
 	self.profilesCategory = profileCategory
 	self:RefreshProfilesWindow()
+end
+
+function QuestTogether:InitializeAnnouncementsWindow(parentCategory)
+	if self.announcementsFrame then
+		return
+	end
+
+	local frame = CreateFrame("Frame", "QuestTogetherAnnouncementsPanel")
+	frame.name = "What to Announce"
+	frame.parent = "QuestTogether"
+
+	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16)
+	title:SetText("What To Announce")
+
+	local description = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+	description:SetWidth(640)
+	description:SetJustifyH("LEFT")
+	description:SetText("Choose exactly which quest-related events QuestTogether should broadcast to others.")
+
+	CreateAnnouncementGroupHeader(frame, "Quests", "quest", 16, -82, 620)
+	local announceAccepted = CreateCheckbox(frame, "announceAccepted", "Announce Quest Acceptance", "", 32, -112)
+	local announceCompleted = CreateCheckbox(frame, "announceCompleted", "Announce Quest Completion", "", 32, -140)
+	local announceReadyToTurnIn = CreateCheckbox(frame, "announceReadyToTurnIn", "Announce Ready To Turn In", "", 32, -168)
+	local announceRemoved = CreateCheckbox(frame, "announceRemoved", "Announce Quest Removal", "", 32, -196)
+	local announceProgress = CreateCheckbox(frame, "announceProgress", "Announce Quest Progress", "", 32, -224)
+
+	CreateAnnouncementGroupHeader(frame, "World Quests", "world", 16, -270, 620)
+	local announceWorldQuestAreaEnter =
+		CreateCheckbox(frame, "announceWorldQuestAreaEnter", "Announce Area Enter", "", 32, -300)
+	local announceWorldQuestAreaLeave =
+		CreateCheckbox(frame, "announceWorldQuestAreaLeave", "Announce Area Leave", "", 32, -328)
+	local announceWorldQuestProgress = CreateCheckbox(frame, "announceWorldQuestProgress", "Announce Progress", "", 32, -356)
+	local announceWorldQuestCompleted =
+		CreateCheckbox(frame, "announceWorldQuestCompleted", "Announce Completion", "", 32, -384)
+
+	CreateAnnouncementGroupHeader(frame, "Bonus Objectives", "bonus", 16, -430, 620)
+	local announceBonusObjectiveAreaEnter =
+		CreateCheckbox(frame, "announceBonusObjectiveAreaEnter", "Announce Area Enter", "", 32, -460)
+	local announceBonusObjectiveAreaLeave =
+		CreateCheckbox(frame, "announceBonusObjectiveAreaLeave", "Announce Area Leave", "", 32, -488)
+	local announceBonusObjectiveProgress =
+		CreateCheckbox(frame, "announceBonusObjectiveProgress", "Announce Progress", "", 32, -516)
+	local announceBonusObjectiveCompleted =
+		CreateCheckbox(frame, "announceBonusObjectiveCompleted", "Announce Completion", "", 32, -544)
+
+	self.announcementControls = {
+		announceAccepted = announceAccepted,
+		announceCompleted = announceCompleted,
+		announceReadyToTurnIn = announceReadyToTurnIn,
+		announceRemoved = announceRemoved,
+		announceProgress = announceProgress,
+		announceWorldQuestAreaEnter = announceWorldQuestAreaEnter,
+		announceWorldQuestAreaLeave = announceWorldQuestAreaLeave,
+		announceWorldQuestProgress = announceWorldQuestProgress,
+		announceWorldQuestCompleted = announceWorldQuestCompleted,
+		announceBonusObjectiveAreaEnter = announceBonusObjectiveAreaEnter,
+		announceBonusObjectiveAreaLeave = announceBonusObjectiveAreaLeave,
+		announceBonusObjectiveProgress = announceBonusObjectiveProgress,
+		announceBonusObjectiveCompleted = announceBonusObjectiveCompleted,
+	}
+
+	frame:SetScript("OnShow", function()
+		QuestTogether:RefreshAnnouncementsWindow()
+	end)
+
+	self.announcementsFrame = frame
+	self.announcementsCategory = RegisterSubcategory(parentCategory, frame, frame.name)
+	self:RefreshAnnouncementsWindow()
+end
+
+function QuestTogether:InitializeWhereToAnnounceWindow(parentCategory)
+	if self.whereToAnnounceFrame then
+		return
+	end
+
+	local frame = CreateFrame("Frame", "QuestTogetherWhereToAnnouncePanel")
+	frame.name = "Where to Announce"
+	frame.parent = "QuestTogether"
+
+	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16)
+	title:SetText("Where To Announce")
+
+	local description = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+	description:SetWidth(640)
+	description:SetJustifyH("LEFT")
+	description:SetText("Control where QuestTogether displays progress updates and chat output.")
+
+	local chatLogHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	chatLogHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -82)
+	chatLogHeader:SetText("Chat Log Output")
+
+	local showChatLogs = CreateCheckbox(
+		frame,
+		"showChatLogs",
+		"Show Chat Logs",
+		"Print QuestTogether announcements in chat when the sender is grouped or nearby.",
+		16,
+		-106
+	)
+	local chatLogDestinationDropdown = CreateChatLogDestinationDropdown(frame, 330, -106)
+	local showProgressForDropdown = CreateShowProgressForDropdown(frame, 330, -152)
+
+	local bubbleHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	bubbleHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -196)
+	bubbleHeader:SetText("Chat Bubbles")
+
+	local showChatBubbles = CreateCheckbox(
+		frame,
+		"showChatBubbles",
+		"Show Chat Bubbles",
+		"Display QuestTogether bubbles over nearby players and on your personal bubble anchor.",
+		16,
+		-220
+	)
+	local hideMyOwnChatBubbles = CreateCheckbox(
+		frame,
+		"hideMyOwnChatBubbles",
+		"Hide My Own Chat Bubbles",
+		"If enabled, your client still sends local progress to others but does not show your own QuestTogether bubbles.",
+		36,
+		-248
+	)
+
+	local openHudEditMode = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	openHudEditMode:SetSize(180, 24)
+	openHudEditMode:SetPoint("TOPLEFT", frame, "TOPLEFT", 36, -280)
+	openHudEditMode:SetText("Open HUD Edit Mode")
+	openHudEditMode:SetScript("OnClick", function()
+		QuestTogether:Debug("Open HUD Edit Mode button clicked", "options")
+		if not QuestTogether:OpenHudEditMode() then
+			QuestTogether:Print("HUD Edit Mode is unavailable right now.")
+		end
+	end)
+
+	local personalBubbleEditHint = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	personalBubbleEditHint:SetPoint("TOPLEFT", frame, "TOPLEFT", 36, -312)
+	personalBubbleEditHint:SetJustifyH("LEFT")
+	personalBubbleEditHint:SetWidth(560)
+	personalBubbleEditHint:SetText(
+		"Use HUD Edit Mode to move your personal bubble and adjust its size and duration from the QuestTogether Bubble settings panel."
+	)
+
+	self.whereToAnnounceControls = {
+		showChatBubbles = showChatBubbles,
+		hideMyOwnChatBubbles = hideMyOwnChatBubbles,
+		showChatLogs = showChatLogs,
+		chatLogDestinationDropdown = chatLogDestinationDropdown,
+		showProgressForDropdown = showProgressForDropdown,
+		openHudEditMode = openHudEditMode,
+		personalBubbleEditHint = personalBubbleEditHint,
+	}
+	-- Keep legacy field wired for code that still references optionControls.
+	self.optionControls = self.whereToAnnounceControls
+	self.whereToAnnounceFrame = frame
+
+	frame:SetScript("OnShow", function()
+		QuestTogether:RefreshWhereToAnnounceWindow()
+	end)
+
+	self.whereToAnnounceCategory = RegisterSubcategory(parentCategory, frame, frame.name)
+	self:RefreshWhereToAnnounceWindow()
+end
+
+function QuestTogether:InitializeQuestPlatesWindow(parentCategory)
+	if self.questPlatesFrame then
+		return
+	end
+
+	local frame = CreateFrame("Frame", "QuestTogetherQuestPlatesPanel")
+	frame.name = "Quest Plates"
+	frame.parent = "QuestTogether"
+
+	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16)
+	title:SetText("Quest Plates")
+
+	local description = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+	description:SetWidth(640)
+	description:SetJustifyH("LEFT")
+	description:SetText("Customize quest objective visuals on Blizzard nameplates.")
+
+	local nameplateQuestIconEnabled = CreateCheckbox(
+		frame,
+		"nameplateQuestIconEnabled",
+		"Quest Objective Icon",
+		"Show a quest icon on default Blizzard nameplates when a unit is a quest objective.",
+		16,
+		-82
+	)
+	local nameplateQuestIconStyleDropdown = CreateNameplateIconStyleDropdown(frame, 36, -108)
+	local nameplateQuestHealthColorEnabled = CreateCheckbox(
+		frame,
+		"nameplateQuestHealthColorEnabled",
+		"Quest Objective Health Color",
+		"Tint quest-objective nameplate health bars with your selected quest color.",
+		16,
+		-150
+	)
+	local nameplateQuestHealthColor = CreateColorSwatch(
+		frame,
+		"nameplateQuestHealthColor",
+		"Quest Health Color",
+		"Choose the color used to tint quest-objective nameplate health bars.",
+		QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR,
+		36,
+		-177
+	)
+	local resetNameplateQuestHealthColor = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	resetNameplateQuestHealthColor:SetSize(70, 20)
+	resetNameplateQuestHealthColor:SetPoint("LEFT", nameplateQuestHealthColor, "RIGHT", 140, 0)
+	resetNameplateQuestHealthColor:SetText("Reset")
+	resetNameplateQuestHealthColor:SetScript("OnClick", function()
+		local defaults = QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor
+			or QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR
+		QuestTogether:Debug("Resetting nameplate quest health color to default", "options")
+		QuestTogether:SetOption("nameplateQuestHealthColor", {
+			r = defaults.r,
+			g = defaults.g,
+			b = defaults.b,
+		})
+		QuestTogether:RefreshOptionsWindow()
+	end)
+
+	local previewHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	previewHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -238)
+	previewHeader:SetText("Preview")
+
+	local previewHint = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	previewHint:SetPoint("TOPLEFT", previewHeader, "BOTTOMLEFT", 0, -4)
+	previewHint:SetWidth(640)
+	previewHint:SetJustifyH("LEFT")
+	previewHint:SetText("This isolated preview uses your current nameplate style CVars and quest visual settings.")
+
+	-- Use an isolated local frame instead of Blizzard's script nameplate preview template.
+	-- This avoids registering a real preview nameplate/unit token and reduces taint risk.
+	local previewFrame = CreateFrame("Frame", nil, frame)
+	previewFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -280)
+	previewFrame:SetSize(620, 195)
+
+	local previewBackground = previewFrame:CreateTexture(nil, "BACKGROUND")
+	previewBackground:SetAllPoints()
+	previewBackground:SetColorTexture(0.03, 0.03, 0.05, 0.62)
+
+	local previewCaption = previewFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	previewCaption:SetPoint("TOPLEFT", previewFrame, "TOPLEFT", 16, -14)
+	previewCaption:SetText("Previewing - Quest Mob")
+	previewFrame.Preview = previewCaption
+
+	local fallbackUnitFrame = CreateFrame("Frame", nil, previewFrame)
+	fallbackUnitFrame:SetSize(360, 92)
+	fallbackUnitFrame:SetPoint("CENTER", previewFrame, "CENTER", 0, 8)
+
+	local fallbackHealthBarsContainer = CreateFrame("Frame", nil, fallbackUnitFrame)
+	fallbackHealthBarsContainer:SetSize(260, 18)
+	fallbackHealthBarsContainer:SetPoint("TOP", fallbackUnitFrame, "TOP", 0, -26)
+	fallbackUnitFrame.HealthBarsContainer = fallbackHealthBarsContainer
+
+	local fallbackHealthBar = CreateFrame("StatusBar", nil, fallbackHealthBarsContainer)
+	fallbackHealthBar:SetAllPoints()
+	fallbackHealthBar:SetMinMaxValues(0, 100)
+	fallbackHealthBar:SetValue(68)
+	fallbackHealthBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+	fallbackHealthBar:SetStatusBarColor(0, 0, 0, 0)
+	fallbackUnitFrame.healthBar = fallbackHealthBar
+
+	local fallbackHealthBarBackground = fallbackHealthBar:CreateTexture(nil, "BACKGROUND")
+	fallbackHealthBarBackground:SetAllPoints()
+	fallbackHealthBarBackground:SetColorTexture(0.10, 0.10, 0.10, 0.82)
+
+	local fallbackBaseFill = nil
+	if QuestTogether.CreateNameplateHealthOverlayTexture then
+		fallbackBaseFill = QuestTogether:CreateNameplateHealthOverlayTexture(fallbackHealthBar, "ARTWORK", 0)
+	end
+	if not fallbackBaseFill then
+		fallbackBaseFill = fallbackHealthBar:CreateTexture(nil, "ARTWORK", nil, 0)
+		if fallbackBaseFill.SetAtlas then
+			fallbackBaseFill:SetAtlas(QuestTogether.NAMEPLATE_HEALTH_FILL_ATLAS or "UI-HUD-CoolDownManager-Bar", true)
+		else
+			fallbackBaseFill:SetTexture("Interface\\Buttons\\WHITE8X8")
+		end
+	end
+	if fallbackBaseFill then
+		fallbackBaseFill:SetVertexColor(0.22, 0.80, 0.22, 1)
+		fallbackUnitFrame.questPreviewBaseFillTexture = fallbackBaseFill
+	end
+
+	local fallbackTintOverlay = nil
+	if QuestTogether.CreateNameplateHealthOverlayTexture then
+		fallbackTintOverlay = QuestTogether:CreateNameplateHealthOverlayTexture(fallbackHealthBar, "ARTWORK", 1)
+	end
+	if not fallbackTintOverlay then
+		fallbackTintOverlay = fallbackHealthBar:CreateTexture(nil, "ARTWORK", nil, 1)
+		if fallbackTintOverlay.SetAtlas then
+			fallbackTintOverlay:SetAtlas(QuestTogether.NAMEPLATE_HEALTH_FILL_ATLAS or "UI-HUD-CoolDownManager-Bar", true)
+		else
+			fallbackTintOverlay:SetTexture("Interface\\Buttons\\WHITE8X8")
+		end
+	end
+	fallbackTintOverlay:SetVertexColor(1, 0.5, 0.1, 0.32)
+	fallbackTintOverlay:Hide()
+	fallbackUnitFrame.questPreviewTintTexture = fallbackTintOverlay
+
+	local fallbackTintHighlight = fallbackHealthBar:CreateTexture(nil, "ARTWORK", nil, 2)
+	fallbackTintHighlight:SetAllPoints()
+	fallbackTintHighlight:SetBlendMode("ADD")
+	fallbackTintHighlight:SetColorTexture(1, 0.75, 0.35, 0.16)
+	fallbackTintHighlight:Hide()
+	fallbackUnitFrame.questPreviewTintHighlight = fallbackTintHighlight
+
+	local fallbackTextOverlay = CreateFrame("Frame", nil, fallbackHealthBarsContainer)
+	fallbackTextOverlay:SetAllPoints()
+	fallbackTextOverlay:SetFrameStrata(fallbackHealthBarsContainer:GetFrameStrata() or "LOW")
+	fallbackTextOverlay:SetFrameLevel((fallbackHealthBar:GetFrameLevel() or 0) + 20)
+	fallbackUnitFrame.questPreviewTextOverlay = fallbackTextOverlay
+
+	local fallbackName = fallbackTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	fallbackName:SetPoint("LEFT", fallbackHealthBarsContainer, "LEFT", 6, 0)
+	fallbackName:SetJustifyH("LEFT")
+	fallbackName:SetWidth(160)
+	fallbackName:SetText("Target Name")
+	fallbackUnitFrame.name = fallbackName
+
+	local fallbackHealthValue = fallbackTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	fallbackHealthValue:SetPoint("LEFT", fallbackHealthBarsContainer, "RIGHT", 8, 0)
+	fallbackHealthValue:SetText("241 K")
+	fallbackHealthValue:SetJustifyH("RIGHT")
+	fallbackUnitFrame.questPreviewHealthText = fallbackHealthValue
+
+	self.questPlateControls = {
+		nameplateQuestIconEnabled = nameplateQuestIconEnabled,
+		nameplateQuestIconStyleDropdown = nameplateQuestIconStyleDropdown,
+		nameplateQuestHealthColorEnabled = nameplateQuestHealthColorEnabled,
+		nameplateQuestHealthColor = nameplateQuestHealthColor,
+		resetNameplateQuestHealthColor = resetNameplateQuestHealthColor,
+		previewFrame = previewFrame,
+		previewNamePlate = nil,
+		previewUnitFrame = fallbackUnitFrame,
+	}
+	self.questPlatesFrame = frame
+
+	frame:SetScript("OnShow", function()
+		QuestTogether:RefreshQuestPlatesWindow()
+	end)
+
+	self.questPlatesCategory = RegisterSubcategory(parentCategory, frame, frame.name)
+	self:RefreshQuestPlatesWindow()
+end
+
+function QuestTogether:InitializeMiscWindow(parentCategory)
+	if self.miscFrame then
+		return
+	end
+
+	local frame = CreateFrame("Frame", "QuestTogetherMiscPanel")
+	frame.name = "Miscellaneous"
+	frame.parent = "QuestTogether"
+
+	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16)
+	title:SetText("Miscellaneous")
+
+	local description = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+	description:SetWidth(640)
+	description:SetJustifyH("LEFT")
+	description:SetText("Other behavior toggles and utility actions.")
+
+	local emoteOnQuestCompletion = CreateCheckbox(
+		frame,
+		"emoteOnQuestCompletion",
+		"Emote On Quest Completion",
+		"If disabled, this character never performs local quest completion emotes.",
+		16,
+		-82
+	)
+	local emoteOnNearbyPlayerQuestCompletion = CreateCheckbox(
+		frame,
+		"emoteOnNearbyPlayerQuestCompletion",
+		"Emote On Nearby Player Quest Completion",
+		"If disabled, this character will not mirror nearby players' quest completion emotes.",
+		16,
+		-110
+	)
+	local debugMode = CreateCheckbox(frame, "debugMode", "Debug Mode", "Print debug output in chat.", 16, -138)
+
+	local testButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	testButton:SetSize(180, 24)
+	testButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -180)
+	testButton:SetText("Run In-Game Tests")
+	testButton:SetScript("OnClick", function()
+		QuestTogether:Debug("Run In-Game Tests button clicked", "options")
+		QuestTogether:RunTests()
+	end)
+
+	local scanButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	scanButton:SetSize(180, 24)
+	scanButton:SetPoint("LEFT", testButton, "RIGHT", 10, 0)
+	scanButton:SetText("Rescan Quest Log")
+	scanButton:SetScript("OnClick", function()
+		QuestTogether:Debug("Rescan Quest Log button clicked", "options")
+		QuestTogether:ScanQuestLog()
+	end)
+
+	self.miscControls = {
+		emoteOnQuestCompletion = emoteOnQuestCompletion,
+		emoteOnNearbyPlayerQuestCompletion = emoteOnNearbyPlayerQuestCompletion,
+		debugMode = debugMode,
+	}
+	self.miscFrame = frame
+
+	frame:SetScript("OnShow", function()
+		QuestTogether:RefreshMiscWindow()
+	end)
+
+	self.miscCategory = RegisterSubcategory(parentCategory, frame, frame.name)
+	self:RefreshMiscWindow()
 end
 
 function QuestTogether:OpenOptionsWindow()
@@ -727,212 +1534,125 @@ function QuestTogether:InitializeOptionsWindow()
 	end
 	self:Debug("Initializing options window", "options")
 
-	local frame = CreateFrame("Frame", "QuestTogetherOptionsPanel")
+	local frame = CreateFrame("Frame", "QuestTogetherHomePanel")
 	frame.name = "QuestTogether"
 
-	local scrollFrame = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-	scrollFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -8)
-	scrollFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 8)
+	local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	title:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -16)
+	title:SetText("QuestTogether")
 
-	local content = CreateFrame("Frame", nil, scrollFrame)
-	content:SetSize(680, 1160)
-	scrollFrame:SetScrollChild(content)
-	frame.ScrollFrame = scrollFrame
-	frame.Content = content
-
-	local title = content:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-	title:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -16)
-	title:SetText("QuestTogether Options")
-
-	CreateSectionLabel(content, "What To Announce", 16, -58)
-	CreateAnnouncementGroupHeader(content, "Quests", "quest", 16, -86, 620)
-	local announceAccepted = CreateCheckbox(content, "announceAccepted", "Announce Quest Acceptance", "", 32, -116)
-	local announceCompleted = CreateCheckbox(content, "announceCompleted", "Announce Quest Completion", "", 32, -144)
-	local announceReadyToTurnIn =
-		CreateCheckbox(content, "announceReadyToTurnIn", "Announce Ready To Turn In", "", 32, -172)
-	local announceRemoved = CreateCheckbox(content, "announceRemoved", "Announce Quest Removal", "", 32, -200)
-	local announceProgress = CreateCheckbox(content, "announceProgress", "Announce Quest Progress", "", 32, -228)
-
-	CreateAnnouncementGroupHeader(content, "World Quests", "world", 16, -274, 620)
-	local announceWorldQuestAreaEnter =
-		CreateCheckbox(content, "announceWorldQuestAreaEnter", "Announce Area Enter", "", 32, -304)
-	local announceWorldQuestAreaLeave =
-		CreateCheckbox(content, "announceWorldQuestAreaLeave", "Announce Area Leave", "", 32, -332)
-	local announceWorldQuestProgress =
-		CreateCheckbox(content, "announceWorldQuestProgress", "Announce Progress", "", 32, -360)
-	local announceWorldQuestCompleted =
-		CreateCheckbox(content, "announceWorldQuestCompleted", "Announce Completion", "", 32, -388)
-
-	CreateAnnouncementGroupHeader(content, "Bonus Objectives", "bonus", 16, -434, 620)
-	local announceBonusObjectiveAreaEnter =
-		CreateCheckbox(content, "announceBonusObjectiveAreaEnter", "Announce Area Enter", "", 32, -464)
-	local announceBonusObjectiveAreaLeave =
-		CreateCheckbox(content, "announceBonusObjectiveAreaLeave", "Announce Area Leave", "", 32, -492)
-	local announceBonusObjectiveProgress =
-		CreateCheckbox(content, "announceBonusObjectiveProgress", "Announce Progress", "", 32, -520)
-	local announceBonusObjectiveCompleted =
-		CreateCheckbox(content, "announceBonusObjectiveCompleted", "Announce Completion", "", 32, -548)
-
-	CreateSectionLabel(content, "Display", 16, -596)
-	local showChatBubbles = CreateCheckbox(
-		content,
-		"showChatBubbles",
-		"Show Chat Bubbles",
-		"Display QuestTogether bubbles over nearby players and on your personal bubble anchor.",
-		16,
-		-620
+	local description = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
+	description:SetWidth(640)
+	description:SetJustifyH("LEFT")
+	description:SetText(
+		"QuestTogether shares quest progress between party members and nearby players so everyone can see objectives move in real time."
 	)
-	local hideMyOwnChatBubbles = CreateCheckbox(
-		content,
-		"hideMyOwnChatBubbles",
-		"Hide My Own Chat Bubbles",
-		"If enabled, your client still sends local progress to others but does not show your own QuestTogether bubbles.",
-		36,
-		-648
-	)
-	local showChatLogs = CreateCheckbox(
-		content,
-		"showChatLogs",
-		"Show Chat Logs",
-		"Print QuestTogether announcements in chat when the sender is grouped or nearby.",
-		16,
-		-676
-	)
-	local chatLogDestinationDropdown = CreateChatLogDestinationDropdown(content, 330, -676)
-	local showProgressForDropdown = CreateShowProgressForDropdown(content, 330, -620)
 
-	local openHudEditMode = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-	openHudEditMode:SetSize(180, 24)
-	openHudEditMode:SetPoint("TOPLEFT", content, "TOPLEFT", 36, -708)
-	openHudEditMode:SetText("Open HUD Edit Mode")
-	openHudEditMode:SetScript("OnClick", function()
-		QuestTogether:Debug("Open HUD Edit Mode button clicked", "options")
+	local statusPanel = CreateFrame("Frame", nil, frame)
+	statusPanel:SetPoint("TOPLEFT", description, "BOTTOMLEFT", 0, -18)
+	statusPanel:SetSize(360, 220)
+
+	local statusPanelBackground = statusPanel:CreateTexture(nil, "BACKGROUND")
+	statusPanelBackground:SetAllPoints()
+	statusPanelBackground:SetColorTexture(0.03, 0.03, 0.05, 0.62)
+
+	local statusPanelBorder = statusPanel:CreateTexture(nil, "BORDER")
+	statusPanelBorder:SetAllPoints()
+	statusPanelBorder:SetColorTexture(1, 1, 1, 0.08)
+
+	local statusHeader = statusPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	statusHeader:SetPoint("TOPLEFT", statusPanel, "TOPLEFT", 12, -10)
+	statusHeader:SetText("Quick Status")
+
+	local statusText = statusPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	statusText:SetPoint("TOPLEFT", statusHeader, "BOTTOMLEFT", 0, -8)
+	statusText:SetWidth(336)
+	statusText:SetJustifyH("LEFT")
+	if statusText.SetSpacing then
+		statusText:SetSpacing(2)
+	end
+	statusText:SetText("")
+
+	local actionsPanel = CreateFrame("Frame", nil, frame)
+	actionsPanel:SetPoint("TOPLEFT", statusPanel, "TOPRIGHT", 16, 0)
+	actionsPanel:SetSize(260, 220)
+
+	local actionsPanelBackground = actionsPanel:CreateTexture(nil, "BACKGROUND")
+	actionsPanelBackground:SetAllPoints()
+	actionsPanelBackground:SetColorTexture(0.03, 0.03, 0.05, 0.62)
+
+	local actionsPanelBorder = actionsPanel:CreateTexture(nil, "BORDER")
+	actionsPanelBorder:SetAllPoints()
+	actionsPanelBorder:SetColorTexture(1, 1, 1, 0.08)
+
+	local actionsHeader = actionsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	actionsHeader:SetPoint("TOPLEFT", actionsPanel, "TOPLEFT", 12, -10)
+	actionsHeader:SetText("Quick Actions")
+
+	local function CreateHomeActionButton(parent, text, x, y, onClick)
+		local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+		button:SetSize(232, 22)
+		button:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+		button:SetText(text)
+		button:SetScript("OnClick", onClick)
+		return button
+	end
+
+	local openWhatToAnnounce = CreateHomeActionButton(actionsPanel, "Open What to Announce", 12, -34, function()
+		OpenSettingsCategory(QuestTogether.announcementsCategory)
+	end)
+	local openWhereToAnnounce = CreateHomeActionButton(actionsPanel, "Open Where to Announce", 12, -60, function()
+		OpenSettingsCategory(QuestTogether.whereToAnnounceCategory)
+	end)
+	local openQuestPlates = CreateHomeActionButton(actionsPanel, "Open Quest Plates", 12, -86, function()
+		OpenSettingsCategory(QuestTogether.questPlatesCategory)
+	end)
+	local openProfiles = CreateHomeActionButton(actionsPanel, "Open Profiles", 12, -112, function()
+		OpenSettingsCategory(QuestTogether.profilesCategory)
+	end)
+	local openHudEditMode = CreateHomeActionButton(actionsPanel, "Open HUD Edit Mode", 12, -138, function()
 		if not QuestTogether:OpenHudEditMode() then
 			QuestTogether:Print("HUD Edit Mode is unavailable right now.")
 		end
 	end)
-
-	local personalBubbleEditHint = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	personalBubbleEditHint:SetPoint("TOPLEFT", content, "TOPLEFT", 36, -740)
-	personalBubbleEditHint:SetJustifyH("LEFT")
-	personalBubbleEditHint:SetWidth(520)
-	personalBubbleEditHint:SetText(
-		"Use HUD Edit Mode to move your personal bubble and adjust its size and duration from the QuestTogether Bubble settings panel."
-	)
-
-	CreateSectionLabel(content, "Nameplates", 16, -808)
-	local nameplateQuestIconEnabled = CreateCheckbox(
-		content,
-		"nameplateQuestIconEnabled",
-		"Quest Objective Icon",
-		"Show a quest icon on default Blizzard nameplates when a unit is a quest objective.",
-		16,
-		-832
-	)
-	local nameplateQuestIconStyleDropdown = CreateNameplateIconStyleDropdown(content, 36, -858)
-	local nameplateQuestHealthColorEnabled = CreateCheckbox(
-		content,
-		"nameplateQuestHealthColorEnabled",
-		"Quest Objective Health Color",
-		"Tint quest-objective nameplate health bars with your selected quest color.",
-		16,
-		-900
-	)
-	local nameplateQuestHealthColor = CreateColorSwatch(
-		content,
-		"nameplateQuestHealthColor",
-		"Quest Health Color",
-		"Choose the color used to tint quest-objective nameplate health bars.",
-		QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR,
-		36,
-		-927
-	)
-	local resetNameplateQuestHealthColor = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-	resetNameplateQuestHealthColor:SetSize(70, 20)
-	resetNameplateQuestHealthColor:SetPoint("LEFT", nameplateQuestHealthColor, "RIGHT", 140, 0)
-	resetNameplateQuestHealthColor:SetText("Reset")
-	resetNameplateQuestHealthColor:SetScript("OnClick", function()
-		local defaults = QuestTogether.DEFAULTS.profile.nameplateQuestHealthColor
-			or QuestTogether.NAMEPLATE_QUEST_HEALTH_COLOR
-		QuestTogether:Debug("Resetting nameplate quest health color to default", "options")
-		QuestTogether:SetOption("nameplateQuestHealthColor", {
-			r = defaults.r,
-			g = defaults.g,
-			b = defaults.b,
-		})
-		QuestTogether:RefreshOptionsWindow()
-	end)
-
-	CreateSectionLabel(content, "Miscellaneous", 16, -978)
-	local emoteOnQuestCompletion = CreateCheckbox(
-		content,
-		"emoteOnQuestCompletion",
-		"Emote On Quest Completion",
-		"If disabled, this character never performs local quest completion emotes.",
-		16,
-		-1002
-	)
-	local emoteOnNearbyPlayerQuestCompletion = CreateCheckbox(
-		content,
-		"emoteOnNearbyPlayerQuestCompletion",
-		"Emote On Nearby Player Quest Completion",
-		"If disabled, this character will not mirror nearby players' quest completion emotes.",
-		16,
-		-1030
-	)
-	local debugMode = CreateCheckbox(content, "debugMode", "Debug Mode", "Print debug output in chat.", 16, -1058)
-
-	local testButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-	testButton:SetSize(180, 24)
-	testButton:SetPoint("TOPLEFT", content, "TOPLEFT", 16, -1100)
-	testButton:SetText("Run In-Game Tests")
-	testButton:SetScript("OnClick", function()
-		QuestTogether:Debug("Run In-Game Tests button clicked", "options")
-		QuestTogether:RunTests()
-	end)
-
-	local scanButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-	scanButton:SetSize(180, 24)
-	scanButton:SetPoint("LEFT", testButton, "RIGHT", 10, 0)
-	scanButton:SetText("Rescan Quest Log")
-	scanButton:SetScript("OnClick", function()
-		QuestTogether:Debug("Rescan Quest Log button clicked", "options")
+	local rescanQuestLog = CreateHomeActionButton(actionsPanel, "Rescan Quest Log", 12, -164, function()
 		QuestTogether:ScanQuestLog()
 	end)
+	local printHelp = CreateHomeActionButton(actionsPanel, "Print /qt Help", 12, -190, function()
+		QuestTogether:PrintHelp()
+	end)
 
-	self.optionControls = {
-		announceAccepted = announceAccepted,
-		announceCompleted = announceCompleted,
-		announceReadyToTurnIn = announceReadyToTurnIn,
-		announceRemoved = announceRemoved,
-		announceProgress = announceProgress,
-		announceWorldQuestAreaEnter = announceWorldQuestAreaEnter,
-		announceWorldQuestAreaLeave = announceWorldQuestAreaLeave,
-		announceWorldQuestProgress = announceWorldQuestProgress,
-		announceWorldQuestCompleted = announceWorldQuestCompleted,
-		announceBonusObjectiveAreaEnter = announceBonusObjectiveAreaEnter,
-		announceBonusObjectiveAreaLeave = announceBonusObjectiveAreaLeave,
-		announceBonusObjectiveProgress = announceBonusObjectiveProgress,
-		announceBonusObjectiveCompleted = announceBonusObjectiveCompleted,
-		showChatBubbles = showChatBubbles,
-		hideMyOwnChatBubbles = hideMyOwnChatBubbles,
-		showChatLogs = showChatLogs,
-		chatLogDestinationDropdown = chatLogDestinationDropdown,
-		showProgressForDropdown = showProgressForDropdown,
+	local tipsHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	tipsHeader:SetPoint("TOPLEFT", statusPanel, "BOTTOMLEFT", 0, -18)
+	tipsHeader:SetText("Tips")
+
+	local tipsText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	tipsText:SetPoint("TOPLEFT", tipsHeader, "BOTTOMLEFT", 0, -8)
+	tipsText:SetWidth(640)
+	tipsText:SetJustifyH("LEFT")
+	if tipsText.SetSpacing then
+		tipsText:SetSpacing(3)
+	end
+	tipsText:SetText(
+		"/qt options opens these settings.\n"
+			.. "Use What to Announce for event types, Where to Announce for output targets,\n"
+			.. "and Quest Plates for icon/tint visuals."
+	)
+
+	self.homeControls = {
+		statusText = statusText,
+		openWhatToAnnounce = openWhatToAnnounce,
+		openWhereToAnnounce = openWhereToAnnounce,
+		openQuestPlates = openQuestPlates,
+		openProfiles = openProfiles,
 		openHudEditMode = openHudEditMode,
-		personalBubbleEditHint = personalBubbleEditHint,
-		nameplateQuestIconEnabled = nameplateQuestIconEnabled,
-		nameplateQuestIconStyleDropdown = nameplateQuestIconStyleDropdown,
-		nameplateQuestHealthColorEnabled = nameplateQuestHealthColorEnabled,
-		nameplateQuestHealthColor = nameplateQuestHealthColor,
-		resetNameplateQuestHealthColor = resetNameplateQuestHealthColor,
-		emoteOnQuestCompletion = emoteOnQuestCompletion,
-		emoteOnNearbyPlayerQuestCompletion = emoteOnNearbyPlayerQuestCompletion,
-		debugMode = debugMode,
+		rescanQuestLog = rescanQuestLog,
+		printHelp = printHelp,
 	}
 
 	frame:SetScript("OnShow", function()
-		QuestTogether:RefreshOptionsWindow()
+		QuestTogether:RefreshHomeWindow()
 	end)
 
 	self.optionsFrame = frame
@@ -946,6 +1666,12 @@ function QuestTogether:InitializeOptionsWindow()
 	local category = Settings.RegisterCanvasLayoutCategory(frame, frame.name, frame.name)
 	Settings.RegisterAddOnCategory(category)
 	self.optionsCategory = category
+
+	-- Register subcategories in the same order they should appear in the left nav.
+	self:InitializeAnnouncementsWindow(category)
+	self:InitializeWhereToAnnounceWindow(category)
+	self:InitializeQuestPlatesWindow(category)
+	self:InitializeMiscWindow(category)
 	self:InitializeProfilesWindow(category)
 
 	self:RefreshOptionsWindow()
