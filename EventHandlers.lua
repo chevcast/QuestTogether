@@ -283,30 +283,30 @@ end
 function QuestTogether:GetTaskAreaSnapshot(taskType)
 	local activeByQuestId = {}
 
-	if not self.API or not self.API.GetNumQuestLogEntries or not self.API.GetQuestLogInfo then
-		return activeByQuestId
-	end
+	if self.API and self.API.GetNumQuestLogEntries and self.API.GetQuestLogInfo then
+		local totalEntries = self:SafeToNumber(self.API.GetNumQuestLogEntries()) or 0
+		for entryIndex = 1, totalEntries do
+			local questInfo = self.API.GetQuestLogInfo(entryIndex)
+			local isTask = questInfo and questInfo.isTask == true
+			local isOnMap = questInfo and (questInfo.isOnMap == true or questInfo.hasLocalPOI == true)
+			if questInfo and not questInfo.isHeader and not questInfo.isHidden and isTask and isOnMap then
+				local normalizedQuestId = NormalizeQuestId(self, questInfo.questID)
+				if normalizedQuestId then
+					local isWorldQuest = questInfo.isWorldQuest
+					if type(isWorldQuest) ~= "boolean" then
+						isWorldQuest = self:IsWorldQuest(normalizedQuestId)
+					end
 
-	local totalEntries = self:SafeToNumber(self.API.GetNumQuestLogEntries()) or 0
-	for entryIndex = 1, totalEntries do
-		local questInfo = self.API.GetQuestLogInfo(entryIndex)
-		if questInfo and not questInfo.isHeader and not questInfo.isHidden and questInfo.isTask and questInfo.isOnMap then
-			local normalizedQuestId = NormalizeQuestId(self, questInfo.questID)
-			if normalizedQuestId then
-				local isWorldQuest = questInfo.isWorldQuest
-				if type(isWorldQuest) ~= "boolean" then
-					isWorldQuest = self:IsWorldQuest(normalizedQuestId)
-				end
+					local matchesType = false
+					if taskType == "world" then
+						matchesType = isWorldQuest and true or false
+					elseif taskType == "bonus" then
+						matchesType = isWorldQuest ~= true
+					end
 
-				local matchesType = false
-				if taskType == "world" then
-					matchesType = isWorldQuest and true or false
-				elseif taskType == "bonus" then
-					matchesType = isWorldQuest ~= true
-				end
-
-				if matchesType then
-					activeByQuestId[normalizedQuestId] = self:GetQuestTitle(normalizedQuestId, questInfo)
+					if matchesType then
+						activeByQuestId[normalizedQuestId] = self:GetQuestTitle(normalizedQuestId, questInfo)
+					end
 				end
 			end
 		end

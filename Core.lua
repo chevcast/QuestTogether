@@ -3020,16 +3020,6 @@ function QuestTogether:GetQuestTitle(questId, questInfo)
 		return questInfo.title
 	end
 
-	if C_TaskQuest and C_TaskQuest.GetQuestInfoByQuestID then
-		local okTaskTitle, taskTitle = pcall(C_TaskQuest.GetQuestInfoByQuestID, numericQuestId)
-		if okTaskTitle and self:IsSecretValue(taskTitle) then
-			taskTitle = nil
-		end
-		if type(taskTitle) == "string" and taskTitle ~= "" then
-			return taskTitle
-		end
-	end
-
 	if C_QuestLog and C_QuestLog.GetTitleForQuestID then
 		local okLogTitle, logTitle = pcall(C_QuestLog.GetTitleForQuestID, numericQuestId)
 		if okLogTitle and self:IsSecretValue(logTitle) then
