@@ -31,6 +31,20 @@ local function IsFrameMutable(frame)
 end
 
 local QUEST_PLATE_PREVIEW_SCALE = 1.35
+local QUEST_PLATE_PREVIEW_FRAME_HEIGHT = 195
+local QUEST_PLATE_PREVIEW_BAR_VISUAL_SCALE = 1.25
+local QUEST_PLATE_PREVIEW_RANDOM_NAMES = {
+	"Koda Bug",
+	"Rue Angel",
+	"Pi Floof",
+	"Sammy Bear",
+	"Cinder Kitten",
+	"Lilly Pig",
+	"Booker Bean",
+	"Piper Hippo",
+	"Wifebeast",
+	"Husblebee",
+}
 local NAMEPLATE_STYLE_MODERN = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Modern or 1
 local NAMEPLATE_STYLE_BLOCK = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.Block or 3
 local NAMEPLATE_STYLE_HEALTH_FOCUS = Enum and Enum.NamePlateStyle and Enum.NamePlateStyle.HealthFocus or 4
@@ -92,6 +106,24 @@ local function AnchorPreviewFillTexture(texture, healthBar)
 	texture:SetPoint("BOTTOMLEFT", fillTexture, "BOTTOMLEFT", 0, 0)
 	texture:SetPoint("TOPRIGHT", fillTexture, "TOPRIGHT", 0, 0)
 	texture:SetPoint("BOTTOMRIGHT", fillTexture, "BOTTOMRIGHT", 0, 0)
+end
+
+local function GetRandomQuestPlatePreviewName()
+	local totalNames = #QUEST_PLATE_PREVIEW_RANDOM_NAMES
+	if totalNames <= 0 then
+		return "Quest Mob"
+	end
+
+	if not (math and type(math.random) == "function") then
+		return QUEST_PLATE_PREVIEW_RANDOM_NAMES[1]
+	end
+
+	local randomIndex = math.random(totalNames)
+	if type(randomIndex) ~= "number" or randomIndex < 1 or randomIndex > totalNames then
+		randomIndex = 1
+	end
+
+	return QUEST_PLATE_PREVIEW_RANDOM_NAMES[randomIndex]
 end
 
 local function ApplyAnnouncementGroupIcon(texture, iconType)
@@ -466,8 +498,9 @@ local function RefreshQuestPlatesPreview(controls)
 		or nameplateStyle == NAMEPLATE_STYLE_BLOCK
 		or nameplateStyle == NAMEPLATE_STYLE_HEALTH_FOCUS
 	local nameInsideHealthBar = nameplateStyle == NAMEPLATE_STYLE_MODERN or nameplateStyle == NAMEPLATE_STYLE_BLOCK
-	local barWidth = math.max(120, math.floor((230 * horizontalScale) + 0.5))
-	local barHeight = math.max(8, math.floor(((largeHealthBar and 20 or 10) * verticalScale) + 0.5))
+	local barWidth = math.max(120, math.floor((230 * horizontalScale * QUEST_PLATE_PREVIEW_BAR_VISUAL_SCALE) + 0.5))
+	local barHeight =
+		math.max(8, math.floor(((largeHealthBar and 20 or 10) * verticalScale * QUEST_PLATE_PREVIEW_BAR_VISUAL_SCALE) + 0.5))
 	local nameFontSize = math.max(10, math.floor((12 * verticalScale) + 0.5))
 
 	local healthContainer = previewUnitFrame.HealthBarsContainer
@@ -481,6 +514,10 @@ local function RefreshQuestPlatesPreview(controls)
 		local frameWidth = barWidth + 140
 		local frameHeight = math.max(72, barHeight + (nameInsideHealthBar and 34 or 50))
 		previewUnitFrame:SetSize(frameWidth, frameHeight)
+	end
+	if previewFrame and previewUnitFrame.ClearAllPoints and previewUnitFrame.SetPoint then
+		previewUnitFrame:ClearAllPoints()
+		previewUnitFrame:SetPoint("CENTER", previewFrame, "CENTER", 0, 0)
 	end
 
 	local nameLabel = previewUnitFrame.name
@@ -518,6 +555,10 @@ local function RefreshQuestPlatesPreview(controls)
 	local baseFill = previewUnitFrame.questPreviewBaseFillTexture
 	local tintOverlay = previewUnitFrame.questPreviewTintTexture
 	local tintHighlight = previewUnitFrame.questPreviewTintHighlight
+	if healthBar and healthBar.SetMinMaxValues and healthBar.SetValue then
+		healthBar:SetMinMaxValues(0, 100)
+		healthBar:SetValue(100)
+	end
 	if baseFill then
 		AnchorPreviewFillTexture(baseFill, healthBar)
 		baseFill:Show()
@@ -565,11 +606,11 @@ local function RefreshQuestPlatesPreview(controls)
 		local showValue = HasBit(infoDisplayMask, NAMEPLATE_INFO_VALUE)
 		if showPercent or showValue then
 			if showPercent and showValue then
-				healthText:SetText("241 K  68%")
+				healthText:SetText("241 K  100%")
 			elseif showValue then
 				healthText:SetText("241 K")
 			else
-				healthText:SetText("68%")
+				healthText:SetText("100%")
 			end
 			healthText:Show()
 		else
@@ -1333,7 +1374,7 @@ function QuestTogether:InitializeQuestPlatesWindow(parentCategory)
 	-- This avoids registering a real preview nameplate/unit token and reduces taint risk.
 	local previewFrame = CreateFrame("Frame", nil, frame)
 	previewFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -280)
-	previewFrame:SetSize(620, 195)
+	previewFrame:SetSize(620, QUEST_PLATE_PREVIEW_FRAME_HEIGHT)
 
 	local previewBackground = previewFrame:CreateTexture(nil, "BACKGROUND")
 	previewBackground:SetAllPoints()
@@ -1346,7 +1387,7 @@ function QuestTogether:InitializeQuestPlatesWindow(parentCategory)
 
 	local fallbackUnitFrame = CreateFrame("Frame", nil, previewFrame)
 	fallbackUnitFrame:SetSize(360, 92)
-	fallbackUnitFrame:SetPoint("CENTER", previewFrame, "CENTER", 0, 8)
+	fallbackUnitFrame:SetPoint("CENTER", previewFrame, "CENTER", 0, 0)
 
 	local fallbackHealthBarsContainer = CreateFrame("Frame", nil, fallbackUnitFrame)
 	fallbackHealthBarsContainer:SetSize(260, 18)
@@ -1356,14 +1397,19 @@ function QuestTogether:InitializeQuestPlatesWindow(parentCategory)
 	local fallbackHealthBar = CreateFrame("StatusBar", nil, fallbackHealthBarsContainer)
 	fallbackHealthBar:SetAllPoints()
 	fallbackHealthBar:SetMinMaxValues(0, 100)
-	fallbackHealthBar:SetValue(68)
+	fallbackHealthBar:SetValue(100)
 	fallbackHealthBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
 	fallbackHealthBar:SetStatusBarColor(0, 0, 0, 0)
 	fallbackUnitFrame.healthBar = fallbackHealthBar
 
 	local fallbackHealthBarBackground = fallbackHealthBar:CreateTexture(nil, "BACKGROUND")
-	fallbackHealthBarBackground:SetAllPoints()
-	fallbackHealthBarBackground:SetColorTexture(0.10, 0.10, 0.10, 0.82)
+	fallbackHealthBarBackground:SetPoint("TOPLEFT", fallbackHealthBar, "TOPLEFT", -2, 3)
+	fallbackHealthBarBackground:SetPoint("BOTTOMRIGHT", fallbackHealthBar, "BOTTOMRIGHT", 6, -6)
+	if fallbackHealthBarBackground.SetAtlas then
+		fallbackHealthBarBackground:SetAtlas("UI-HUD-CoolDownManager-Bar-BG", true)
+	else
+		fallbackHealthBarBackground:SetColorTexture(0.10, 0.10, 0.10, 0.82)
+	end
 
 	local fallbackBaseFill = nil
 	if QuestTogether.CreateNameplateHealthOverlayTexture then
@@ -1405,6 +1451,27 @@ function QuestTogether:InitializeQuestPlatesWindow(parentCategory)
 	fallbackTintHighlight:Hide()
 	fallbackUnitFrame.questPreviewTintHighlight = fallbackTintHighlight
 
+	local fallbackDeselectedOverlay = fallbackHealthBar:CreateTexture(nil, "OVERLAY", nil, 3)
+	if fallbackDeselectedOverlay.SetAtlas then
+		fallbackDeselectedOverlay:SetAtlas("ui-hud-nameplates-deselected-overlay", true)
+	else
+		fallbackDeselectedOverlay:SetColorTexture(0.95, 0.95, 0.95, 0.16)
+	end
+	fallbackDeselectedOverlay:SetPoint("TOPLEFT", fallbackHealthBar, "TOPLEFT", 0, 1)
+	fallbackDeselectedOverlay:SetPoint("BOTTOMRIGHT", fallbackHealthBar, "BOTTOMRIGHT", 0, -1)
+	fallbackUnitFrame.questPreviewDeselectedOverlay = fallbackDeselectedOverlay
+
+	local fallbackSelectedBorder = fallbackHealthBar:CreateTexture(nil, "OVERLAY", nil, 4)
+	if fallbackSelectedBorder.SetAtlas then
+		fallbackSelectedBorder:SetAtlas("UI-HUD-Nameplates-Selected", true)
+	else
+		fallbackSelectedBorder:SetColorTexture(0.95, 0.95, 0.95, 0.22)
+	end
+	fallbackSelectedBorder:SetPoint("TOPLEFT", fallbackHealthBarBackground, "TOPLEFT", -1, 1)
+	fallbackSelectedBorder:SetPoint("BOTTOMRIGHT", fallbackHealthBarBackground, "BOTTOMRIGHT", -3, 3)
+	fallbackSelectedBorder:Hide()
+	fallbackUnitFrame.questPreviewSelectedBorder = fallbackSelectedBorder
+
 	local fallbackTextOverlay = CreateFrame("Frame", nil, fallbackHealthBarsContainer)
 	fallbackTextOverlay:SetAllPoints()
 	fallbackTextOverlay:SetFrameStrata(fallbackHealthBarsContainer:GetFrameStrata() or "LOW")
@@ -1415,7 +1482,7 @@ function QuestTogether:InitializeQuestPlatesWindow(parentCategory)
 	fallbackName:SetPoint("LEFT", fallbackHealthBarsContainer, "LEFT", 6, 0)
 	fallbackName:SetJustifyH("LEFT")
 	fallbackName:SetWidth(160)
-	fallbackName:SetText("Target Name")
+	fallbackName:SetText(GetRandomQuestPlatePreviewName())
 	fallbackUnitFrame.name = fallbackName
 
 	local fallbackHealthValue = fallbackTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1432,11 +1499,16 @@ function QuestTogether:InitializeQuestPlatesWindow(parentCategory)
 		resetNameplateQuestHealthColor = resetNameplateQuestHealthColor,
 		previewFrame = previewFrame,
 		previewNamePlate = nil,
+		previewNameLabel = fallbackName,
 		previewUnitFrame = fallbackUnitFrame,
 	}
 	self.questPlatesFrame = frame
 
 	frame:SetScript("OnShow", function()
+		local controls = QuestTogether.questPlateControls
+		if controls and controls.previewNameLabel then
+			controls.previewNameLabel:SetText(GetRandomQuestPlatePreviewName())
+		end
 		QuestTogether:RefreshQuestPlatesWindow()
 	end)
 
