@@ -15,6 +15,7 @@ local QuestTogether = _G.QuestTogether
 local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
 local ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK = true
 local QUEST_SCAN_TOOLTIP_FRAME_NAME = "QuestTogetherQuestScanTooltip"
+local QUEST_SCAN_TOOLTIP_OWNER_FRAME_NAME = "QuestTogetherQuestScanTooltipOwner"
 local ANNOUNCEMENT_BUBBLE_Y_OFFSET = 22
 local ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS = 0.2
 local ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS = 0.4
@@ -23,6 +24,7 @@ local PERSONAL_BUBBLE_SETTINGS_DIALOG_HEIGHT = 220
 local ApplyQuestIconVisual
 local SafeUiNumber
 local questScanTooltipFrame = nil
+local questScanTooltipOwnerFrame = nil
 
 -- Original icon used by this addon's first nameplate implementation.
 QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE = "Interface\\OPTIONSFRAME\\UI-OptionsFrame-NewFeatureIcon"
@@ -211,6 +213,32 @@ local function GetQuestScanTooltipFrame()
 
 	questScanTooltipFrame = tooltipFrame
 	return questScanTooltipFrame
+end
+
+local function GetQuestScanTooltipOwnerFrame()
+	if questScanTooltipOwnerFrame and not IsFrameForbidden(questScanTooltipOwnerFrame) then
+		return questScanTooltipOwnerFrame
+	end
+
+	local existingOwner = _G[QUEST_SCAN_TOOLTIP_OWNER_FRAME_NAME]
+	if existingOwner and not IsFrameForbidden(existingOwner) then
+		questScanTooltipOwnerFrame = existingOwner
+		return questScanTooltipOwnerFrame
+	end
+
+	if type(CreateFrame) ~= "function" then
+		return nil
+	end
+
+	local parentFrame = UIParent or nil
+	local ownerFrame = CreateFrame("Frame", QUEST_SCAN_TOOLTIP_OWNER_FRAME_NAME, parentFrame)
+	if not ownerFrame or IsFrameForbidden(ownerFrame) then
+		return nil
+	end
+
+	ownerFrame:Hide()
+	questScanTooltipOwnerFrame = ownerFrame
+	return questScanTooltipOwnerFrame
 end
 
 local function BuildPseudoTooltipLinesFromHiddenTooltip(tooltipFrame)
@@ -1441,37 +1469,12 @@ function QuestTogether:RebuildNameplateQuestTitleCache()
 		end
 	end
 
-	-- Include world quest titles similarly to how Plater seeds its cache.
-	if self.API and self.API.InCombatLockdown and self.API.InCombatLockdown() then
-		self:Debug("Skipping world quest title cache refresh during combat", "nameplate")
-		return
-	end
-
-	if self.API and self.API.GetBestMapForUnit and C_TaskQuest and C_TaskQuest.GetQuestInfoByQuestID then
-		local mapId = self.API.GetBestMapForUnit("player")
-		if mapId then
-			local getQuestsForMap = C_TaskQuest.GetQuestsForPlayerByMapID or C_TaskQuest.GetQuestsOnMap
-			if getQuestsForMap then
-				local okQuests, worldQuestList = pcall(getQuestsForMap, mapId)
-				if not okQuests then
-					worldQuestList = nil
-				end
-				if type(worldQuestList) == "table" then
-					for _, questInfo in ipairs(worldQuestList) do
-						local questId = self:NormalizeQuestID(questInfo and questInfo.questId)
-						if questId then
-							-- Task-quest title lookups can fail transiently during map refresh.
-							local okTitle, questName = pcall(C_TaskQuest.GetQuestInfoByQuestID, questId)
-							if okTitle and self:IsSecretValue(questName) then
-								questName = nil
-							end
-							if type(questName) == "string" and questName ~= "" then
-								self.nameplateQuestTitleCache[questName] = true
-							end
-						end
-					end
-				end
-			end
+	-- Merge tracker titles as a fallback cache source without touching shared map-task tables.
+	-- Reading C_TaskQuest map task arrays taints Blizzard map pins in combat.
+	for _, trackedQuest in pairs(self:GetPlayerTracker() or {}) do
+		local trackedTitle = trackedQuest and trackedQuest.title or nil
+		if type(trackedTitle) == "string" and trackedTitle ~= "" then
+			self.nameplateQuestTitleCache[trackedTitle] = true
 		end
 	end
 end
@@ -1578,13 +1581,14 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 		self:SetCachedQuestObjectiveResult(unitGuid, false)
 		return false
 	end
+	local tooltipOwner = GetQuestScanTooltipOwnerFrame()
 
 	local okScan = pcall(function()
 		if scanTooltip.ClearLines then
 			scanTooltip:ClearLines()
 		end
 		if scanTooltip.SetOwner then
-			scanTooltip:SetOwner(WorldFrame or UIParent, "ANCHOR_NONE")
+			scanTooltip:SetOwner(tooltipOwner or UIParent, "ANCHOR_NONE")
 		end
 		scanTooltip:SetHyperlink("unit:" .. unitGuid)
 	end)

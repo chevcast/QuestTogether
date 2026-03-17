@@ -277,39 +277,36 @@ function QuestTogether:HandleGroupRosterChanged(reason)
 	)
 end
 
--- Snapshot area task quests from Blizzard's local task table.
--- World quests and bonus objectives share the same source and differ only by classification.
+-- Snapshot area task quests from sanitized quest-log rows.
+-- This intentionally avoids map-task tables (GetTasksTable/GetTaskInfo/C_TaskQuest task arrays),
+-- which are shared with Blizzard map data providers and can taint protected map-pin updates.
 function QuestTogether:GetTaskAreaSnapshot(taskType)
 	local activeByQuestId = {}
 
-	-- Use Blizzard's local task snapshot only.
-	-- We intentionally do not merge tracked-watch lists here because watched tasks
-	-- are shown by Blizzard even when out of area, which is not suitable for enter/leave.
-	if type(GetTasksTable) == "function" then
-		local okTasks, tasksTable = pcall(GetTasksTable)
-		if not okTasks then
-			tasksTable = nil
-		end
-		if type(tasksTable) == "table" then
-			for _, questId in ipairs(tasksTable) do
-				local normalizedQuestId = NormalizeQuestId(self, questId)
-				local matchesType = false
-				if normalizedQuestId then
-					if taskType == "world" then
-						matchesType = self:IsWorldQuest(normalizedQuestId)
-					elseif taskType == "bonus" then
-						matchesType = self:IsBonusObjective(normalizedQuestId)
-					end
+	if not self.API or not self.API.GetNumQuestLogEntries or not self.API.GetQuestLogInfo then
+		return activeByQuestId
+	end
+
+	local totalEntries = self:SafeToNumber(self.API.GetNumQuestLogEntries()) or 0
+	for entryIndex = 1, totalEntries do
+		local questInfo = self.API.GetQuestLogInfo(entryIndex)
+		if questInfo and not questInfo.isHeader and not questInfo.isHidden and questInfo.isTask and questInfo.isOnMap then
+			local normalizedQuestId = NormalizeQuestId(self, questInfo.questID)
+			if normalizedQuestId then
+				local isWorldQuest = questInfo.isWorldQuest
+				if type(isWorldQuest) ~= "boolean" then
+					isWorldQuest = self:IsWorldQuest(normalizedQuestId)
 				end
+
+				local matchesType = false
+				if taskType == "world" then
+					matchesType = isWorldQuest and true or false
+				elseif taskType == "bonus" then
+					matchesType = isWorldQuest ~= true
+				end
+
 				if matchesType then
-					local inArea = true
-					if type(GetTaskInfo) == "function" then
-						local okTaskInfo, taskInfo = pcall(GetTaskInfo, normalizedQuestId)
-						inArea = okTaskInfo and taskInfo and true or false
-					end
-					if inArea then
-						activeByQuestId[normalizedQuestId] = self:GetQuestTitle(normalizedQuestId)
-					end
+					activeByQuestId[normalizedQuestId] = self:GetQuestTitle(normalizedQuestId, questInfo)
 				end
 			end
 		end
