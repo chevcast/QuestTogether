@@ -80,6 +80,7 @@ QuestTogether.CHAT_BUBBLE_DURATION_MIN = 1
 QuestTogether.CHAT_BUBBLE_DURATION_MAX = 8
 QuestTogether.CHAT_BUBBLE_DURATION_STEP = 0.5
 QuestTogether.ANNOUNCEMENT_NEARBY_RADIUS = 5
+QuestTogether.WQ_DIAG_MAX_LINES = 1200
 
 -- Runtime state flags.
 QuestTogether.isInitialized = QuestTogether.isInitialized or false
@@ -89,6 +90,8 @@ QuestTogether.activeProfileKey = QuestTogether.activeProfileKey or nil
 QuestTogether.activeCharacterKey = QuestTogether.activeCharacterKey or nil
 QuestTogether.pendingPingRequests = QuestTogether.pendingPingRequests or {}
 QuestTogether.pendingQuestCompareRequests = QuestTogether.pendingQuestCompareRequests or {}
+QuestTogether.worldQuestDiagnosticLogLines = QuestTogether.worldQuestDiagnosticLogLines or {}
+QuestTogether.testResultLogLines = QuestTogether.testResultLogLines or {}
 
 -- Work queues / state tables used by event handlers.
 QuestTogether.onQuestLogUpdate = QuestTogether.onQuestLogUpdate or {}
@@ -96,6 +99,7 @@ QuestTogether.questsCompleted = QuestTogether.questsCompleted or {}
 QuestTogether.pendingQuestRemovals = QuestTogether.pendingQuestRemovals or {}
 QuestTogether.worldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID or {}
 QuestTogether.bonusObjectiveAreaStateByQuestID = QuestTogether.bonusObjectiveAreaStateByQuestID or {}
+QuestTogether.questBlobInsideStateByQuestID = QuestTogether.questBlobInsideStateByQuestID or {}
 
 -- Default settings for SavedVariables.
 QuestTogether.DEFAULTS = {
@@ -457,6 +461,7 @@ QuestTogether.runtimeEvents = {
 	"QUEST_LOG_UPDATE",
 	"QUEST_POI_UPDATE",
 	"AREA_POIS_UPDATED",
+	"PLAYER_INSIDE_QUEST_BLOB_STATE_CHANGED",
 	"ZONE_CHANGED",
 	"ZONE_CHANGED_INDOORS",
 	"ZONE_CHANGED_NEW_AREA",
@@ -680,6 +685,9 @@ QuestTogether.API = QuestTogether.API or {
 			return ok and result and true or false
 		end,
 		GetQuestLogIndexForQuestID = function(questID)
+			if InCombatLockdown and InCombatLockdown() then
+				return nil
+			end
 			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
 				or nil
 			if not numericQuestID then
@@ -733,6 +741,285 @@ QuestTogether.API = QuestTogether.API or {
 			end
 			return false
 		end,
+		IsQuestOnMap = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return false
+			end
+			if C_QuestLog and C_QuestLog.IsOnMap then
+				local ok, isOnMap = pcall(C_QuestLog.IsOnMap, numericQuestID)
+				if not ok then
+					return false
+				end
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(isOnMap) then
+					return false
+				end
+				if type(isOnMap) == "boolean" then
+					return isOnMap
+				end
+				local numericFlag = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(isOnMap) or nil
+				if numericFlag ~= nil then
+					return numericFlag ~= 0
+				end
+			end
+			return false
+		end,
+		IsTaskQuestActive = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return nil
+			end
+			if C_TaskQuest and C_TaskQuest.IsActive then
+				local ok, isActive = pcall(C_TaskQuest.IsActive, numericQuestID)
+				if not ok then
+					return nil
+				end
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(isActive) then
+					return nil
+				end
+				if type(isActive) == "boolean" then
+					return isActive
+				end
+				local numericFlag = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(isActive) or nil
+				if numericFlag ~= nil then
+					return numericFlag ~= 0
+				end
+			end
+			return nil
+		end,
+		GetTaskInfo = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return nil, nil, nil, nil, nil
+			end
+			if type(GetTaskInfo) ~= "function" then
+				return nil, nil, nil, nil, nil
+			end
+
+			local ok, isInArea, isOnMap, numObjectives, taskName, displayAsObjective = pcall(GetTaskInfo, numericQuestID)
+			if not ok then
+				return nil, nil, nil, nil, nil
+			end
+
+			local function NormalizeBooleanFlag(rawValue)
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(rawValue) then
+					return nil
+				end
+				if type(rawValue) == "boolean" then
+					return rawValue
+				end
+				local numericFlag = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(rawValue) or nil
+				if numericFlag ~= nil then
+					return numericFlag ~= 0
+				end
+				return nil
+			end
+
+			local normalizedInArea = NormalizeBooleanFlag(isInArea)
+			local normalizedOnMap = NormalizeBooleanFlag(isOnMap)
+			local normalizedDisplayAsObjective = NormalizeBooleanFlag(displayAsObjective)
+
+			local normalizedObjectiveCount = nil
+			if not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(numObjectives)) then
+				normalizedObjectiveCount = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(numObjectives)
+					or nil
+				if normalizedObjectiveCount ~= nil then
+					normalizedObjectiveCount = math.floor(normalizedObjectiveCount + 0.5)
+					if normalizedObjectiveCount < 0 then
+						normalizedObjectiveCount = 0
+					end
+				end
+			end
+
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(taskName) then
+				taskName = nil
+			end
+			if type(taskName) ~= "string" or taskName == "" then
+				taskName = nil
+			end
+
+			return normalizedInArea, normalizedOnMap, normalizedObjectiveCount, taskName, normalizedDisplayAsObjective
+		end,
+		GetPlayerMapID = function(unitToken)
+			if not (C_Map and C_Map.GetBestMapForUnit) then
+				return nil
+			end
+
+			local normalizedUnitToken = type(unitToken) == "string" and unitToken ~= "" and unitToken or "player"
+			local ok, mapID = pcall(C_Map.GetBestMapForUnit, normalizedUnitToken)
+			if not ok then
+				return nil
+			end
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(mapID) then
+				return nil
+			end
+			local numericMapID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(mapID) or nil
+			if not numericMapID or numericMapID <= 0 then
+				return nil
+			end
+			return math.floor(numericMapID + 0.5)
+		end,
+		GetLocalTaskQuests = function()
+			if type(GetTasksTable) ~= "function" then
+				return nil
+			end
+
+			-- Blizzard's objective tracker uses GetTasksTable() as the local-area task list.
+			-- Call it behind pcall for transient quest-log races, then copy only scalar quest IDs
+			-- out so we never retain Blizzard-owned tables.
+			local ok, tasks = pcall(GetTasksTable)
+			if not ok or (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(tasks)) then
+				return nil
+			end
+			if type(tasks) ~= "table" then
+				return nil
+			end
+
+			local questIds = {}
+			for index = 1, #tasks do
+				local questID = tasks[index]
+				if not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(questID)) then
+					local numericQuestID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(questID)
+						or nil
+					if numericQuestID and numericQuestID > 0 then
+						questIds[#questIds + 1] = math.floor(numericQuestID + 0.5)
+					end
+				end
+			end
+
+			return questIds
+		end,
+		GetTaskQuestsOnMap = function(mapID)
+			local numericMapID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(mapID) or nil
+			if not numericMapID or numericMapID <= 0 then
+				return nil
+			end
+			numericMapID = math.floor(numericMapID + 0.5)
+
+			if not (C_TaskQuest and C_TaskQuest.GetQuestsOnMap) then
+				return nil
+			end
+
+			local ok, tasks = pcall(C_TaskQuest.GetQuestsOnMap, numericMapID)
+			if not ok or (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(tasks)) then
+				return nil
+			end
+			if type(tasks) ~= "table" then
+				return nil
+			end
+
+			local questIds = {}
+			for index = 1, #tasks do
+				local taskInfo = tasks[index]
+				if type(taskInfo) == "table" and not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(taskInfo)) then
+					local questID = taskInfo.questID
+					if not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(questID)) then
+						local numericQuestID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(questID)
+							or nil
+						if numericQuestID and numericQuestID > 0 then
+							questIds[#questIds + 1] = math.floor(numericQuestID + 0.5)
+						end
+					end
+				end
+			end
+
+			return questIds
+		end,
+		GetQuestPOIsOnMap = function(mapID)
+			local numericMapID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(mapID) or nil
+			if not numericMapID or numericMapID <= 0 then
+				return nil
+			end
+			numericMapID = math.floor(numericMapID + 0.5)
+
+			if not (C_QuestLog and C_QuestLog.GetQuestsOnMap) then
+				return nil
+			end
+
+			local ok, pois = pcall(C_QuestLog.GetQuestsOnMap, numericMapID)
+			if not ok or (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(pois)) then
+				return nil
+			end
+			if type(pois) ~= "table" then
+				return nil
+			end
+
+			local sanitized = {}
+			for index = 1, #pois do
+				local poi = pois[index]
+				if type(poi) == "table" and not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(poi)) then
+					local questID = poi.questID
+					if not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(questID)) then
+						local numericQuestID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(questID)
+							or nil
+						if numericQuestID and numericQuestID > 0 then
+							local function NormalizeBool(rawValue)
+								if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(rawValue) then
+									return nil
+								end
+								if type(rawValue) == "boolean" then
+									return rawValue
+								end
+								local numericFlag = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(rawValue)
+									or nil
+								if numericFlag ~= nil then
+									return numericFlag ~= 0
+								end
+								return nil
+							end
+
+							local questTagType = nil
+							if not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(poi.questTagType)) then
+								questTagType = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(poi.questTagType)
+									or nil
+								if questTagType ~= nil then
+									questTagType = math.floor(questTagType + 0.5)
+								end
+							end
+
+							sanitized[#sanitized + 1] = {
+								questID = math.floor(numericQuestID + 0.5),
+								inProgress = NormalizeBool(poi.inProgress),
+								isQuestStart = NormalizeBool(poi.isQuestStart),
+								isMapIndicatorQuest = NormalizeBool(poi.isMapIndicatorQuest),
+								questTagType = questTagType,
+							}
+						end
+					end
+				end
+			end
+
+			return sanitized
+		end,
+		IsInsideQuestBlob = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
+				or nil
+			if not numericQuestID then
+				return nil
+			end
+			if not (C_Minimap and C_Minimap.IsInsideQuestBlob) then
+				return nil
+			end
+
+			local ok, isInside = pcall(C_Minimap.IsInsideQuestBlob, numericQuestID)
+			if not ok then
+				return nil
+			end
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(isInside) then
+				return nil
+			end
+			if type(isInside) == "boolean" then
+				return isInside
+			end
+			local numericFlag = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(isInside) or nil
+			if numericFlag ~= nil then
+				return numericFlag ~= 0
+			end
+			return nil
+		end,
 		IsOnQuest = function(questID)
 			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
 				or nil
@@ -758,6 +1045,9 @@ QuestTogether.API = QuestTogether.API or {
 			return false
 		end,
 		GetNumQuestLogEntries = function()
+			if InCombatLockdown and InCombatLockdown() then
+				return 0
+			end
 			if C_QuestLog and C_QuestLog.GetNumQuestLogEntries then
 				local ok, count = pcall(C_QuestLog.GetNumQuestLogEntries)
 				if not ok then
@@ -774,6 +1064,9 @@ QuestTogether.API = QuestTogether.API or {
 			return 0
 		end,
 		GetQuestLogInfo = function(questLogIndex)
+			if InCombatLockdown and InCombatLockdown() then
+				return nil
+			end
 			local numericQuestLogIndex = QuestTogether and QuestTogether.SafeToNumber
 				and QuestTogether:SafeToNumber(questLogIndex)
 				or nil
@@ -797,34 +1090,67 @@ QuestTogether.API = QuestTogether.API or {
 					return nil
 				end
 
-				-- Keep quest-log snapshots to a strict scalar allowlist.
-				-- Broadly copying the C_QuestLog info table can carry secure/forbidden references
-				-- that later taint Blizzard map pin update paths.
-				local titleValue = questInfo.title
-				local titleIsSecret = QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(titleValue)
-				local sanitizedInfo = {
-					title = (type(titleValue) == "string" and not titleIsSecret) and titleValue or nil,
-					isHeader = questInfo.isHeader == true,
-					isHidden = questInfo.isHidden == true,
-					isTask = questInfo.isTask == true,
-					isOnMap = questInfo.isOnMap == true,
-					hasLocalPOI = questInfo.hasLocalPOI == true,
-					isWorldQuest = questInfo.isWorldQuest == true,
-					isComplete = questInfo.isComplete == true,
-				}
+					local function NormalizeQuestInfoFlag(rawValue)
+						if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(rawValue) then
+							return nil
+						end
+						if type(rawValue) == "boolean" then
+							return rawValue
+						end
+						local numericFlag = QuestTogether and QuestTogether.SafeToNumber
+							and QuestTogether:SafeToNumber(rawValue)
+							or nil
+						if numericFlag ~= nil then
+							return numericFlag ~= 0
+						end
+						return nil
+					end
 
-				local numericQuestID = QuestTogether and QuestTogether.SafeToNumber
-					and QuestTogether:SafeToNumber(questInfo.questID)
-					or nil
-				if numericQuestID and numericQuestID > 0 then
-					sanitizedInfo.questID = math.floor(numericQuestID + 0.5)
-				end
+					-- Keep quest-log snapshots to a strict scalar allowlist.
+					-- Broadly copying the C_QuestLog info table can carry secure/forbidden references
+					-- that later taint Blizzard map pin update paths.
+					local titleValue = questInfo.title
+					local titleIsSecret = QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(titleValue)
+					local sanitizedInfo = {
+						title = (type(titleValue) == "string" and not titleIsSecret) and titleValue or nil,
+						isHeader = NormalizeQuestInfoFlag(questInfo.isHeader) == true,
+						isHidden = NormalizeQuestInfoFlag(questInfo.isHidden) == true,
+						isTask = NormalizeQuestInfoFlag(questInfo.isTask) == true,
+						isOnMap = NormalizeQuestInfoFlag(questInfo.isOnMap) == true,
+						hasLocalPOI = NormalizeQuestInfoFlag(questInfo.hasLocalPOI) == true,
+						isComplete = NormalizeQuestInfoFlag(questInfo.isComplete) == true,
+					}
+
+					-- Preserve unknown world-quest classification as nil so snapshot code can fall
+					-- back to C_QuestLog.IsWorldQuest(questID).
+					local normalizedIsWorldQuest = NormalizeQuestInfoFlag(questInfo.isWorldQuest)
+					if normalizedIsWorldQuest ~= nil then
+						sanitizedInfo.isWorldQuest = normalizedIsWorldQuest
+					end
+
+					local numericQuestID = QuestTogether and QuestTogether.SafeToNumber
+						and QuestTogether:SafeToNumber(questInfo.questID)
+						or nil
+					if (not numericQuestID or numericQuestID <= 0) and C_QuestLog and C_QuestLog.GetQuestIDForLogIndex then
+						local okQuestId, questIDFromIndex = pcall(C_QuestLog.GetQuestIDForLogIndex, numericQuestLogIndex)
+						if okQuestId and not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(questIDFromIndex)) then
+							numericQuestID = QuestTogether and QuestTogether.SafeToNumber
+								and QuestTogether:SafeToNumber(questIDFromIndex)
+								or nil
+						end
+					end
+					if numericQuestID and numericQuestID > 0 then
+						sanitizedInfo.questID = math.floor(numericQuestID + 0.5)
+					end
 
 				return sanitizedInfo
 			end
 			return nil
 		end,
 		GetNumQuestLeaderBoards = function(questLogIndex)
+			if InCombatLockdown and InCombatLockdown() then
+				return 0
+			end
 			if type(GetNumQuestLeaderBoards) ~= "function" then
 				return 0
 			end
@@ -841,6 +1167,9 @@ QuestTogether.API = QuestTogether.API or {
 			return objectiveCount
 		end,
 		GetQuestObjectiveInfo = function(questID, objectiveIndex, displayComplete)
+			if InCombatLockdown and InCombatLockdown() then
+				return nil, nil, nil, nil
+			end
 			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
 				or nil
 			if not numericQuestID then
@@ -883,6 +1212,9 @@ QuestTogether.API = QuestTogether.API or {
 			return text, objectiveType, finished, currentValue
 		end,
 		GetQuestProgressBarPercent = function(questID)
+			if InCombatLockdown and InCombatLockdown() then
+				return nil
+			end
 			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
 				or nil
 			if not numericQuestID then
@@ -3034,13 +3366,56 @@ end
 
 function QuestTogether:IsWorldQuest(questId)
 	local numericQuestId = self:NormalizeQuestID(questId)
-	if not numericQuestId or not C_QuestLog or not C_QuestLog.IsWorldQuest then
+	if not numericQuestId then
 		return false
 	end
 
-	-- Quest APIs may throw on IDs that disappear mid-update; treat as false.
-	local ok, isWorldQuest = pcall(C_QuestLog.IsWorldQuest, numericQuestId)
-	return ok and isWorldQuest and true or false
+	if C_QuestLog and C_QuestLog.IsWorldQuest then
+		-- Quest APIs may throw on IDs that disappear mid-update; treat as false.
+		local ok, isWorldQuest = pcall(C_QuestLog.IsWorldQuest, numericQuestId)
+		if ok then
+			if self:IsSecretValue(isWorldQuest) then
+				isWorldQuest = nil
+			end
+			if type(isWorldQuest) == "boolean" then
+				if isWorldQuest then
+					return true
+				end
+			else
+				local worldFlag = self:SafeToNumber(isWorldQuest)
+				if worldFlag ~= nil and worldFlag ~= 0 then
+					return true
+				end
+			end
+		end
+	end
+
+	-- Some task quest variants do not reliably flag IsWorldQuest, but they expose
+	-- world-quest metadata through quest tags.
+	local tagInfo = self:GetQuestTagInfo(numericQuestId)
+	if type(tagInfo) ~= "table" then
+		return false
+	end
+
+	local worldQuestType = nil
+	if not self:IsSecretValue(tagInfo.worldQuestType) then
+		worldQuestType = self:SafeToNumber(tagInfo.worldQuestType)
+	end
+	if worldQuestType ~= nil and worldQuestType > 0 then
+		return true
+	end
+
+	if Enum and Enum.QuestTag and Enum.QuestTag.WorldQuest then
+		local tagID = nil
+		if not self:IsSecretValue(tagInfo.tagID) then
+			tagID = self:SafeToNumber(tagInfo.tagID)
+		end
+		if tagID ~= nil and tagID == Enum.QuestTag.WorldQuest then
+			return true
+		end
+	end
+
+	return false
 end
 
 function QuestTogether:IsBonusObjective(questId)
@@ -3391,6 +3766,8 @@ function QuestTogether:Enable()
 	self:Debugf("comms", "Registered addon prefix=%s", tostring(self.commPrefix))
 	self.isEnabled = true
 	self.worldQuestAreaStateByQuestID = {}
+	self.bonusObjectiveAreaStateByQuestID = {}
+	self.questBlobInsideStateByQuestID = {}
 	if self.EnsureAnnouncementChannelJoined then
 		self:EnsureAnnouncementChannelJoined()
 	end
@@ -3437,6 +3814,8 @@ function QuestTogether:Disable()
 	self:UnregisterRuntimeEvents()
 	self.isEnabled = false
 	self.worldQuestAreaStateByQuestID = {}
+	self.bonusObjectiveAreaStateByQuestID = {}
+	self.questBlobInsideStateByQuestID = {}
 	if self.LeaveAnnouncementChannel then
 		self:LeaveAnnouncementChannel()
 	end
@@ -3490,6 +3869,279 @@ function QuestTogether:OpenHudEditMode()
 	return false
 end
 
+function QuestTogether:IsWorldQuestDiagnosticsEnabled()
+	return self.worldQuestDiagnosticsEnabled == true
+end
+
+function QuestTogether:SetWorldQuestDiagnosticsEnabled(enabled)
+	self.worldQuestDiagnosticsEnabled = enabled and true or false
+end
+
+function QuestTogether:ClearWorldQuestDiagnosticLog()
+	self.worldQuestDiagnosticLogLines = {}
+	self:RefreshCopyableWindow()
+end
+
+function QuestTogether:GetWorldQuestDiagnosticLogText()
+	return table.concat(self.worldQuestDiagnosticLogLines or {}, "\n")
+end
+
+function QuestTogether:ClearTestResultLog()
+	self.testResultLogLines = {}
+	self:RefreshCopyableWindow()
+end
+
+function QuestTogether:GetTestResultLogText()
+	return table.concat(self.testResultLogLines or {}, "\n")
+end
+
+function QuestTogether:SetTestResultLogLines(lines)
+	local sanitized = {}
+	if type(lines) == "table" then
+		for index = 1, #lines do
+			local line = lines[index]
+			sanitized[#sanitized + 1] = tostring(line or "")
+		end
+	end
+	self.testResultLogLines = sanitized
+	self:RefreshCopyableWindow()
+end
+
+function QuestTogether:RefreshCopyableWindow()
+	local frame = self.worldQuestDiagnosticWindow
+	if not frame or not frame.editBox or not frame.scrollFrame then
+		return
+	end
+
+	local titleText = type(frame.copyableTitle) == "string" and frame.copyableTitle or "QuestTogether"
+	local hintText = type(frame.copyableHint) == "string" and frame.copyableHint or ""
+	local getText = frame.copyableGetText
+	local text = type(frame.copyableText) == "string" and frame.copyableText or ""
+	if type(getText) == "function" then
+		local ok, resolvedText = pcall(getText, self)
+		if ok and type(resolvedText) == "string" then
+			text = resolvedText
+		elseif ok and resolvedText ~= nil then
+			text = tostring(resolvedText)
+		else
+			text = ""
+		end
+	end
+
+	if frame.titleLabel then
+		frame.titleLabel:SetText(titleText)
+	end
+	if frame.hintLabel then
+		frame.hintLabel:SetText(hintText)
+	end
+	frame.editBox:SetText(text)
+	frame.editBox:ClearFocus()
+	frame.editBox:HighlightText(0, 0)
+	frame.editBox:SetCursorPosition(0)
+	if frame.clearButton then
+		local hasClearHandler = type(frame.copyableOnClear) == "function"
+		frame.clearButton:SetShown(hasClearHandler)
+		frame.clearButton:SetText(type(frame.copyableClearLabel) == "string" and frame.copyableClearLabel or "Clear")
+	end
+
+	-- Keep newest diagnostic lines visible when the window updates.
+	local maxScroll = math.max(0, frame.editBox:GetHeight() - frame.scrollFrame:GetHeight())
+	frame.scrollFrame:SetVerticalScroll(maxScroll)
+end
+
+function QuestTogether:RefreshWorldQuestDiagnosticWindow()
+	self:RefreshCopyableWindow()
+end
+
+function QuestTogether:AppendWorldQuestDiagnosticLogLine(line)
+	if type(line) ~= "string" or line == "" then
+		return
+	end
+
+	local lines = self.worldQuestDiagnosticLogLines
+	if type(lines) ~= "table" then
+		lines = {}
+		self.worldQuestDiagnosticLogLines = lines
+	end
+
+	lines[#lines + 1] = line
+	local maxLines = self.WQ_DIAG_MAX_LINES or 1200
+	local overflow = #lines - maxLines
+	if overflow > 0 then
+		for index = 1, (#lines - overflow) do
+			lines[index] = lines[index + overflow]
+		end
+		for index = (#lines - overflow + 1), #lines do
+			lines[index] = nil
+		end
+	end
+
+	if self.worldQuestDiagnosticWindow and self.worldQuestDiagnosticWindow:IsShown() then
+		self:RefreshCopyableWindow()
+	end
+end
+
+function QuestTogether:EnsureCopyableWindow()
+	if self.worldQuestDiagnosticWindow then
+		return self.worldQuestDiagnosticWindow
+	end
+
+	local frame = CreateFrame("Frame", "QuestTogetherWQDiagnosticWindow", UIParent, "BasicFrameTemplateWithInset")
+	frame:SetSize(900, 560)
+	frame:SetPoint("CENTER")
+	frame:SetFrameStrata("DIALOG")
+	frame:SetClampedToScreen(true)
+	frame:SetMovable(true)
+	frame:EnableMouse(true)
+	frame:RegisterForDrag("LeftButton")
+	frame:SetScript("OnDragStart", frame.StartMoving)
+	frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+	frame:SetScript("OnShow", function()
+		QuestTogether:RefreshCopyableWindow()
+	end)
+
+	local title = frame.TitleText or frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	if not frame.TitleText then
+		title:SetPoint("TOP", frame, "TOP", 0, -8)
+	end
+	title:SetText("QuestTogether")
+
+	local hint = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	hint:SetPoint("TOPLEFT", frame, "TOPLEFT", 12, -34)
+	hint:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -12, -34)
+	hint:SetJustifyH("LEFT")
+	hint:SetText("")
+
+	local textInset = CreateFrame("Frame", nil, frame, "InsetFrameTemplate3")
+	textInset:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -54)
+	textInset:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 44)
+
+	local scrollFrame = CreateFrame("ScrollFrame", nil, textInset, "UIPanelScrollFrameTemplate")
+	scrollFrame:SetPoint("TOPLEFT", textInset, "TOPLEFT", 6, -6)
+	scrollFrame:SetPoint("BOTTOMRIGHT", textInset, "BOTTOMRIGHT", -28, 6)
+
+	local editBox = CreateFrame("EditBox", nil, scrollFrame)
+	editBox:SetMultiLine(true)
+	editBox:SetAutoFocus(false)
+	editBox:EnableMouse(true)
+	editBox:SetFontObject(ChatFontNormal)
+	editBox:SetWidth(1)
+	editBox:SetScript("OnEscapePressed", function(self)
+		self:ClearFocus()
+	end)
+	scrollFrame:SetScrollChild(editBox)
+	scrollFrame:SetScript("OnSizeChanged", function(scrollChildFrame, width)
+		editBox:SetWidth(math.max(1, width - 8))
+	end)
+
+	local selectAllButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	selectAllButton:SetSize(96, 24)
+	selectAllButton:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 12, 12)
+	selectAllButton:SetText("Select All")
+	selectAllButton:SetScript("OnClick", function()
+		editBox:SetFocus()
+		editBox:HighlightText()
+	end)
+
+	local clearButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	clearButton:SetSize(80, 24)
+	clearButton:SetPoint("LEFT", selectAllButton, "RIGHT", 8, 0)
+	clearButton:SetText("Clear")
+	clearButton:SetScript("OnClick", function()
+		local onClear = frame.copyableOnClear
+		if type(onClear) == "function" then
+			onClear(QuestTogether)
+		end
+	end)
+
+	local closeButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	closeButton:SetSize(80, 24)
+	closeButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 12)
+	closeButton:SetText("Close")
+	closeButton:SetScript("OnClick", function()
+		frame:Hide()
+	end)
+
+	frame.scrollFrame = scrollFrame
+	frame.editBox = editBox
+	frame.selectAllButton = selectAllButton
+	frame.clearButton = clearButton
+	frame.closeButton = closeButton
+	frame.titleLabel = title
+	frame.hintLabel = hint
+	self.worldQuestDiagnosticWindow = frame
+
+	return frame
+end
+
+function QuestTogether:EnsureWorldQuestDiagnosticWindow()
+	return self:EnsureCopyableWindow()
+end
+
+function QuestTogether:ShowCopyableWindow(options)
+	local frame = self:EnsureCopyableWindow()
+	if not frame then
+		return false
+	end
+
+	options = options or {}
+	frame.copyableTitle = type(options.title) == "string" and options.title or "QuestTogether"
+	frame.copyableHint = type(options.hint) == "string" and options.hint or ""
+	frame.copyableText = type(options.text) == "string" and options.text or nil
+	frame.copyableGetText = type(options.getText) == "function" and options.getText or nil
+	frame.copyableOnClear = type(options.onClear) == "function" and options.onClear or nil
+	frame.copyableClearLabel = type(options.clearLabel) == "string" and options.clearLabel or "Clear"
+
+	frame:Show()
+	frame:Raise()
+	self:RefreshCopyableWindow()
+	return true
+end
+
+function QuestTogether:ShowWorldQuestDiagnosticWindow()
+	return self:ShowCopyableWindow({
+		title = "QuestTogether World Quest Diagnostics",
+		hint = "Use /qt wqdiag dump and /qt wqdiag refresh. Click Select All, then Ctrl+C.",
+		getText = function(addon)
+			return addon:GetWorldQuestDiagnosticLogText()
+		end,
+		onClear = function(addon)
+			addon:ClearWorldQuestDiagnosticLog()
+		end,
+		clearLabel = "Clear",
+	})
+end
+
+function QuestTogether:ShowTestResultsWindow()
+	return self:ShowCopyableWindow({
+		title = "QuestTogether Test Results",
+		hint = "Results from /qt test. Click Select All, then Ctrl+C.",
+		getText = function(addon)
+			return addon:GetTestResultLogText()
+		end,
+		onClear = function(addon)
+			addon:ClearTestResultLog()
+		end,
+		clearLabel = "Clear",
+	})
+end
+
+function QuestTogether:PrintWorldQuestDiagnosticLine(message, force)
+	if not force and not self:IsWorldQuestDiagnosticsEnabled() then
+		return
+	end
+
+	local prefixText = "WQDiag: " .. tostring(message)
+	local now = self.API and self.API.GetTime and self:SafeToNumber(self.API.GetTime()) or nil
+	local lineText = prefixText
+	if now ~= nil then
+		lineText = string.format("[%.3f] %s", now, prefixText)
+	end
+
+	self:AppendWorldQuestDiagnosticLogLine(lineText)
+	self:PrintChatLogSystemMessage(lineText)
+end
+
 function QuestTogether:InitializeSlashCommands()
 	SLASH_QUESTTOGETHER1 = "/qt"
 	SLASH_QUESTTOGETHER2 = "/questtogether"
@@ -3520,13 +4172,14 @@ function QuestTogether:PrintHelp()
 	self:Print("/qt enable | disable - Enable or disable runtime behavior")
 	self:Print("/qt debug [on|off|toggle] - Show or control debug mode")
 	self:Print("/qt devlogall [on|off|toggle] - Show or control dev all-announcements logging")
+	self:Print("/qt wqdiag [on|off|toggle|status|dump|refresh|show|clear|copy] - World quest area diagnostics")
 	self:Print("/qt set <option> <value> - Set a boolean option (e.g. emoteOnQuestCompletion off)")
 	self:Print("/qt get <option> - Read an option value")
 	self:Print("/qt scan - Rescan your quest log now")
 	self:Print("/qt ping - Request pong metadata from all QuestTogether clients in the shared channel")
 	self:Print("/qt bubbletest <text> - Send a QUEST_PROGRESS test event as your current target")
 	self:Print("/qt bubbletest <player> <text> - Send a QUEST_PROGRESS test event as a nearby visible player")
-	self:Print("/qt test - Run in-game unit tests")
+	self:Print("/qt test - Run in-game unit tests and open results in a copyable window")
 end
 
 function QuestTogether:HandleSlashCommand(input)
@@ -3593,6 +4246,78 @@ function QuestTogether:HandleSlashCommand(input)
 			self:SetOption("devLogAllAnnouncements", boolValue)
 		end
 		self:Print("devLogAllAnnouncements = " .. tostring(self:GetOption("devLogAllAnnouncements")))
+		return
+	end
+
+	if command == "wqdiag" then
+		local arg = string.lower(self:SafeTrimString(rest, ""))
+		if arg == "" or arg == "status" then
+			local lineCount = type(self.worldQuestDiagnosticLogLines) == "table" and #self.worldQuestDiagnosticLogLines or 0
+			self:Print("wqdiag = " .. tostring(self:IsWorldQuestDiagnosticsEnabled()) .. " (lines=" .. tostring(lineCount) .. ")")
+			if self.DumpWorldQuestDiagnostics then
+				self:DumpWorldQuestDiagnostics("slash-status")
+			else
+				self:Print("World quest diagnostics are unavailable in this build.")
+			end
+			return
+		end
+
+		if arg == "toggle" then
+			self:SetWorldQuestDiagnosticsEnabled(not self:IsWorldQuestDiagnosticsEnabled())
+			self:Print("wqdiag = " .. tostring(self:IsWorldQuestDiagnosticsEnabled()))
+			return
+		end
+
+		local boolValue = self:ParseBoolean(arg)
+		if boolValue ~= nil then
+			self:SetWorldQuestDiagnosticsEnabled(boolValue)
+			self:Print("wqdiag = " .. tostring(self:IsWorldQuestDiagnosticsEnabled()))
+			return
+		end
+
+		if arg == "dump" then
+			if self.DumpWorldQuestDiagnostics then
+				self:DumpWorldQuestDiagnostics("slash-dump")
+			else
+				self:Print("World quest diagnostics are unavailable in this build.")
+			end
+			self:ShowWorldQuestDiagnosticWindow()
+			return
+		end
+
+		if arg == "refresh" then
+			local refreshed = self:RefreshTaskAreaStates(true)
+			self:Print("wqdiag refresh = " .. tostring(refreshed))
+			if self.DumpWorldQuestDiagnostics then
+				self:DumpWorldQuestDiagnostics("slash-refresh")
+			end
+			self:ShowWorldQuestDiagnosticWindow()
+			return
+		end
+
+		if arg == "show" or arg == "window" then
+			self:ShowWorldQuestDiagnosticWindow()
+			return
+		end
+
+		if arg == "clear" then
+			self:ClearWorldQuestDiagnosticLog()
+			self:Print("wqdiag log cleared.")
+			return
+		end
+
+		if arg == "copy" then
+			if self:ShowWorldQuestDiagnosticWindow() then
+				local frame = self.worldQuestDiagnosticWindow
+				if frame and frame.editBox then
+					frame.editBox:SetFocus()
+					frame.editBox:HighlightText()
+				end
+			end
+			return
+		end
+
+		self:Print("Usage: /qt wqdiag on|off|toggle|status|dump|refresh|show|clear|copy")
 		return
 	end
 

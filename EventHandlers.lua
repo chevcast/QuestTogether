@@ -51,6 +51,339 @@ local function CountKeys(tableValue)
 	return count
 end
 
+local function BoolText(value)
+	if value == nil then
+		return "nil"
+	end
+	return value and "true" or "false"
+end
+
+local function NormalizeBooleanLike(addon, value)
+	if value == nil then
+		return nil
+	end
+	if addon and addon.IsSecretValue and addon:IsSecretValue(value) then
+		return nil
+	end
+	if type(value) == "boolean" then
+		return value
+	end
+	if addon and addon.SafeToNumber then
+		local numericValue = addon:SafeToNumber(value)
+		if numericValue ~= nil then
+			return numericValue ~= 0
+		end
+	end
+	if type(value) == "string" then
+		local normalized = value:lower()
+		if normalized == "true" then
+			return true
+		end
+		if normalized == "false" then
+			return false
+		end
+	end
+	return nil
+end
+
+local function BuildCurrentMapTaskQuestSet(addon)
+	if not addon or not addon.API then
+		return nil, nil
+	end
+	if type(addon.API.GetPlayerMapID) ~= "function" or type(addon.API.GetTaskQuestsOnMap) ~= "function" then
+		return nil, nil
+	end
+
+	local playerMapID = addon.API.GetPlayerMapID("player")
+	local normalizedMapID = addon.SafeToNumber and addon:SafeToNumber(playerMapID) or nil
+	if not normalizedMapID or normalizedMapID <= 0 then
+		return nil, nil
+	end
+	normalizedMapID = math.floor(normalizedMapID + 0.5)
+
+	local questIdSet = {}
+	local addedAny = false
+
+	local questIds = addon.API.GetTaskQuestsOnMap(normalizedMapID)
+	if type(questIds) == "table" then
+		for index = 1, #questIds do
+			local normalizedQuestId = NormalizeQuestId(addon, questIds[index])
+			if normalizedQuestId then
+				questIdSet[normalizedQuestId] = true
+				addedAny = true
+			end
+		end
+	end
+
+	if type(addon.API.GetQuestPOIsOnMap) == "function" then
+		local questPOIs = addon.API.GetQuestPOIsOnMap(normalizedMapID)
+		if type(questPOIs) == "table" then
+			for index = 1, #questPOIs do
+				local poi = questPOIs[index]
+				if type(poi) == "table" then
+					local normalizedQuestId = NormalizeQuestId(addon, poi.questID)
+					if normalizedQuestId then
+						local includeQuest = poi.isQuestStart ~= true and poi.isMapIndicatorQuest ~= true
+						if includeQuest then
+							questIdSet[normalizedQuestId] = true
+							addedAny = true
+						end
+					end
+				end
+			end
+		end
+	end
+
+	if not addedAny then
+		return normalizedMapID, nil
+	end
+
+	return normalizedMapID, questIdSet
+end
+
+local function BuildLocalTaskQuestSet(addon)
+	if not addon or not addon.API or type(addon.API.GetLocalTaskQuests) ~= "function" then
+		return nil
+	end
+
+	local questIds = addon.API.GetLocalTaskQuests()
+	if type(questIds) ~= "table" then
+		return nil
+	end
+
+	local questIdSet = {}
+	local addedAny = false
+	for index = 1, #questIds do
+		local normalizedQuestId = NormalizeQuestId(addon, questIds[index])
+		if normalizedQuestId then
+			questIdSet[normalizedQuestId] = true
+			addedAny = true
+		end
+	end
+
+	if not addedAny then
+		return nil
+	end
+
+	return questIdSet
+end
+
+local function BuildTaskAreaContext(addon)
+	local localTaskQuestSet = BuildLocalTaskQuestSet(addon)
+	local playerMapID, mapTaskQuestSet = BuildCurrentMapTaskQuestSet(addon)
+	return playerMapID, localTaskQuestSet, mapTaskQuestSet
+end
+
+local function BuildQuestLogQuestInfoIndex(addon)
+	local questInfoByQuestId = {}
+	local questLogIndexByQuestId = {}
+	local totalEntries = 0
+	local inspectedRows = 0
+
+	if not (addon and addon.API and addon.API.GetNumQuestLogEntries and addon.API.GetQuestLogInfo) then
+		return questInfoByQuestId, questLogIndexByQuestId, totalEntries, inspectedRows
+	end
+
+	totalEntries = addon:SafeToNumber(addon.API.GetNumQuestLogEntries()) or 0
+	for entryIndex = 1, totalEntries do
+		local questInfo = addon.API.GetQuestLogInfo(entryIndex)
+		if questInfo and not questInfo.isHeader and not questInfo.isHidden then
+			local normalizedQuestId = NormalizeQuestId(addon, questInfo.questID)
+			if normalizedQuestId then
+				inspectedRows = inspectedRows + 1
+				if not questInfoByQuestId[normalizedQuestId] then
+					questInfoByQuestId[normalizedQuestId] = questInfo
+					questLogIndexByQuestId[normalizedQuestId] = entryIndex
+				end
+			end
+		end
+	end
+
+	return questInfoByQuestId, questLogIndexByQuestId, totalEntries, inspectedRows
+end
+
+local function BuildTaskAreaCandidateQuestIds(addon, questInfoByQuestId, localTaskQuestSet, mapTaskQuestSet)
+	local candidateQuestIds = {}
+
+	for normalizedQuestId in pairs(questInfoByQuestId or {}) do
+		candidateQuestIds[normalizedQuestId] = true
+	end
+
+	for normalizedQuestId in pairs(localTaskQuestSet or {}) do
+		candidateQuestIds[normalizedQuestId] = true
+	end
+
+	for normalizedQuestId in pairs(mapTaskQuestSet or {}) do
+		candidateQuestIds[normalizedQuestId] = true
+	end
+
+	if addon and type(addon.questBlobInsideStateByQuestID) == "table" then
+		for questId, insideValue in pairs(addon.questBlobInsideStateByQuestID) do
+			local normalizedQuestId = NormalizeQuestId(addon, questId)
+			local normalizedInside = NormalizeBooleanLike(addon, insideValue)
+			if normalizedQuestId and normalizedInside ~= nil then
+				candidateQuestIds[normalizedQuestId] = true
+			end
+		end
+	end
+
+	return candidateQuestIds
+end
+
+local function ResolveQuestAreaSignals(addon, questInfo, normalizedQuestId, localTaskQuestSet, mapTaskQuestSet)
+	local taskInfoInArea = nil
+	local taskInfoOnMap = nil
+	if addon and addon.API and addon.API.GetTaskInfo then
+		taskInfoInArea, taskInfoOnMap = addon.API.GetTaskInfo(normalizedQuestId)
+		taskInfoInArea = NormalizeBooleanLike(addon, taskInfoInArea)
+		taskInfoOnMap = NormalizeBooleanLike(addon, taskInfoOnMap)
+	end
+
+	local localTaskInArea = nil
+	if type(localTaskQuestSet) == "table" and localTaskQuestSet[normalizedQuestId] == true then
+		localTaskInArea = true
+	end
+
+	local mapTaskInArea = nil
+	if type(mapTaskQuestSet) == "table" and mapTaskQuestSet[normalizedQuestId] == true then
+		mapTaskInArea = true
+	end
+
+	local taskActiveRaw = taskInfoInArea
+	if taskActiveRaw == nil and localTaskInArea == true then
+		taskActiveRaw = true
+	end
+	if taskActiveRaw == nil and mapTaskInArea == true then
+		taskActiveRaw = true
+	end
+	if addon and addon.API and addon.API.IsTaskQuestActive then
+		local isTaskActiveFallback = NormalizeBooleanLike(addon, addon.API.IsTaskQuestActive(normalizedQuestId))
+		if taskActiveRaw == nil then
+			taskActiveRaw = isTaskActiveFallback
+		end
+	end
+
+	local insideQuestBlob = nil
+	if addon and type(addon.questBlobInsideStateByQuestID) == "table" then
+		insideQuestBlob = NormalizeBooleanLike(addon, addon.questBlobInsideStateByQuestID[normalizedQuestId])
+	end
+	if insideQuestBlob == nil and addon and addon.API and addon.API.IsInsideQuestBlob then
+		local liveInsideQuestBlob = NormalizeBooleanLike(addon, addon.API.IsInsideQuestBlob(normalizedQuestId))
+		if liveInsideQuestBlob ~= nil then
+			insideQuestBlob = liveInsideQuestBlob
+		end
+	end
+
+	local mapFlags = questInfo and (questInfo.isOnMap == true or questInfo.hasLocalPOI == true) and true or false
+	local mapFallback = nil
+	if addon and addon.API and addon.API.IsQuestOnMap then
+		mapFallback = NormalizeBooleanLike(addon, addon.API.IsQuestOnMap(normalizedQuestId))
+	end
+
+	local hasMapPresence = (localTaskInArea == true)
+		or (mapTaskInArea == true)
+		or (taskInfoOnMap == true)
+		or mapFlags
+		or (mapFallback == true)
+
+	local taskActiveForArea = taskActiveRaw
+	if taskActiveForArea == true and not hasMapPresence then
+		taskActiveForArea = nil
+	end
+
+	local areaActive = nil
+	if type(insideQuestBlob) == "boolean" then
+		areaActive = insideQuestBlob
+	elseif type(taskInfoInArea) == "boolean" then
+		areaActive = taskInfoInArea
+	elseif localTaskInArea == true then
+		areaActive = true
+	elseif mapTaskInArea == true then
+		areaActive = true
+	elseif type(taskInfoOnMap) == "boolean" then
+		areaActive = taskInfoOnMap
+	elseif type(taskActiveForArea) == "boolean" then
+		areaActive = taskActiveForArea
+	else
+		areaActive = mapFlags or (mapFallback == true)
+	end
+
+	local canUseTaskActiveWorldFallback = taskActiveRaw == true and hasMapPresence
+
+	return {
+		taskInfoInArea = taskInfoInArea,
+		taskInfoOnMap = taskInfoOnMap,
+		insideQuestBlob = insideQuestBlob,
+		localTaskInArea = localTaskInArea,
+		mapTaskInArea = mapTaskInArea,
+		taskActiveRaw = taskActiveRaw,
+		taskActiveForArea = taskActiveForArea,
+		mapFlags = mapFlags,
+		mapFallback = mapFallback,
+		hasMapPresence = hasMapPresence,
+		areaActive = areaActive,
+		canUseTaskActiveWorldFallback = canUseTaskActiveWorldFallback,
+	}
+end
+
+local function EvaluateTaskAreaQuestCandidate(addon, taskType, normalizedQuestId, questInfo, localTaskQuestSet, mapTaskQuestSet)
+	local title = addon:GetQuestTitle(normalizedQuestId, questInfo)
+	local explicitWorld = questInfo and questInfo.isWorldQuest == true or false
+	local fallbackWorld = addon:IsWorldQuest(normalizedQuestId)
+	local isWorldQuest = explicitWorld or fallbackWorld
+
+	local taskFlag = questInfo and questInfo.isTask == true or false
+	local bonusFallback = addon:IsBonusObjective(normalizedQuestId)
+	local isTask = taskFlag or isWorldQuest or bonusFallback
+
+	local areaSignals = ResolveQuestAreaSignals(addon, questInfo, normalizedQuestId, localTaskQuestSet, mapTaskQuestSet)
+	local isWorldQuestByActiveTaskFallback = false
+	if not isWorldQuest and areaSignals.canUseTaskActiveWorldFallback and not bonusFallback then
+		isWorldQuest = true
+		isWorldQuestByActiveTaskFallback = true
+	end
+	if not isTask and (areaSignals.taskActiveForArea == true or areaSignals.areaActive == true) then
+		isTask = true
+	end
+
+	local matchesType = false
+	if taskType == "world" then
+		matchesType = isWorldQuest and true or false
+	elseif taskType == "bonus" then
+		matchesType = isWorldQuest ~= true
+	end
+
+	return {
+		title = title,
+		explicitWorld = explicitWorld,
+		fallbackWorld = fallbackWorld,
+		isWorldQuestByActiveTaskFallback = isWorldQuestByActiveTaskFallback,
+		isWorldQuest = isWorldQuest,
+		taskFlag = taskFlag,
+		bonusFallback = bonusFallback,
+		isTask = isTask,
+		matchesType = matchesType,
+		include = isTask and areaSignals.areaActive == true and matchesType,
+		areaSignals = areaSignals,
+	}
+end
+
+local function SortedQuestIdKeys(tableValue)
+	local keys = {}
+	for questId in pairs(tableValue or {}) do
+		keys[#keys + 1] = questId
+	end
+	table.sort(keys, function(a, b)
+		local aNum = QuestTogether:SafeToNumber(a)
+		local bNum = QuestTogether:SafeToNumber(b)
+		if aNum ~= nil and bNum ~= nil then
+			return aNum < bNum
+		end
+		return SafeText(a, "") < SafeText(b, "")
+	end)
+	return keys
+end
+
 local function DrainQueuedQuestLogTasks(addon)
 	if not addon then
 		return 0
@@ -299,37 +632,192 @@ function QuestTogether:HandleGroupRosterChanged(reason)
 	)
 end
 
+function QuestTogether:DumpWorldQuestDiagnostics(contextLabel)
+	if not self.PrintWorldQuestDiagnosticLine then
+		return
+	end
+
+	local context = SafeText(contextLabel, "manual")
+	local inCombat = self.API and self.API.InCombatLockdown and self.API.InCombatLockdown() or false
+	self:PrintWorldQuestDiagnosticLine(
+		string.format(
+			"context=%s inCombat=%s announceEnter=%s announceLeave=%s pendingRefresh=%s pendingAnnounce=%s",
+			context,
+			BoolText(inCombat),
+			BoolText(self:GetOption("announceWorldQuestAreaEnter")),
+			BoolText(self:GetOption("announceWorldQuestAreaLeave")),
+			BoolText(self.pendingTaskAreaRefresh),
+			BoolText(self.pendingTaskAreaRefreshShouldAnnounce)
+		),
+		true
+	)
+
+	if not (self.API and self.API.GetNumQuestLogEntries and self.API.GetQuestLogInfo) then
+		self:PrintWorldQuestDiagnosticLine("Quest log APIs unavailable.", true)
+		return
+	end
+
+	local playerMapID, localTaskQuestSet, mapTaskQuestSet = BuildTaskAreaContext(self)
+	local questInfoByQuestId, questLogIndexByQuestId, totalEntries, inspectedRows = BuildQuestLogQuestInfoIndex(self)
+	local candidateQuestIds = BuildTaskAreaCandidateQuestIds(self, questInfoByQuestId, localTaskQuestSet, mapTaskQuestSet)
+	local worldSnapshot = {}
+	local loggedRows = 0
+	local MAX_LOGGED_ROWS = 28
+
+	self:PrintWorldQuestDiagnosticLine("questLogEntries=" .. tostring(totalEntries), true)
+	self:PrintWorldQuestDiagnosticLine(
+		string.format(
+			"playerMapId=%s localTaskCount=%s mapTaskCount=%s candidateCount=%s",
+			SafeText(playerMapID, "nil"),
+			localTaskQuestSet and tostring(CountKeys(localTaskQuestSet)) or "nil",
+			mapTaskQuestSet and tostring(CountKeys(mapTaskQuestSet)) or "nil",
+			tostring(CountKeys(candidateQuestIds))
+		),
+		true
+	)
+
+	for _, normalizedQuestId in ipairs(SortedQuestIdKeys(candidateQuestIds)) do
+		local questInfo = questInfoByQuestId[normalizedQuestId]
+		local questLogIndex = questLogIndexByQuestId[normalizedQuestId]
+		local evaluation =
+			EvaluateTaskAreaQuestCandidate(self, "world", normalizedQuestId, questInfo, localTaskQuestSet, mapTaskQuestSet)
+		local areaSignals = evaluation.areaSignals
+		local tagInfo = self.GetQuestTagInfo and self:GetQuestTagInfo(normalizedQuestId) or nil
+		local tagWorldType = nil
+		local tagID = nil
+		if type(tagInfo) == "table" then
+			if not self:IsSecretValue(tagInfo.worldQuestType) then
+				tagWorldType = self:SafeToNumber(tagInfo.worldQuestType)
+			end
+			if not self:IsSecretValue(tagInfo.tagID) then
+				tagID = self:SafeToNumber(tagInfo.tagID)
+			end
+		end
+
+		if evaluation.include then
+			worldSnapshot[normalizedQuestId] = evaluation.title
+		end
+
+		local fromQuestLog = questInfo ~= nil
+		local fromLocalTaskSet = type(localTaskQuestSet) == "table" and localTaskQuestSet[normalizedQuestId] == true
+		local fromMapTaskSet = type(mapTaskQuestSet) == "table" and mapTaskQuestSet[normalizedQuestId] == true
+		local fromBlobState = false
+		if type(self.questBlobInsideStateByQuestID) == "table" then
+			fromBlobState = NormalizeBooleanLike(self, self.questBlobInsideStateByQuestID[normalizedQuestId]) ~= nil
+		end
+
+		local shouldLogRow = evaluation.include
+			or evaluation.isWorldQuest
+			or evaluation.taskFlag
+			or areaSignals.mapFlags
+			or areaSignals.taskActiveRaw ~= nil
+			or areaSignals.mapFallback == true
+			or areaSignals.insideQuestBlob ~= nil
+			or areaSignals.hasMapPresence
+			or evaluation.isWorldQuestByActiveTaskFallback
+			or fromBlobState
+			or fromLocalTaskSet
+			or fromMapTaskSet
+		if shouldLogRow and loggedRows < MAX_LOGGED_ROWS then
+			loggedRows = loggedRows + 1
+			self:PrintWorldQuestDiagnosticLine(
+				string.format(
+					"row=%s source(log=%s localTask=%s mapTask=%s blob=%s) questId=%s tag(id=%s worldType=%s) world(explicit=%s fallback=%s activeFallback=%s final=%s) task(flag=%s bonus=%s final=%s) area(taskInfoInArea=%s taskInfoOnMap=%s blobInside=%s localTaskInArea=%s mapTaskInArea=%s activeRaw=%s activeForArea=%s hasMapPresence=%s mapFlags=%s mapFallback=%s final=%s) include=%s title=%s",
+					SafeText(questLogIndex, "nil"),
+					BoolText(fromQuestLog),
+					BoolText(fromLocalTaskSet),
+					BoolText(fromMapTaskSet),
+					BoolText(fromBlobState),
+					SafeText(normalizedQuestId, "?"),
+					SafeText(tagID, "nil"),
+					SafeText(tagWorldType, "nil"),
+					BoolText(evaluation.explicitWorld),
+					BoolText(evaluation.fallbackWorld),
+					BoolText(evaluation.isWorldQuestByActiveTaskFallback),
+					BoolText(evaluation.isWorldQuest),
+					BoolText(evaluation.taskFlag),
+					BoolText(evaluation.bonusFallback),
+					BoolText(evaluation.isTask),
+					BoolText(areaSignals.taskInfoInArea),
+					BoolText(areaSignals.taskInfoOnMap),
+					BoolText(areaSignals.insideQuestBlob),
+					BoolText(areaSignals.localTaskInArea),
+					BoolText(areaSignals.mapTaskInArea),
+					BoolText(areaSignals.taskActiveRaw),
+					BoolText(areaSignals.taskActiveForArea),
+					BoolText(areaSignals.hasMapPresence),
+					BoolText(areaSignals.mapFlags),
+					BoolText(areaSignals.mapFallback),
+					BoolText(areaSignals.areaActive),
+					BoolText(evaluation.include),
+					SafeText(evaluation.title, "Unknown")
+				),
+				true
+			)
+		end
+	end
+
+	if CountKeys(candidateQuestIds) > loggedRows then
+		self:PrintWorldQuestDiagnosticLine(
+			string.format("suppressedRows=%d (non-candidate or over cap)", CountKeys(candidateQuestIds) - loggedRows),
+			true
+		)
+	end
+
+	self:PrintWorldQuestDiagnosticLine(
+		string.format(
+			"snapshotCounts worldCurrent=%d worldPrevState=%d bonusPrevState=%d",
+			CountKeys(worldSnapshot),
+			CountKeys(self.worldQuestAreaStateByQuestID),
+			CountKeys(self.bonusObjectiveAreaStateByQuestID)
+		),
+		true
+	)
+
+	local prevState = self.worldQuestAreaStateByQuestID or {}
+	local loggedDiff = 0
+	local MAX_LOGGED_DIFF = 20
+	for _, questId in ipairs(SortedQuestIdKeys(worldSnapshot)) do
+		if not prevState[questId] and loggedDiff < MAX_LOGGED_DIFF then
+			loggedDiff = loggedDiff + 1
+			self:PrintWorldQuestDiagnosticLine(
+				string.format("diff wouldEnter questId=%s title=%s", SafeText(questId, "?"), SafeText(worldSnapshot[questId], "Unknown")),
+				true
+			)
+		end
+	end
+	for _, questId in ipairs(SortedQuestIdKeys(prevState)) do
+		if not worldSnapshot[questId] and loggedDiff < MAX_LOGGED_DIFF then
+			loggedDiff = loggedDiff + 1
+			local prevTitle = prevState[questId] or self:GetQuestTitle(questId)
+			self:PrintWorldQuestDiagnosticLine(
+				string.format("diff wouldLeave questId=%s title=%s", SafeText(questId, "?"), SafeText(prevTitle, "Unknown")),
+				true
+			)
+		end
+	end
+	if loggedDiff >= MAX_LOGGED_DIFF then
+		self:PrintWorldQuestDiagnosticLine("diff output capped at 20 entries", true)
+	end
+end
+
 -- Snapshot area task quests from sanitized quest-log rows.
--- This intentionally avoids map-task tables (GetTasksTable/GetTaskInfo/C_TaskQuest task arrays),
--- which are shared with Blizzard map data providers and can taint protected map-pin updates.
+-- Area membership prioritizes Blizzard's local task list, then quest-blob/task-info signals,
+-- then falls back to broader map/task flags only when there is corroborating map presence.
+-- We only copy scalar quest IDs from Blizzard task tables and never retain/mutate their rows.
 function QuestTogether:GetTaskAreaSnapshot(taskType)
 	local activeByQuestId = {}
 
 	if self.API and self.API.GetNumQuestLogEntries and self.API.GetQuestLogInfo then
-		local totalEntries = self:SafeToNumber(self.API.GetNumQuestLogEntries()) or 0
-		for entryIndex = 1, totalEntries do
-			local questInfo = self.API.GetQuestLogInfo(entryIndex)
-			local isTask = questInfo and questInfo.isTask == true
-			local isOnMap = questInfo and (questInfo.isOnMap == true or questInfo.hasLocalPOI == true)
-			if questInfo and not questInfo.isHeader and not questInfo.isHidden and isTask and isOnMap then
-				local normalizedQuestId = NormalizeQuestId(self, questInfo.questID)
-				if normalizedQuestId then
-					local isWorldQuest = questInfo.isWorldQuest
-					if type(isWorldQuest) ~= "boolean" then
-						isWorldQuest = self:IsWorldQuest(normalizedQuestId)
-					end
-
-					local matchesType = false
-					if taskType == "world" then
-						matchesType = isWorldQuest and true or false
-					elseif taskType == "bonus" then
-						matchesType = isWorldQuest ~= true
-					end
-
-					if matchesType then
-						activeByQuestId[normalizedQuestId] = self:GetQuestTitle(normalizedQuestId, questInfo)
-					end
-				end
+		local _, localTaskQuestSet, mapTaskQuestSet = BuildTaskAreaContext(self)
+		local questInfoByQuestId = BuildQuestLogQuestInfoIndex(self)
+		local candidateQuestIds = BuildTaskAreaCandidateQuestIds(self, questInfoByQuestId, localTaskQuestSet, mapTaskQuestSet)
+		for _, normalizedQuestId in ipairs(SortedQuestIdKeys(candidateQuestIds)) do
+			local questInfo = questInfoByQuestId[normalizedQuestId]
+			local evaluation =
+				EvaluateTaskAreaQuestCandidate(self, taskType, normalizedQuestId, questInfo, localTaskQuestSet, mapTaskQuestSet)
+			if evaluation.include then
+				activeByQuestId[normalizedQuestId] = evaluation.title
 			end
 		end
 	end
@@ -399,6 +887,17 @@ function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
 		CountKeys(previousState),
 		CountKeys(currentState)
 	)
+	if taskType == "world" and self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine(
+			string.format(
+				"refresh type=%s announce=%s prev=%d curr=%d",
+				SafeText(taskType, ""),
+				BoolText(shouldAnnounce),
+				CountKeys(previousState),
+				CountKeys(currentState)
+			)
+		)
+	end
 
 	for questId, questTitle in pairs(currentState) do
 		if not previousState[questId] and shouldAnnounce then
@@ -410,6 +909,16 @@ function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
 				SafeText(questTitle, "Unknown")
 			)
 			self:PublishAnnouncementEvent(config.enterEvent, config.enterPrefix .. SafeText(questTitle, "Unknown"), questId)
+			if taskType == "world" and self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+				self:PrintWorldQuestDiagnosticLine(
+					string.format(
+						"emit enter event=%s questId=%s title=%s",
+						SafeText(config.enterEvent, ""),
+						SafeText(questId, "?"),
+						SafeText(questTitle, "Unknown")
+					)
+				)
+			end
 		end
 	end
 
@@ -426,6 +935,16 @@ function QuestTogether:RefreshTaskAreaState(taskType, shouldAnnounce)
 					SafeText(questTitle, "Unknown")
 				)
 				self:PublishAnnouncementEvent(config.leftEvent, config.leftPrefix .. SafeText(questTitle, "Unknown"), questId)
+				if taskType == "world" and self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+					self:PrintWorldQuestDiagnosticLine(
+						string.format(
+							"emit leave event=%s questId=%s title=%s",
+							SafeText(config.leftEvent, ""),
+							SafeText(questId, "?"),
+							SafeText(questTitle, "Unknown")
+						)
+					)
+				end
 			end
 		end
 	end
@@ -449,6 +968,15 @@ function QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
 			self.pendingTaskAreaRefreshShouldAnnounce = true
 		end
 		self:Debugf("quest", "Deferring task area refresh during combat announce=%s", SafeText(shouldAnnounce, "false"))
+		if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+			self:PrintWorldQuestDiagnosticLine(
+				string.format(
+					"refresh deferred inCombat=true announce=%s pendingAnnounce=%s",
+					BoolText(shouldAnnounce),
+					BoolText(self.pendingTaskAreaRefreshShouldAnnounce)
+				)
+			)
+		end
 		return false
 	end
 
@@ -458,6 +986,14 @@ function QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
 	end
 	self.pendingTaskAreaRefresh = false
 	self.pendingTaskAreaRefreshShouldAnnounce = false
+	if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine(
+			string.format(
+				"refresh run inCombat=false announce=%s",
+				BoolText(resolvedShouldAnnounce)
+			)
+		)
+	end
 
 	self:RefreshWorldQuestAreaState(resolvedShouldAnnounce)
 	self:RefreshBonusObjectiveAreaState(resolvedShouldAnnounce)
@@ -575,7 +1111,8 @@ function QuestTogether:QUEST_REMOVED(_, questId)
 end
 
 function QuestTogether:SUPER_TRACKING_CHANGED()
-	self:Debug("SUPER_TRACKING_CHANGED is not implemented.", "events")
+	self:Debug("SUPER_TRACKING_CHANGED()", "events")
+	self:RefreshTaskAreaStates(true)
 end
 
 -- UNIT_QUEST_LOG_CHANGED indicates objective and completion changes.
@@ -741,32 +1278,80 @@ function QuestTogether:QUEST_LOG_UPDATE()
 		end
 	end
 
+	if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine(
+			string.format(
+				"event QUEST_LOG_UPDATE inCombat=%s queuedTasks=%d",
+				BoolText(inCombatLockdown),
+				type(self.onQuestLogUpdate) == "table" and #self.onQuestLogUpdate or 0
+			)
+		)
+	end
+
 	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:QUEST_POI_UPDATE()
+	if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine("event QUEST_POI_UPDATE")
+	end
+	self:RefreshTaskAreaStates(true)
+end
+
+function QuestTogether:PLAYER_INSIDE_QUEST_BLOB_STATE_CHANGED(_, questID, isInside)
+	local normalizedQuestId = NormalizeQuestId(self, questID)
+	local normalizedInside = NormalizeBooleanLike(self, isInside)
+	self.questBlobInsideStateByQuestID = self.questBlobInsideStateByQuestID or {}
+	if normalizedQuestId and normalizedInside ~= nil then
+		self.questBlobInsideStateByQuestID[normalizedQuestId] = normalizedInside
+	end
+	if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine(
+			string.format(
+				"event PLAYER_INSIDE_QUEST_BLOB_STATE_CHANGED questId=%s inside=%s",
+				SafeText(normalizedQuestId, SafeText(questID, "nil")),
+				BoolText(normalizedInside)
+			)
+		)
+	end
 	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:AREA_POIS_UPDATED()
+	if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine("event AREA_POIS_UPDATED")
+	end
 	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:ZONE_CHANGED()
+	if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine("event ZONE_CHANGED")
+	end
 	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:ZONE_CHANGED_INDOORS()
+	if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine("event ZONE_CHANGED_INDOORS")
+	end
 	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:ZONE_CHANGED_NEW_AREA()
+	if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine("event ZONE_CHANGED_NEW_AREA")
+	end
 	self:RefreshTaskAreaStates(true)
 end
 
 function QuestTogether:PLAYER_ENTERING_WORLD()
 	-- Refresh state after loading screens without emitting synthetic enter/leave lines.
 	self:Debug("PLAYER_ENTERING_WORLD()", "events")
+	self.questBlobInsideStateByQuestID = {}
+	if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine("event PLAYER_ENTERING_WORLD")
+	end
 	self:RefreshTaskAreaStates(false)
 	if self.EnsureAnnouncementChannelJoined and self.isEnabled then
 		self:EnsureAnnouncementChannelJoined()

@@ -1420,7 +1420,19 @@ function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
 		self:Debug("Rejected announcement event because payload was not a table", "comms")
 		return false
 	end
-	if not self:ShouldDisplayAnnouncementType(eventData.eventType) then
+	local isWorldQuestEvent = self.IsWorldQuestAnnouncementType and self:IsWorldQuestAnnouncementType(eventData.eventType)
+	local allowedByOption = self:ShouldDisplayAnnouncementType(eventData.eventType)
+	if isWorldQuestEvent and self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+		self:PrintWorldQuestDiagnosticLine(
+			string.format(
+				"handle event=%s isLocal=%s allowedByOption=%s",
+				SafeAddonString(self, eventData.eventType, ""),
+				tostring(isLocal and true or false),
+				tostring(allowedByOption and true or false)
+			)
+		)
+	end
+	if not allowedByOption then
 		self:Debugf("comms", "Filtered eventType=%s by local display settings", SafeAddonString(self, eventData.eventType, ""))
 		return false
 	end
@@ -1553,6 +1565,18 @@ function QuestTogether:PublishAnnouncementEvent(eventType, text, questId, extraD
 	if self.API.UnitIsDeadOrGhost and self.API.UnitIsDeadOrGhost("player") then
 		self:Debugf("comms", "PublishAnnouncementEvent suppressed while dead eventType=%s", SafeAddonString(self, eventType, ""))
 		return false
+	end
+	if self.IsWorldQuestAnnouncementType and self:IsWorldQuestAnnouncementType(eventType) then
+		if self.PrintWorldQuestDiagnosticLine and self:IsWorldQuestDiagnosticsEnabled() then
+			self:PrintWorldQuestDiagnosticLine(
+				string.format(
+					"publish event=%s questId=%s text=%s",
+					SafeAddonString(self, eventType, ""),
+					SafeAddonString(self, questId, ""),
+					SafeAddonString(self, text, "")
+				)
+			)
+		end
 	end
 
 	local eventData = self:BuildLocalAnnouncementEvent(eventType, text, questId, extraData)
