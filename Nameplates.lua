@@ -14,8 +14,6 @@ Design constraints:
 local QuestTogether = _G.QuestTogether
 local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
 local ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK = true
-local QUEST_SCAN_TOOLTIP_FRAME_NAME = "QuestTogetherQuestScanTooltip"
-local QUEST_SCAN_TOOLTIP_OWNER_FRAME_NAME = "QuestTogetherQuestScanTooltipOwner"
 local ANNOUNCEMENT_BUBBLE_Y_OFFSET = 22
 local ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS = 0.2
 local ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS = 0.4
@@ -23,8 +21,6 @@ local PERSONAL_BUBBLE_SETTINGS_DIALOG_WIDTH = 380
 local PERSONAL_BUBBLE_SETTINGS_DIALOG_HEIGHT = 220
 local ApplyQuestIconVisual
 local SafeUiNumber
-local questScanTooltipFrame = nil
-local questScanTooltipOwnerFrame = nil
 
 -- Original icon used by this addon's first nameplate implementation.
 QuestTogether.NAMEPLATE_QUEST_ICON_TEXTURE = "Interface\\OPTIONSFRAME\\UI-OptionsFrame-NewFeatureIcon"
@@ -191,87 +187,74 @@ local function ScaleBubbleMetric(baseValue, sizeScale, minimumValue)
 	return scaledValue
 end
 
-local function GetQuestScanTooltipFrame()
-	if questScanTooltipFrame and not IsFrameForbidden(questScanTooltipFrame) then
-		return questScanTooltipFrame
-	end
-
-	local existingTooltip = _G[QUEST_SCAN_TOOLTIP_FRAME_NAME]
-	if existingTooltip and not IsFrameForbidden(existingTooltip) then
-		questScanTooltipFrame = existingTooltip
-		return questScanTooltipFrame
-	end
-
-	if type(CreateFrame) ~= "function" then
-		return nil
-	end
-
-	local tooltipFrame = CreateFrame("GameTooltip", QUEST_SCAN_TOOLTIP_FRAME_NAME, nil, "GameTooltipTemplate")
-	if not tooltipFrame or IsFrameForbidden(tooltipFrame) then
-		return nil
-	end
-
-	questScanTooltipFrame = tooltipFrame
-	return questScanTooltipFrame
-end
-
-local function GetQuestScanTooltipOwnerFrame()
-	if questScanTooltipOwnerFrame and not IsFrameForbidden(questScanTooltipOwnerFrame) then
-		return questScanTooltipOwnerFrame
-	end
-
-	local existingOwner = _G[QUEST_SCAN_TOOLTIP_OWNER_FRAME_NAME]
-	if existingOwner and not IsFrameForbidden(existingOwner) then
-		questScanTooltipOwnerFrame = existingOwner
-		return questScanTooltipOwnerFrame
-	end
-
-	if type(CreateFrame) ~= "function" then
-		return nil
-	end
-
-	local parentFrame = UIParent or nil
-	local ownerFrame = CreateFrame("Frame", QUEST_SCAN_TOOLTIP_OWNER_FRAME_NAME, parentFrame)
-	if not ownerFrame or IsFrameForbidden(ownerFrame) then
-		return nil
-	end
-
-	ownerFrame:Hide()
-	questScanTooltipOwnerFrame = ownerFrame
-	return questScanTooltipOwnerFrame
-end
-
-local function BuildPseudoTooltipLinesFromHiddenTooltip(tooltipFrame)
-	if
-		not tooltipFrame
-		or IsFrameForbidden(tooltipFrame)
-		or not tooltipFrame.GetName
-		or not tooltipFrame.NumLines
-	then
+local function BuildPseudoTooltipLinesFromTooltipData(tooltipData)
+	if type(tooltipData) ~= "table" or IsFrameForbidden(tooltipData) then
 		return {}
 	end
 
-	local tooltipName = tooltipFrame:GetName()
-	if type(tooltipName) ~= "string" or tooltipName == "" then
+	local tooltipLines = tooltipData.lines
+	if type(tooltipLines) ~= "table" then
 		return {}
 	end
 
-	local lineCount = SafeUiNumber(tooltipFrame:NumLines(), 0) or 0
 	local pseudoLines = {}
-	for lineIndex = 1, lineCount do
-		local leftRegion = _G[tooltipName .. "TextLeft" .. tostring(lineIndex)]
-		local rightRegion = _G[tooltipName .. "TextRight" .. tostring(lineIndex)]
-		local leftText = leftRegion and leftRegion.GetText and leftRegion:GetText() or nil
-		local rightText = rightRegion and rightRegion.GetText and rightRegion:GetText() or nil
-		if type(leftText) == "string" or type(rightText) == "string" then
-			pseudoLines[#pseudoLines + 1] = {
-				-- Hidden tooltip scans do not expose structured line types; map them into the
-				-- objective parser as generic quest-objective candidates.
-				type = "QuestObjective",
-				leftText = leftText,
-				rightText = rightText,
-				text = leftText,
-			}
+	for lineIndex = 1, #tooltipLines do
+		local lineData = tooltipLines[lineIndex]
+		if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(lineData) then
+			break
+		end
+		if type(lineData) == "table" then
+			local lineType = lineData.type
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(lineType) then
+				break
+			end
+
+			local normalizedType = nil
+			if Enum and Enum.TooltipDataLineType then
+				if lineType == Enum.TooltipDataLineType.QuestObjective then
+					normalizedType = "QuestObjective"
+				elseif lineType == Enum.TooltipDataLineType.QuestPlayer then
+					normalizedType = "QuestPlayer"
+				end
+			end
+			if normalizedType == nil and type(lineType) == "string" then
+				if lineType == "QuestObjective" or lineType == "QuestPlayer" then
+					normalizedType = lineType
+				end
+			end
+
+			if normalizedType ~= nil then
+				local leftText = lineData.leftText
+				local rightText = lineData.rightText
+				local centerText = lineData.text
+				if QuestTogether and QuestTogether.IsSecretValue then
+					if QuestTogether:IsSecretValue(leftText) then
+						leftText = nil
+					end
+					if QuestTogether:IsSecretValue(rightText) then
+						rightText = nil
+					end
+					if QuestTogether:IsSecretValue(centerText) then
+						centerText = nil
+					end
+				end
+				if type(leftText) ~= "string" then
+					leftText = nil
+				end
+				if type(rightText) ~= "string" then
+					rightText = nil
+				end
+				if type(centerText) ~= "string" then
+					centerText = nil
+				end
+
+				pseudoLines[#pseudoLines + 1] = {
+					type = normalizedType,
+					leftText = leftText,
+					rightText = rightText,
+					text = centerText,
+				}
+			end
 		end
 	end
 
@@ -1627,44 +1610,24 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 end
 
 function QuestTogether:GetQuestObjectiveTooltipLines(unitToken, unitGuid)
-	local scanTooltip = GetQuestScanTooltipFrame()
-	if not scanTooltip then
-		return nil
-	end
-	local tooltipOwner = GetQuestScanTooltipOwnerFrame()
-
-	local didPopulateTooltip = false
-	-- Tooltip scans are best-effort and run in very hot paths; guard frame population calls so
-	-- transient forbidden/invalid states do not break nameplate refreshes.
-	local okScan = pcall(function()
-		if scanTooltip.ClearLines then
-			scanTooltip:ClearLines()
-		end
-		if scanTooltip.SetOwner then
-			scanTooltip:SetOwner(tooltipOwner or UIParent, "ANCHOR_NONE")
-		end
-		-- Prefer SetUnit for quest scans so we avoid the shared hyperlink payload path used by
-		-- map/POI tooltip reward widgets.
-		if scanTooltip.SetUnit and type(unitToken) == "string" and unitToken ~= "" then
-			scanTooltip:SetUnit(unitToken)
-			didPopulateTooltip = true
-		elseif scanTooltip.SetHyperlink and type(unitGuid) == "string" and unitGuid ~= "" then
-			scanTooltip:SetHyperlink("unit:" .. unitGuid)
-			didPopulateTooltip = true
-		end
-	end)
-	if not okScan or not didPopulateTooltip then
-		if scanTooltip.Hide then
-			pcall(scanTooltip.Hide, scanTooltip)
-		end
+	local hasTooltipDataApi = self.API
+		and (type(self.API.GetTooltipDataForHyperlink) == "function" or type(self.API.GetTooltipDataForUnit) == "function")
+	if not hasTooltipDataApi then
 		return nil
 	end
 
-	local tooltipLines = BuildPseudoTooltipLinesFromHiddenTooltip(scanTooltip)
-	if scanTooltip.Hide then
-		pcall(scanTooltip.Hide, scanTooltip)
+	local tooltipData = nil
+	if self.API.GetTooltipDataForHyperlink and type(unitGuid) == "string" and unitGuid ~= "" then
+		tooltipData = self.API.GetTooltipDataForHyperlink("unit:" .. unitGuid)
 	end
-	return tooltipLines
+	if (tooltipData == nil or self:IsSecretValue(tooltipData)) and self.API.GetTooltipDataForUnit then
+		tooltipData = self.API.GetTooltipDataForUnit(unitToken)
+	end
+	if tooltipData == nil or self:IsSecretValue(tooltipData) then
+		return nil
+	end
+
+	return BuildPseudoTooltipLinesFromTooltipData(tooltipData)
 end
 
 function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
