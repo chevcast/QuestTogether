@@ -80,7 +80,6 @@ QuestTogether.CHAT_BUBBLE_DURATION_MIN = 1
 QuestTogether.CHAT_BUBBLE_DURATION_MAX = 8
 QuestTogether.CHAT_BUBBLE_DURATION_STEP = 0.5
 QuestTogether.ANNOUNCEMENT_NEARBY_RADIUS = 5
-QuestTogether.WQ_DIAG_MAX_LINES = 1200
 
 -- Runtime state flags.
 QuestTogether.isInitialized = QuestTogether.isInitialized or false
@@ -90,7 +89,6 @@ QuestTogether.activeProfileKey = QuestTogether.activeProfileKey or nil
 QuestTogether.activeCharacterKey = QuestTogether.activeCharacterKey or nil
 QuestTogether.pendingPingRequests = QuestTogether.pendingPingRequests or {}
 QuestTogether.pendingQuestCompareRequests = QuestTogether.pendingQuestCompareRequests or {}
-QuestTogether.worldQuestDiagnosticLogLines = QuestTogether.worldQuestDiagnosticLogLines or {}
 QuestTogether.testResultLogLines = QuestTogether.testResultLogLines or {}
 
 -- Work queues / state tables used by event handlers.
@@ -3869,23 +3867,6 @@ function QuestTogether:OpenHudEditMode()
 	return false
 end
 
-function QuestTogether:IsWorldQuestDiagnosticsEnabled()
-	return self.worldQuestDiagnosticsEnabled == true
-end
-
-function QuestTogether:SetWorldQuestDiagnosticsEnabled(enabled)
-	self.worldQuestDiagnosticsEnabled = enabled and true or false
-end
-
-function QuestTogether:ClearWorldQuestDiagnosticLog()
-	self.worldQuestDiagnosticLogLines = {}
-	self:RefreshCopyableWindow()
-end
-
-function QuestTogether:GetWorldQuestDiagnosticLogText()
-	return table.concat(self.worldQuestDiagnosticLogLines or {}, "\n")
-end
-
 function QuestTogether:ClearTestResultLog()
 	self.testResultLogLines = {}
 	self:RefreshCopyableWindow()
@@ -3908,7 +3889,7 @@ function QuestTogether:SetTestResultLogLines(lines)
 end
 
 function QuestTogether:RefreshCopyableWindow()
-	local frame = self.worldQuestDiagnosticWindow
+	local frame = self.copyableWindow
 	if not frame or not frame.editBox or not frame.scrollFrame then
 		return
 	end
@@ -3944,49 +3925,16 @@ function QuestTogether:RefreshCopyableWindow()
 		frame.clearButton:SetText(type(frame.copyableClearLabel) == "string" and frame.copyableClearLabel or "Clear")
 	end
 
-	-- Keep newest diagnostic lines visible when the window updates.
 	local maxScroll = math.max(0, frame.editBox:GetHeight() - frame.scrollFrame:GetHeight())
 	frame.scrollFrame:SetVerticalScroll(maxScroll)
 end
 
-function QuestTogether:RefreshWorldQuestDiagnosticWindow()
-	self:RefreshCopyableWindow()
-end
-
-function QuestTogether:AppendWorldQuestDiagnosticLogLine(line)
-	if type(line) ~= "string" or line == "" then
-		return
-	end
-
-	local lines = self.worldQuestDiagnosticLogLines
-	if type(lines) ~= "table" then
-		lines = {}
-		self.worldQuestDiagnosticLogLines = lines
-	end
-
-	lines[#lines + 1] = line
-	local maxLines = self.WQ_DIAG_MAX_LINES or 1200
-	local overflow = #lines - maxLines
-	if overflow > 0 then
-		for index = 1, (#lines - overflow) do
-			lines[index] = lines[index + overflow]
-		end
-		for index = (#lines - overflow + 1), #lines do
-			lines[index] = nil
-		end
-	end
-
-	if self.worldQuestDiagnosticWindow and self.worldQuestDiagnosticWindow:IsShown() then
-		self:RefreshCopyableWindow()
-	end
-end
-
 function QuestTogether:EnsureCopyableWindow()
-	if self.worldQuestDiagnosticWindow then
-		return self.worldQuestDiagnosticWindow
+	if self.copyableWindow then
+		return self.copyableWindow
 	end
 
-	local frame = CreateFrame("Frame", "QuestTogetherWQDiagnosticWindow", UIParent, "BasicFrameTemplateWithInset")
+	local frame = CreateFrame("Frame", "QuestTogetherCopyableWindow", UIParent, "BasicFrameTemplateWithInset")
 	frame:SetSize(900, 560)
 	frame:SetPoint("CENTER")
 	frame:SetFrameStrata("DIALOG")
@@ -4069,13 +4017,9 @@ function QuestTogether:EnsureCopyableWindow()
 	frame.closeButton = closeButton
 	frame.titleLabel = title
 	frame.hintLabel = hint
-	self.worldQuestDiagnosticWindow = frame
+	self.copyableWindow = frame
 
 	return frame
-end
-
-function QuestTogether:EnsureWorldQuestDiagnosticWindow()
-	return self:EnsureCopyableWindow()
 end
 
 function QuestTogether:ShowCopyableWindow(options)
@@ -4098,20 +4042,6 @@ function QuestTogether:ShowCopyableWindow(options)
 	return true
 end
 
-function QuestTogether:ShowWorldQuestDiagnosticWindow()
-	return self:ShowCopyableWindow({
-		title = "QuestTogether World Quest Diagnostics",
-		hint = "Use /qt wqdiag dump and /qt wqdiag refresh. Click Select All, then Ctrl+C.",
-		getText = function(addon)
-			return addon:GetWorldQuestDiagnosticLogText()
-		end,
-		onClear = function(addon)
-			addon:ClearWorldQuestDiagnosticLog()
-		end,
-		clearLabel = "Clear",
-	})
-end
-
 function QuestTogether:ShowTestResultsWindow()
 	return self:ShowCopyableWindow({
 		title = "QuestTogether Test Results",
@@ -4124,22 +4054,6 @@ function QuestTogether:ShowTestResultsWindow()
 		end,
 		clearLabel = "Clear",
 	})
-end
-
-function QuestTogether:PrintWorldQuestDiagnosticLine(message, force)
-	if not force and not self:IsWorldQuestDiagnosticsEnabled() then
-		return
-	end
-
-	local prefixText = "WQDiag: " .. tostring(message)
-	local now = self.API and self.API.GetTime and self:SafeToNumber(self.API.GetTime()) or nil
-	local lineText = prefixText
-	if now ~= nil then
-		lineText = string.format("[%.3f] %s", now, prefixText)
-	end
-
-	self:AppendWorldQuestDiagnosticLogLine(lineText)
-	self:PrintChatLogSystemMessage(lineText)
 end
 
 function QuestTogether:InitializeSlashCommands()
@@ -4172,7 +4086,6 @@ function QuestTogether:PrintHelp()
 	self:Print("/qt enable | disable - Enable or disable runtime behavior")
 	self:Print("/qt debug [on|off|toggle] - Show or control debug mode")
 	self:Print("/qt devlogall [on|off|toggle] - Show or control dev all-announcements logging")
-	self:Print("/qt wqdiag [on|off|toggle|status|dump|refresh|show|clear|copy] - World quest area diagnostics")
 	self:Print("/qt set <option> <value> - Set a boolean option (e.g. emoteOnQuestCompletion off)")
 	self:Print("/qt get <option> - Read an option value")
 	self:Print("/qt scan - Rescan your quest log now")
@@ -4246,78 +4159,6 @@ function QuestTogether:HandleSlashCommand(input)
 			self:SetOption("devLogAllAnnouncements", boolValue)
 		end
 		self:Print("devLogAllAnnouncements = " .. tostring(self:GetOption("devLogAllAnnouncements")))
-		return
-	end
-
-	if command == "wqdiag" then
-		local arg = string.lower(self:SafeTrimString(rest, ""))
-		if arg == "" or arg == "status" then
-			local lineCount = type(self.worldQuestDiagnosticLogLines) == "table" and #self.worldQuestDiagnosticLogLines or 0
-			self:Print("wqdiag = " .. tostring(self:IsWorldQuestDiagnosticsEnabled()) .. " (lines=" .. tostring(lineCount) .. ")")
-			if self.DumpWorldQuestDiagnostics then
-				self:DumpWorldQuestDiagnostics("slash-status")
-			else
-				self:Print("World quest diagnostics are unavailable in this build.")
-			end
-			return
-		end
-
-		if arg == "toggle" then
-			self:SetWorldQuestDiagnosticsEnabled(not self:IsWorldQuestDiagnosticsEnabled())
-			self:Print("wqdiag = " .. tostring(self:IsWorldQuestDiagnosticsEnabled()))
-			return
-		end
-
-		local boolValue = self:ParseBoolean(arg)
-		if boolValue ~= nil then
-			self:SetWorldQuestDiagnosticsEnabled(boolValue)
-			self:Print("wqdiag = " .. tostring(self:IsWorldQuestDiagnosticsEnabled()))
-			return
-		end
-
-		if arg == "dump" then
-			if self.DumpWorldQuestDiagnostics then
-				self:DumpWorldQuestDiagnostics("slash-dump")
-			else
-				self:Print("World quest diagnostics are unavailable in this build.")
-			end
-			self:ShowWorldQuestDiagnosticWindow()
-			return
-		end
-
-		if arg == "refresh" then
-			local refreshed = self:RefreshTaskAreaStates(true)
-			self:Print("wqdiag refresh = " .. tostring(refreshed))
-			if self.DumpWorldQuestDiagnostics then
-				self:DumpWorldQuestDiagnostics("slash-refresh")
-			end
-			self:ShowWorldQuestDiagnosticWindow()
-			return
-		end
-
-		if arg == "show" or arg == "window" then
-			self:ShowWorldQuestDiagnosticWindow()
-			return
-		end
-
-		if arg == "clear" then
-			self:ClearWorldQuestDiagnosticLog()
-			self:Print("wqdiag log cleared.")
-			return
-		end
-
-		if arg == "copy" then
-			if self:ShowWorldQuestDiagnosticWindow() then
-				local frame = self.worldQuestDiagnosticWindow
-				if frame and frame.editBox then
-					frame.editBox:SetFocus()
-					frame.editBox:HighlightText()
-				end
-			end
-			return
-		end
-
-		self:Print("Usage: /qt wqdiag on|off|toggle|status|dump|refresh|show|clear|copy")
 		return
 	end
 

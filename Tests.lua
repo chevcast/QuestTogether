@@ -1222,44 +1222,6 @@ QuestTogether:RegisterTest("task area snapshot accepts boolean-like task-active 
 	end)
 end)
 
-QuestTogether:RegisterTest("world quest diagnostic log buffer trims oldest lines", function()
-	local originalMax = QuestTogether.WQ_DIAG_MAX_LINES
-	QuestTogether.WQ_DIAG_MAX_LINES = 3
-	QuestTogether.worldQuestDiagnosticLogLines = {}
-
-	QuestTogether:AppendWorldQuestDiagnosticLogLine("line-1")
-	QuestTogether:AppendWorldQuestDiagnosticLogLine("line-2")
-	QuestTogether:AppendWorldQuestDiagnosticLogLine("line-3")
-	QuestTogether:AppendWorldQuestDiagnosticLogLine("line-4")
-	QuestTogether:AppendWorldQuestDiagnosticLogLine("line-5")
-
-	AssertEquals(#QuestTogether.worldQuestDiagnosticLogLines, 3)
-	AssertEquals(QuestTogether.worldQuestDiagnosticLogLines[1], "line-3")
-	AssertEquals(QuestTogether.worldQuestDiagnosticLogLines[2], "line-4")
-	AssertEquals(QuestTogether.worldQuestDiagnosticLogLines[3], "line-5")
-
-	QuestTogether.WQ_DIAG_MAX_LINES = originalMax
-end)
-
-QuestTogether:RegisterTest("wqdiag slash commands support show copy and clear", function()
-	local showCalls = 0
-	QuestTogether.worldQuestDiagnosticLogLines = {
-		"line-a",
-	}
-
-	WithPatchedMethod(QuestTogether, "ShowWorldQuestDiagnosticWindow", function()
-		showCalls = showCalls + 1
-		return true
-	end, function()
-		QuestTogether:HandleSlashCommand("wqdiag show")
-		QuestTogether:HandleSlashCommand("wqdiag copy")
-	end)
-
-	AssertEquals(showCalls, 2)
-	QuestTogether:HandleSlashCommand("wqdiag clear")
-	AssertEquals(#QuestTogether.worldQuestDiagnosticLogLines, 0)
-end)
-
 QuestTogether:RegisterTest("world quest area refresh publishes enter and leave events from snapshot diffs", function()
 	local events = {}
 	QuestTogether.worldQuestAreaStateByQuestID = {}
