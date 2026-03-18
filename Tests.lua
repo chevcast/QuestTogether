@@ -59,9 +59,6 @@ local function CreateApiWithOverrides(overrides)
 		GetQuestPOIsOnMap = function()
 			return nil
 		end,
-		IsInsideQuestBlob = function()
-			return nil
-		end,
 		IsTaskQuestActive = function()
 			return nil
 		end,
@@ -113,7 +110,6 @@ local function WithIsolatedState(testFn)
 	local originalProfileEnabled = QuestTogether.db.profile.enabled
 	local originalWorldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID
 	local originalBonusObjectiveAreaStateByQuestID = QuestTogether.bonusObjectiveAreaStateByQuestID
-	local originalQuestBlobInsideStateByQuestID = QuestTogether.questBlobInsideStateByQuestID
 	local originalNameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken
 	local originalNameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache
 	local originalNameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache
@@ -156,7 +152,6 @@ local function WithIsolatedState(testFn)
 	QuestTogether.partyRosterFingerprint = ""
 	QuestTogether.worldQuestAreaStateByQuestID = {}
 	QuestTogether.bonusObjectiveAreaStateByQuestID = {}
-	QuestTogether.questBlobInsideStateByQuestID = {}
 	QuestTogether.nameplateQuestStateByUnitToken = {}
 	QuestTogether.nameplateQuestObjectiveCache = {}
 	QuestTogether.nameplateQuestTitleCache = {}
@@ -212,7 +207,6 @@ local function WithIsolatedState(testFn)
 	QuestTogether.isEnabled = originalIsEnabled
 	QuestTogether.worldQuestAreaStateByQuestID = originalWorldQuestAreaStateByQuestID
 	QuestTogether.bonusObjectiveAreaStateByQuestID = originalBonusObjectiveAreaStateByQuestID
-	QuestTogether.questBlobInsideStateByQuestID = originalQuestBlobInsideStateByQuestID
 	QuestTogether.nameplateQuestStateByUnitToken = originalNameplateQuestStateByUnitToken
 	QuestTogether.nameplateQuestObjectiveCache = originalNameplateQuestObjectiveCache
 	QuestTogether.nameplateQuestTitleCache = originalNameplateQuestTitleCache
@@ -555,13 +549,12 @@ QuestTogether:RegisterTest("task area snapshot falls back to IsWorldQuest when q
 				isWorldQuest = false,
 			}
 		end,
+		GetLocalTaskQuests = function()
+			return { 12345 }
+		end,
 		GetTaskInfo = function(questId)
 			AssertEquals(questId, 12345)
-			return nil, nil, nil, nil, nil
-		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 12345)
-			return nil
+			return true, true, 1, "Fallback Classified World Quest", true
 		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 12345)
@@ -580,7 +573,7 @@ QuestTogether:RegisterTest("task area snapshot falls back to IsWorldQuest when q
 	end)
 end)
 
-QuestTogether:RegisterTest("task area snapshot uses IsQuestOnMap fallback when questInfo map flags are falsey", function()
+QuestTogether:RegisterTest("world task snapshot does not use IsQuestOnMap fallback without local task recognition", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -602,10 +595,6 @@ QuestTogether:RegisterTest("task area snapshot uses IsQuestOnMap fallback when q
 			AssertEquals(questId, 22222)
 			return nil, nil, nil, nil, nil
 		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 22222)
-			return nil
-		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 22222)
 			return nil
@@ -617,10 +606,10 @@ QuestTogether:RegisterTest("task area snapshot uses IsQuestOnMap fallback when q
 	})
 
 	local worldSnapshot = QuestTogether:GetTaskAreaSnapshot("world")
-	AssertEquals(worldSnapshot[22222], "Map Fallback World Quest")
+	AssertEquals(worldSnapshot[22222], nil)
 end)
 
-QuestTogether:RegisterTest("task area snapshot prefers IsTaskQuestActive when available", function()
+QuestTogether:RegisterTest("world task snapshot ignores IsTaskQuestActive without local task recognition", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -642,13 +631,9 @@ QuestTogether:RegisterTest("task area snapshot prefers IsTaskQuestActive when av
 			AssertEquals(questId, 22223)
 			return nil, nil, nil, nil, nil
 		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 22223)
-			return nil
-		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 22223)
-			return false
+			return true
 		end,
 	})
 
@@ -656,7 +641,7 @@ QuestTogether:RegisterTest("task area snapshot prefers IsTaskQuestActive when av
 	AssertEquals(worldSnapshot[22223], nil)
 end)
 
-QuestTogether:RegisterTest("task area snapshot uses IsTaskQuestActive true when corroborated by map presence", function()
+QuestTogether:RegisterTest("world task snapshot ignores task-active map corroboration without local task recognition", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -678,10 +663,6 @@ QuestTogether:RegisterTest("task area snapshot uses IsTaskQuestActive true when 
 			AssertEquals(questId, 22224)
 			return nil, nil, nil, nil, nil
 		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 22224)
-			return nil
-		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 22224)
 			return true
@@ -693,7 +674,7 @@ QuestTogether:RegisterTest("task area snapshot uses IsTaskQuestActive true when 
 	})
 
 	local worldSnapshot = QuestTogether:GetTaskAreaSnapshot("world")
-	AssertEquals(worldSnapshot[22224], "Active Area World Quest")
+	AssertEquals(worldSnapshot[22224], nil)
 end)
 
 QuestTogether:RegisterTest("task area snapshot prefers GetTaskInfo in-area state over IsTaskQuestActive fallback", function()
@@ -714,6 +695,9 @@ QuestTogether:RegisterTest("task area snapshot prefers GetTaskInfo in-area state
 				isWorldQuest = true,
 			}
 		end,
+		GetLocalTaskQuests = function()
+			return { 22225 }
+		end,
 		GetTaskInfo = function(questId)
 			AssertEquals(questId, 22225)
 			return false, true, 1, "GetTaskInfo In-Area State", true
@@ -728,7 +712,7 @@ QuestTogether:RegisterTest("task area snapshot prefers GetTaskInfo in-area state
 	AssertEquals(worldSnapshot[22225], nil)
 end)
 
-QuestTogether:RegisterTest("task area snapshot treats current-map task set as authoritative in-area signal", function()
+QuestTogether:RegisterTest("world task snapshot does not use current-map task set as the entry signal", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -752,11 +736,7 @@ QuestTogether:RegisterTest("task area snapshot treats current-map task set as au
 		end,
 		GetTaskInfo = function(questId)
 			AssertEquals(questId, 22226)
-			return nil, nil, nil, nil, nil
-		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 22226)
-			return nil
+			return true, true, 1, "Current Map Task Quest", true
 		end,
 		GetTaskQuestsOnMap = function(mapId)
 			AssertEquals(mapId, 111)
@@ -773,10 +753,10 @@ QuestTogether:RegisterTest("task area snapshot treats current-map task set as au
 	})
 
 	local worldSnapshot = QuestTogether:GetTaskAreaSnapshot("world")
-	AssertEquals(worldSnapshot[22226], "Current Map Task Quest")
+	AssertEquals(worldSnapshot[22226], nil)
 end)
 
-QuestTogether:RegisterTest("task area snapshot suppresses quests absent from current-map task set", function()
+QuestTogether:RegisterTest("world task snapshot requires Blizzard local task recognition before inclusion", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -798,13 +778,12 @@ QuestTogether:RegisterTest("task area snapshot suppresses quests absent from cur
 			AssertEquals(unitToken, "player")
 			return 222
 		end,
+		GetLocalTaskQuests = function()
+			return { 22227 }
+		end,
 		GetTaskInfo = function(questId)
 			AssertEquals(questId, 22227)
-			return nil, nil, nil, nil, nil
-		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 22227)
-			return nil
+			return true, true, 1, "Not In Current Map Task Set", true
 		end,
 		GetTaskQuestsOnMap = function(mapId)
 			AssertEquals(mapId, 222)
@@ -821,10 +800,10 @@ QuestTogether:RegisterTest("task area snapshot suppresses quests absent from cur
 	})
 
 	local worldSnapshot = QuestTogether:GetTaskAreaSnapshot("world")
-	AssertEquals(worldSnapshot[22227], nil)
+	AssertEquals(worldSnapshot[22227], "Not In Current Map Task Set")
 end)
 
-QuestTogether:RegisterTest("task area snapshot includes quests from C_QuestLog.GetQuestsOnMap fallback set", function()
+QuestTogether:RegisterTest("world task snapshot does not use quest POI map fallback as the entry signal", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -842,17 +821,13 @@ QuestTogether:RegisterTest("task area snapshot includes quests from C_QuestLog.G
 				isWorldQuest = true,
 			}
 		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 22228)
-			return nil
-		end,
 		GetPlayerMapID = function(unitToken)
 			AssertEquals(unitToken, "player")
 			return 333
 		end,
 		GetTaskInfo = function(questId)
 			AssertEquals(questId, 22228)
-			return nil, nil, nil, nil, nil
+			return true, true, 1, "Quest POI Area Quest", true
 		end,
 		GetTaskQuestsOnMap = function(mapId)
 			AssertEquals(mapId, 333)
@@ -876,10 +851,10 @@ QuestTogether:RegisterTest("task area snapshot includes quests from C_QuestLog.G
 	})
 
 	local worldSnapshot = QuestTogether:GetTaskAreaSnapshot("world")
-	AssertEquals(worldSnapshot[22228], "Quest POI Area Quest")
+	AssertEquals(worldSnapshot[22228], nil)
 end)
 
-QuestTogether:RegisterTest("task area snapshot uses minimap quest-blob state over task-active fallback", function()
+QuestTogether:RegisterTest("world task snapshot requires Blizzard local task recognition before GetTaskInfo in-area", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -897,9 +872,9 @@ QuestTogether:RegisterTest("task area snapshot uses minimap quest-blob state ove
 				isWorldQuest = true,
 			}
 		end,
-		IsInsideQuestBlob = function(questId)
+		GetTaskInfo = function(questId)
 			AssertEquals(questId, 22229)
-			return false
+			return true, true, 1, "Quest Blob Out Of Area", true
 		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 22229)
@@ -911,7 +886,7 @@ QuestTogether:RegisterTest("task area snapshot uses minimap quest-blob state ove
 	AssertEquals(worldSnapshot[22229], nil)
 end)
 
-QuestTogether:RegisterTest("task area snapshot includes quest when minimap quest-blob reports in-area", function()
+QuestTogether:RegisterTest("world task snapshot includes quest when local task list and GetTaskInfo agree", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -929,9 +904,12 @@ QuestTogether:RegisterTest("task area snapshot includes quest when minimap quest
 				isWorldQuest = true,
 			}
 		end,
-		IsInsideQuestBlob = function(questId)
+		GetLocalTaskQuests = function()
+			return { 22230 }
+		end,
+		GetTaskInfo = function(questId)
 			AssertEquals(questId, 22230)
-			return true
+			return true, true, 1, "Quest Blob In Area", true
 		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 22230)
@@ -966,11 +944,7 @@ QuestTogether:RegisterTest("task area snapshot includes quest from Blizzard loca
 		end,
 		GetTaskInfo = function(questId)
 			AssertEquals(questId, 22232)
-			return nil, nil, nil, nil, nil
-		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 22232)
-			return nil
+			return true, true, 1, "Local Task Table Quest", true
 		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 22232)
@@ -982,7 +956,7 @@ QuestTogether:RegisterTest("task area snapshot includes quest from Blizzard loca
 	AssertEquals(worldSnapshot[22232], "Local Task Table Quest")
 end)
 
-QuestTogether:RegisterTest("task area snapshot uses minimap quest-blob state over local task table fallback", function()
+QuestTogether:RegisterTest("world task snapshot waits for GetTaskInfo in-area even after local task recognition", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -1005,11 +979,7 @@ QuestTogether:RegisterTest("task area snapshot uses minimap quest-blob state ove
 		end,
 		GetTaskInfo = function(questId)
 			AssertEquals(questId, 22235)
-			return nil, nil, nil, nil, nil
-		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 22235)
-			return false
+			return false, true, 1, "Blob Overrides Local Task Table", true
 		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 22235)
@@ -1021,53 +991,18 @@ QuestTogether:RegisterTest("task area snapshot uses minimap quest-blob state ove
 	AssertEquals(worldSnapshot[22235], nil)
 end)
 
-QuestTogether:RegisterTest("task area snapshot includes blob-only world quest candidates", function()
+QuestTogether:RegisterTest("world task snapshot ignores blob-only world quest candidates", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 0
 		end,
-		GetPlayerMapID = function(unitToken)
-			AssertEquals(unitToken, "player")
-			return 555
-		end,
-		GetTaskQuestsOnMap = function(mapId)
-			AssertEquals(mapId, 555)
-			return {}
-		end,
-		GetQuestPOIsOnMap = function(mapId)
-			AssertEquals(mapId, 555)
-			return {}
-		end,
-		GetTaskInfo = function(questId)
-			AssertEquals(questId, 44444)
-			return nil, nil, nil, nil, nil
-		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 44444)
-			return nil
-		end,
-		IsTaskQuestActive = function(questId)
-			AssertEquals(questId, 44444)
-			return nil
-		end,
 	})
-	QuestTogether.questBlobInsideStateByQuestID[44444] = true
 
-	WithPatchedMethod(QuestTogether, "IsWorldQuest", function(_, questId)
-		AssertEquals(questId, 44444)
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "GetQuestTitle", function(_, questId)
-			AssertEquals(questId, 44444)
-			return "Blob Only World Quest"
-		end, function()
-			local worldSnapshot = QuestTogether:GetTaskAreaSnapshot("world")
-			AssertEquals(worldSnapshot[44444], "Blob Only World Quest")
-		end)
-	end)
+	local worldSnapshot = QuestTogether:GetTaskAreaSnapshot("world")
+	AssertEquals(worldSnapshot[44444], nil)
 end)
 
-QuestTogether:RegisterTest("task area snapshot ignores broad task-active when map and blob signals are absent", function()
+QuestTogether:RegisterTest("world task snapshot ignores broad task-active without Blizzard local task recognition", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		GetNumQuestLogEntries = function()
 			return 1
@@ -1084,10 +1019,6 @@ QuestTogether:RegisterTest("task area snapshot ignores broad task-active when ma
 				hasLocalPOI = false,
 				isWorldQuest = true,
 			}
-		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 22231)
-			return false
 		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 22231)
@@ -1126,7 +1057,6 @@ QuestTogether:RegisterTest("quest-blob state change refreshes task area states w
 
 	AssertEquals(#refreshCalls, 1)
 	AssertEquals(refreshCalls[1], true)
-	AssertEquals(QuestTogether.questBlobInsideStateByQuestID[22233], true)
 end)
 
 QuestTogether:RegisterTest("task area snapshot treats world quests as tasks when task flag is falsey", function()
@@ -1147,13 +1077,12 @@ QuestTogether:RegisterTest("task area snapshot treats world quests as tasks when
 				isWorldQuest = false,
 			}
 		end,
+		GetLocalTaskQuests = function()
+			return { 33333 }
+		end,
 		GetTaskInfo = function(questId)
 			AssertEquals(questId, 33333)
-			return nil, nil, nil, nil, nil
-		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 33333)
-			return nil
+			return true, true, 1, "World Quest Without Task Flag", true
 		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 33333)
@@ -1188,13 +1117,12 @@ QuestTogether:RegisterTest("task area snapshot accepts boolean-like task-active 
 				isWorldQuest = false,
 			}
 		end,
+		GetLocalTaskQuests = function()
+			return { 33334 }
+		end,
 		GetTaskInfo = function(questId)
 			AssertEquals(questId, 33334)
-			return nil, nil, nil, nil, nil
-		end,
-		IsInsideQuestBlob = function(questId)
-			AssertEquals(questId, 33334)
-			return nil
+			return true, true, 1, "World Quest Via Active Task Fallback", true
 		end,
 		IsTaskQuestActive = function(questId)
 			AssertEquals(questId, 33334)

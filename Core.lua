@@ -97,7 +97,6 @@ QuestTogether.questsCompleted = QuestTogether.questsCompleted or {}
 QuestTogether.pendingQuestRemovals = QuestTogether.pendingQuestRemovals or {}
 QuestTogether.worldQuestAreaStateByQuestID = QuestTogether.worldQuestAreaStateByQuestID or {}
 QuestTogether.bonusObjectiveAreaStateByQuestID = QuestTogether.bonusObjectiveAreaStateByQuestID or {}
-QuestTogether.questBlobInsideStateByQuestID = QuestTogether.questBlobInsideStateByQuestID or {}
 
 -- Default settings for SavedVariables.
 QuestTogether.DEFAULTS = {
@@ -991,32 +990,6 @@ QuestTogether.API = QuestTogether.API or {
 			end
 
 			return sanitized
-		end,
-		IsInsideQuestBlob = function(questID)
-			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
-				or nil
-			if not numericQuestID then
-				return nil
-			end
-			if not (C_Minimap and C_Minimap.IsInsideQuestBlob) then
-				return nil
-			end
-
-			local ok, isInside = pcall(C_Minimap.IsInsideQuestBlob, numericQuestID)
-			if not ok then
-				return nil
-			end
-			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(isInside) then
-				return nil
-			end
-			if type(isInside) == "boolean" then
-				return isInside
-			end
-			local numericFlag = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(isInside) or nil
-			if numericFlag ~= nil then
-				return numericFlag ~= 0
-			end
-			return nil
 		end,
 		IsOnQuest = function(questID)
 			local numericQuestID = QuestTogether and QuestTogether.NormalizeQuestID and QuestTogether:NormalizeQuestID(questID)
@@ -3765,7 +3738,6 @@ function QuestTogether:Enable()
 	self.isEnabled = true
 	self.worldQuestAreaStateByQuestID = {}
 	self.bonusObjectiveAreaStateByQuestID = {}
-	self.questBlobInsideStateByQuestID = {}
 	if self.EnsureAnnouncementChannelJoined then
 		self:EnsureAnnouncementChannelJoined()
 	end
@@ -3813,7 +3785,6 @@ function QuestTogether:Disable()
 	self.isEnabled = false
 	self.worldQuestAreaStateByQuestID = {}
 	self.bonusObjectiveAreaStateByQuestID = {}
-	self.questBlobInsideStateByQuestID = {}
 	if self.LeaveAnnouncementChannel then
 		self:LeaveAnnouncementChannel()
 	end
