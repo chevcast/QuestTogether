@@ -278,6 +278,93 @@ local function BuildPseudoTooltipLinesFromHiddenTooltip(tooltipFrame)
 	return pseudoLines
 end
 
+local function BuildPseudoTooltipLinesFromTooltipData(tooltipData)
+	if type(tooltipData) ~= "table" or IsFrameForbidden(tooltipData) then
+		return {}
+	end
+
+	local tooltipLines = tooltipData.lines
+	if type(tooltipLines) ~= "table" then
+		return {}
+	end
+
+	local function IsSecret(value)
+		return QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(value)
+	end
+
+	local function NormalizeLineText(value)
+		if IsSecret(value) then
+			return nil
+		end
+		return type(value) == "string" and value or nil
+	end
+
+	local function NormalizeLineType(rawLineType)
+		if IsSecret(rawLineType) then
+			return nil
+		end
+
+		if Enum and Enum.TooltipDataLineType then
+			if rawLineType == Enum.TooltipDataLineType.QuestObjective then
+				return "QuestObjective"
+			end
+			if rawLineType == Enum.TooltipDataLineType.QuestPlayer then
+				return "QuestPlayer"
+			end
+			if rawLineType == Enum.TooltipDataLineType.None or rawLineType == Enum.TooltipDataLineType.NestedBlock then
+				return "Fallback"
+			end
+		end
+
+		local normalizedType = SafeText(rawLineType, "")
+		if normalizedType == "QuestObjective" then
+			return "QuestObjective"
+		end
+		if normalizedType == "QuestPlayer" then
+			return "QuestPlayer"
+		end
+		if normalizedType == "" or normalizedType == "None" or normalizedType == "NestedBlock" then
+			return "Fallback"
+		end
+
+		return nil
+	end
+
+	local pseudoLines = {}
+	local function AppendPseudoLineData(lineData, depth)
+		if IsSecret(lineData) or type(lineData) ~= "table" or depth > 4 then
+			return
+		end
+
+		local normalizedLineType = NormalizeLineType(lineData.type)
+		local leftText = NormalizeLineText(lineData.leftText)
+		local rightText = NormalizeLineText(lineData.rightText)
+		local centerText = NormalizeLineText(lineData.text)
+
+		if normalizedLineType then
+			pseudoLines[#pseudoLines + 1] = {
+				type = normalizedLineType,
+				leftText = leftText,
+				rightText = rightText,
+				text = centerText,
+			}
+		end
+
+		local nestedLines = IsSecret(lineData.lines) and nil or lineData.lines
+		if type(nestedLines) == "table" then
+			for _, nestedLineData in ipairs(nestedLines) do
+				AppendPseudoLineData(nestedLineData, depth + 1)
+			end
+		end
+	end
+
+	for _, lineData in ipairs(tooltipLines) do
+		AppendPseudoLineData(lineData, 0)
+	end
+
+	return pseudoLines
+end
+
 local function GetPersonalBubbleAnchorFontDefinition()
 	if ChatBubbleFont and ChatBubbleFont.GetFont then
 		local fontPath, _, fontFlags = ChatBubbleFont:GetFont()
@@ -294,6 +381,15 @@ local function GetPersonalBubbleAnchorFontDefinition()
 	end
 
 	return STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", ""
+end
+
+local function IsWorldMapVisible()
+	if not WorldMapFrame or IsFrameForbidden(WorldMapFrame) or not WorldMapFrame.IsShown then
+		return false
+	end
+
+	local ok, isShown = pcall(WorldMapFrame.IsShown, WorldMapFrame)
+	return ok and isShown and true or false
 end
 
 local function GetAnnouncementBubbleVisualConfig()
@@ -1358,17 +1454,70 @@ function QuestTogether:IsTooltipObjectiveTextFromTrackedQuest(candidateText)
 	return false
 end
 
-local function IsTooltipObjectiveOrPlayerLineType(lineType)
+local function IsTooltipQuestObjectiveLineType(lineType)
 	if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(lineType) then
 		return false
 	end
 
 	if Enum and Enum.TooltipDataLineType then
-		return lineType == Enum.TooltipDataLineType.QuestObjective or lineType == Enum.TooltipDataLineType.QuestPlayer
+		return lineType == Enum.TooltipDataLineType.QuestObjective
 	end
 
 	local normalizedType = SafeText(lineType, "")
-	return normalizedType == "QuestObjective" or normalizedType == "QuestPlayer"
+	return normalizedType == "QuestObjective"
+end
+
+local function IsTooltipQuestPlayerLineType(lineType)
+	if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(lineType) then
+		return false
+	end
+
+	if Enum and Enum.TooltipDataLineType then
+		return lineType == Enum.TooltipDataLineType.QuestPlayer
+	end
+
+	local normalizedType = SafeText(lineType, "")
+	return normalizedType == "QuestPlayer"
+end
+
+local function IsTooltipFallbackCandidateLineType(lineType)
+	if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(lineType) then
+		return false
+	end
+
+	if lineType == nil then
+		return true
+	end
+
+	if Enum and Enum.TooltipDataLineType then
+		return lineType == Enum.TooltipDataLineType.None or lineType == Enum.TooltipDataLineType.NestedBlock
+	end
+
+	local normalizedType = SafeText(lineType, "")
+	return normalizedType == "" or normalizedType == "None" or normalizedType == "NestedBlock"
+		or normalizedType == "Fallback"
+end
+
+local function IsLikelyObjectiveFallbackText(text)
+	local trimmedText = SafeTrimText(text)
+	if trimmedText == "" then
+		return false
+	end
+	if IsKnownQuestTitleLine(trimmedText) then
+		return false
+	end
+
+	if SafeMatch(trimmedText, "(%d+)%s*/%s*(%d+)") then
+		return true
+	end
+	if SafeMatch(trimmedText, "^%-") and SafeMatch(trimmedText, "%a") then
+		return true
+	end
+	if SafeMatch(trimmedText, "(%d+%.?%d*)%%") and SafeMatch(trimmedText, "%a") then
+		return true
+	end
+
+	return false
 end
 
 function QuestTogether:EvaluateTooltipQuestObjectiveLines(tooltipLines)
@@ -1381,12 +1530,15 @@ function QuestTogether:EvaluateTooltipQuestObjectiveLines(tooltipLines)
 			break
 		end
 
-		local lineType = lineData and lineData.type
+		local lineType = lineData and lineData.type or nil
 		if self:IsSecretValue(lineType) then
 			break
 		end
 
-		if IsTooltipObjectiveOrPlayerLineType(lineType) then
+		local lineTypeIsObjective = IsTooltipQuestObjectiveLineType(lineType)
+		local lineTypeIsPlayer = IsTooltipQuestPlayerLineType(lineType)
+		local canUseFallbackLineType = IsTooltipFallbackCandidateLineType(lineType)
+		if lineTypeIsObjective or lineTypeIsPlayer or canUseFallbackLineType then
 			local leftText = lineData and lineData.leftText or nil
 			local rightText = lineData and lineData.rightText or nil
 			local centerText = lineData and lineData.text or nil
@@ -1415,12 +1567,13 @@ function QuestTogether:EvaluateTooltipQuestObjectiveLines(tooltipLines)
 				SafeTrimText(leftText),
 				SafeTrimText(centerText),
 			}
-			local lineTypeIsPlayer = (Enum and Enum.TooltipDataLineType and lineType == Enum.TooltipDataLineType.QuestPlayer)
-				or SafeText(lineType, "") == "QuestPlayer"
 
-				for candidateIndex = 1, #textCandidates do
-					local candidateText = textCandidates[candidateIndex]
-					if candidateText ~= "" then
+			for candidateIndex = 1, #textCandidates do
+				local candidateText = textCandidates[candidateIndex]
+				if candidateText ~= "" then
+					local isFallbackTextCandidate = not lineTypeIsObjective and not lineTypeIsPlayer
+						and IsLikelyObjectiveFallbackText(candidateText)
+					if lineTypeIsObjective or lineTypeIsPlayer or isFallbackTextCandidate then
 						local progressState = GetObjectiveProgressState(candidateText)
 						if progressState == "unfinished" then
 							return true
@@ -1429,14 +1582,15 @@ function QuestTogether:EvaluateTooltipQuestObjectiveLines(tooltipLines)
 							if lineTypeIsPlayer and LooksLikeProgressText(candidateText) then
 								return true
 							end
-							-- For non-player objective lines without explicit progress numbers, require the
-							-- text to match an active tracked objective to avoid broad false positives.
-							if not lineTypeIsPlayer and self:IsTooltipObjectiveTextFromTrackedQuest(candidateText) then
+							if self:IsTooltipObjectiveTextFromTrackedQuest(candidateText) then
 								return true
 							end
 						end
+					elseif canUseFallbackLineType and self:IsTooltipObjectiveTextFromTrackedQuest(candidateText) then
+						return true
 					end
 				end
+			end
 		end
 	end
 
@@ -1556,6 +1710,11 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 	if not unitToken or not self:DoesNameplateUnitExist(unitToken) then
 		return false
 	end
+	-- World map tooltips build shared reward/money widgets. Avoid unit-tooltip scans while
+	-- the map is visible so we do not taint those shared tooltip payloads.
+	if IsWorldMapVisible() then
+		return false
+	end
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
 		return false
 	end
@@ -1574,6 +1733,36 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 	local cachedValue = self:GetCachedQuestObjectiveResult(unitGuid)
 	if cachedValue ~= nil then
 		return cachedValue
+	end
+
+	-- Prefer C_TooltipInfo data so we avoid mutating hidden tooltip frames and tainting
+	-- shared tooltip progress-bar internals used by Blizzard map/tooltips.
+	local hasTooltipDataApi = self.API
+		and (type(self.API.GetTooltipDataForHyperlink) == "function" or type(self.API.GetTooltipDataForUnit) == "function")
+	if hasTooltipDataApi then
+		local hasObjectiveInTooltipData = false
+		if self.API.GetTooltipDataForHyperlink then
+			local tooltipData = self.API.GetTooltipDataForHyperlink("unit:" .. unitGuid)
+			if tooltipData and not self:IsSecretValue(tooltipData) then
+				local tooltipLines = BuildPseudoTooltipLinesFromTooltipData(tooltipData)
+				if self:EvaluateTooltipQuestObjectiveLines(tooltipLines) then
+					hasObjectiveInTooltipData = true
+				end
+			end
+		end
+
+		if not hasObjectiveInTooltipData and self.API.GetTooltipDataForUnit then
+			local tooltipData = self.API.GetTooltipDataForUnit(unitToken)
+			if tooltipData and not self:IsSecretValue(tooltipData) then
+				local tooltipLines = BuildPseudoTooltipLinesFromTooltipData(tooltipData)
+				if self:EvaluateTooltipQuestObjectiveLines(tooltipLines) then
+					hasObjectiveInTooltipData = true
+				end
+			end
+		end
+
+		self:SetCachedQuestObjectiveResult(unitGuid, hasObjectiveInTooltipData)
+		return hasObjectiveInTooltipData
 	end
 
 	local scanTooltip = GetQuestScanTooltipFrame()

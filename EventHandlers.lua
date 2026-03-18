@@ -469,15 +469,15 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 		local taskAnnouncementType = self:GetTaskAnnouncementType(normalizedQuestId)
 		local questLogIndex = self.API.GetQuestLogIndexForQuestID
 			and self.API.GetQuestLogIndexForQuestID(normalizedQuestId)
-		if not questLogIndex then
-			if taskAnnouncementType then
-				local taskQuestTitle = self:GetQuestTitle(normalizedQuestId)
-				self:WatchQuest(normalizedQuestId, { title = taskQuestTitle })
-				self:RefreshTaskAreaState(taskAnnouncementType, true)
-			else
-				self:Debugf("quest", "Quest not found in log questId=%s during accept", SafeText(normalizedQuestId, "?"))
-			end
-			return
+			if not questLogIndex then
+				if taskAnnouncementType then
+					local taskQuestTitle = self:GetQuestTitle(normalizedQuestId)
+					self:WatchQuest(normalizedQuestId, { title = taskQuestTitle })
+					self:RefreshTaskAreaStates(true)
+				else
+					self:Debugf("quest", "Quest not found in log questId=%s during accept", SafeText(normalizedQuestId, "?"))
+				end
+				return
 		end
 
 		local questInfo = self.API.GetQuestLogInfo and self.API.GetQuestLogInfo(questLogIndex)
@@ -503,11 +503,11 @@ function QuestTogether:QUEST_ACCEPTED(_, questId)
 			)
 		end
 
-		self:WatchQuest(normalizedQuestId, questInfo)
-		if taskAnnouncementType then
-			self:RefreshTaskAreaState(taskAnnouncementType, true)
-		end
-	end)
+			self:WatchQuest(normalizedQuestId, questInfo)
+			if taskAnnouncementType then
+				self:RefreshTaskAreaStates(true)
+			end
+		end)
 end
 
 function QuestTogether:QUEST_TURNED_IN(_, questId)

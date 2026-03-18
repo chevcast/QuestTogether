@@ -1004,17 +1004,43 @@ QuestTogether.API = QuestTogether.API or {
 			end
 			return nil
 		end,
-		GetPlayerMapPosition = function(mapID, unitToken)
-			if C_Map and C_Map.GetPlayerMapPosition then
-				local ok, mapPosition = pcall(C_Map.GetPlayerMapPosition, mapID, unitToken)
-				return ok and mapPosition or nil
+			GetPlayerMapPosition = function(mapID, unitToken)
+				if C_Map and C_Map.GetPlayerMapPosition then
+					local ok, mapPosition = pcall(C_Map.GetPlayerMapPosition, mapID, unitToken)
+					return ok and mapPosition or nil
+				end
+				return nil
+			end,
+		GetTooltipDataForHyperlink = function(hyperlink)
+			if C_TooltipInfo and C_TooltipInfo.GetHyperlink and type(hyperlink) == "string" and hyperlink ~= "" then
+				local ok, tooltipData = pcall(C_TooltipInfo.GetHyperlink, hyperlink)
+				if not ok then
+					return nil
+				end
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(tooltipData) then
+					return nil
+				end
+				return tooltipData
 			end
 			return nil
 		end,
-	IsWarModeActive = function()
-		if C_PvP and C_PvP.IsWarModeDesired then
-			return C_PvP.IsWarModeDesired()
-		end
+		GetTooltipDataForUnit = function(unitToken)
+			if C_TooltipInfo and C_TooltipInfo.GetUnit then
+				local ok, tooltipData = pcall(C_TooltipInfo.GetUnit, unitToken)
+				if not ok then
+					return nil
+				end
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(tooltipData) then
+					return nil
+				end
+				return tooltipData
+			end
+			return nil
+		end,
+		IsWarModeActive = function()
+			if C_PvP and C_PvP.IsWarModeDesired then
+				return C_PvP.IsWarModeDesired()
+			end
 		if C_PvP and C_PvP.IsWarModeActive then
 			return C_PvP.IsWarModeActive()
 		end
