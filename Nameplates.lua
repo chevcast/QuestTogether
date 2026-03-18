@@ -1459,12 +1459,16 @@ local function IsTooltipQuestObjectiveLineType(lineType)
 		return false
 	end
 
+	local normalizedType = SafeText(lineType, "")
+	if normalizedType == "QuestObjective" then
+		return true
+	end
+
 	if Enum and Enum.TooltipDataLineType then
 		return lineType == Enum.TooltipDataLineType.QuestObjective
 	end
 
-	local normalizedType = SafeText(lineType, "")
-	return normalizedType == "QuestObjective"
+	return false
 end
 
 local function IsTooltipQuestPlayerLineType(lineType)
@@ -1472,12 +1476,16 @@ local function IsTooltipQuestPlayerLineType(lineType)
 		return false
 	end
 
+	local normalizedType = SafeText(lineType, "")
+	if normalizedType == "QuestPlayer" then
+		return true
+	end
+
 	if Enum and Enum.TooltipDataLineType then
 		return lineType == Enum.TooltipDataLineType.QuestPlayer
 	end
 
-	local normalizedType = SafeText(lineType, "")
-	return normalizedType == "QuestPlayer"
+	return false
 end
 
 local function IsTooltipFallbackCandidateLineType(lineType)
@@ -1489,13 +1497,16 @@ local function IsTooltipFallbackCandidateLineType(lineType)
 		return true
 	end
 
+	local normalizedType = SafeText(lineType, "")
+	if normalizedType == "" or normalizedType == "None" or normalizedType == "NestedBlock" or normalizedType == "Fallback" then
+		return true
+	end
+
 	if Enum and Enum.TooltipDataLineType then
 		return lineType == Enum.TooltipDataLineType.None or lineType == Enum.TooltipDataLineType.NestedBlock
 	end
 
-	local normalizedType = SafeText(lineType, "")
-	return normalizedType == "" or normalizedType == "None" or normalizedType == "NestedBlock"
-		or normalizedType == "Fallback"
+	return false
 end
 
 local function IsLikelyObjectiveFallbackText(text)

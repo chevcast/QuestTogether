@@ -1219,6 +1219,26 @@ QuestTogether:RegisterTest("tooltip objective evaluation accepts party-member pr
 	AssertTrue(hasObjective)
 end)
 
+QuestTogether:RegisterTest("tooltip objective evaluation accepts normalized string line types", function()
+	local hasObjective = QuestTogether:EvaluateTooltipQuestObjectiveLines({
+		{
+			type = "QuestObjective",
+			leftText = "0/8 Digested Object",
+		},
+		{
+			type = "QuestPlayer",
+			leftText = "Friend-Realm",
+			rightText = "3/8 Digested Object",
+		},
+		{
+			type = "Fallback",
+			leftText = "- Subdue Creatures or Kill Players (40%)",
+		},
+	})
+
+	AssertTrue(hasObjective)
+end)
+
 QuestTogether:RegisterTest("tooltip objective evaluation ignores complete-only objective blocks", function()
 	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
 	local playerLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestPlayer or "QuestPlayer"
