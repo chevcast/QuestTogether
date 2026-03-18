@@ -491,6 +491,67 @@ QuestTogether:RegisterTest("task area refresh defers during combat and resumes o
 	end)
 end)
 
+QuestTogether:RegisterTest("quest log queued tasks defer during combat and resume on regen", function()
+	local ranTask = false
+	QuestTogether.onQuestLogUpdate = {}
+	QuestTogether.pendingQuestLogTaskDrain = nil
+	QuestTogether:QueueQuestLogTask(function()
+		ranTask = true
+	end)
+
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return true
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshTaskAreaStates", function()
+		return false
+	end, function()
+		QuestTogether:QUEST_LOG_UPDATE()
+	end)
+
+	AssertFalse(ranTask)
+	AssertTrue(QuestTogether.pendingQuestLogTaskDrain)
+	AssertEquals(#QuestTogether.onQuestLogUpdate, 1)
+
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return false
+		end,
+	})
+	QuestTogether:PLAYER_REGEN_ENABLED()
+
+	AssertTrue(ranTask)
+	AssertFalse(QuestTogether.pendingQuestLogTaskDrain)
+	AssertEquals(#QuestTogether.onQuestLogUpdate, 0)
+end)
+
+QuestTogether:RegisterTest("quest log queued tasks drain immediately out of combat", function()
+	local runCount = 0
+	QuestTogether.onQuestLogUpdate = {}
+	QuestTogether.pendingQuestLogTaskDrain = nil
+	QuestTogether:QueueQuestLogTask(function()
+		runCount = runCount + 1
+	end)
+
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return false
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshTaskAreaStates", function()
+		return true
+	end, function()
+		QuestTogether:QUEST_LOG_UPDATE()
+	end)
+
+	AssertEquals(runCount, 1)
+	AssertEquals(#QuestTogether.onQuestLogUpdate, 0)
+	AssertFalse(QuestTogether.pendingQuestLogTaskDrain)
+end)
+
 QuestTogether:RegisterTest("quest status uses ready to turn in announcement event", function()
 	QuestTogether.API = CreateApiWithOverrides({
 		IsQuestFlaggedCompleted = function()
@@ -869,23 +930,9 @@ QuestTogether:RegisterTest("known nameplate addons suppress the QuestTogether qu
 	end)
 end)
 
-QuestTogether:RegisterTest("tooltip quest detection prefers C_TooltipInfo data path for objective scan", function()
+QuestTogether:RegisterTest("tooltip quest detection uses isolated tooltip line scan for objectives", function()
 	local cachedResult = nil
-	local lineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
-
-	QuestTogether.API = CreateApiWithOverrides({
-		GetTooltipDataForUnit = function(unitToken)
-			AssertEquals(unitToken, "nameplate1")
-			return {
-				lines = {
-					{
-						type = lineType,
-						leftText = "1/8 Digested Object",
-					},
-				},
-			}
-		end,
-	})
+	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
 
 	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
 		return true
@@ -905,13 +952,24 @@ QuestTogether:RegisterTest("tooltip quest detection prefers C_TooltipInfo data p
 						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
 							return nil
 						end, function()
-							WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
-								cachedResult = {
-									guid = guid,
-									value = value,
+							WithPatchedMethod(QuestTogether, "GetQuestObjectiveTooltipLines", function(_, unitToken, unitGuid)
+								AssertEquals(unitToken, "nameplate1")
+								AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
+								return {
+									{
+										type = objectiveLineType,
+										leftText = "1/8 Digested Object",
+									},
 								}
 							end, function()
-								AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+								WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
+									cachedResult = {
+										guid = guid,
+										value = value,
+									}
+								end, function()
+									AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+								end)
 							end)
 						end)
 					end)
@@ -925,28 +983,8 @@ QuestTogether:RegisterTest("tooltip quest detection prefers C_TooltipInfo data p
 	AssertTrue(cachedResult.value)
 end)
 
-QuestTogether:RegisterTest("tooltip quest detection prefers unit hyperlink tooltip data before unit token data", function()
+QuestTogether:RegisterTest("tooltip quest detection recognizes fallback-style progress lines", function()
 	local cachedResult = nil
-	local sawHyperlinkLookup = false
-	local lineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
-
-	QuestTogether.API = CreateApiWithOverrides({
-		GetTooltipDataForHyperlink = function(hyperlink)
-			sawHyperlinkLookup = true
-			AssertEquals(hyperlink, "unit:Creature-0-0-0-0-12345-0000000000")
-			return {
-				lines = {
-					{
-						type = lineType,
-						leftText = "1/8 Digested Object",
-					},
-				},
-			}
-		end,
-		GetTooltipDataForUnit = function()
-			error("GetTooltipDataForUnit should not run when hyperlink data already identifies an objective")
-		end,
-	})
 
 	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
 		return true
@@ -966,79 +1004,22 @@ QuestTogether:RegisterTest("tooltip quest detection prefers unit hyperlink toolt
 						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
 							return nil
 						end, function()
-							WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
-								cachedResult = {
-									guid = guid,
-									value = value,
+							WithPatchedMethod(QuestTogether, "GetQuestObjectiveTooltipLines", function()
+								return {
+									{
+										type = nil,
+										leftText = "- Subdue Creatures or Kill Players (40%)",
+									},
 								}
 							end, function()
-								AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
-							end)
-						end)
-					end)
-				end)
-			end)
-		end)
-	end)
-
-	AssertTrue(sawHyperlinkLookup)
-	AssertTrue(cachedResult ~= nil)
-	AssertEquals(cachedResult.guid, "Creature-0-0-0-0-12345-0000000000")
-	AssertTrue(cachedResult.value)
-end)
-
-QuestTogether:RegisterTest("tooltip quest detection recognizes nested fallback quest progress lines", function()
-	local cachedResult = nil
-	local nestedLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.NestedBlock or "NestedBlock"
-	local noneLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.None or "None"
-
-	QuestTogether.API = CreateApiWithOverrides({
-		GetTooltipDataForHyperlink = function(hyperlink)
-			AssertEquals(hyperlink, "unit:Creature-0-0-0-0-12345-0000000000")
-			return {
-				lines = {
-					{
-						type = nestedLineType,
-						lines = {
-							{
-								type = noneLineType,
-								leftText = "- Subdue Creatures or Kill Players (40%)",
-							},
-						},
-					},
-				},
-			}
-		end,
-		GetTooltipDataForUnit = function()
-			return nil
-		end,
-	})
-
-	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
-			return false
-		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
-				return false
-			end, function()
-				WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
-					return true
-				end, function()
-					WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
-						return "Creature-0-0-0-0-12345-0000000000"
-					end, function()
-						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
-							return nil
-						end, function()
-							WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
-								cachedResult = {
-									guid = guid,
-									value = value,
-								}
-							end, function()
-								AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+								WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
+									cachedResult = {
+										guid = guid,
+										value = value,
+									}
+								end, function()
+									AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+								end)
 							end)
 						end)
 					end)
@@ -1064,17 +1045,58 @@ QuestTogether:RegisterTest("tooltip quest detection does not iterate tooltip arg
 		end,
 	})
 
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
+				return false
+			end, function()
+				WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
+					return true
+				end, function()
+					WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+						return "Creature-0-0-0-0-12345-0000000000"
+					end, function()
+						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
+							return nil
+						end, function()
+							WithPatchedMethod(QuestTogether, "GetQuestObjectiveTooltipLines", function()
+								return {
+									{
+										type = objectiveLineType,
+										leftText = "1/8 Digested Object",
+										args = poisonedArgs,
+									},
+								}
+							end, function()
+								WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
+									cachedResult = {
+										guid = guid,
+										value = value,
+									}
+								end, function()
+									AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+								end)
+							end)
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+
+	AssertTrue(cachedResult ~= nil)
+	AssertEquals(cachedResult.guid, "Creature-0-0-0-0-12345-0000000000")
+	AssertTrue(cachedResult.value)
+end)
+
+QuestTogether:RegisterTest("tooltip quest detection skips live tooltip scans in combat without cache", function()
 	QuestTogether.API = CreateApiWithOverrides({
-		GetTooltipDataForUnit = function()
-			return {
-				lines = {
-					{
-						type = objectiveLineType,
-						leftText = "1/8 Digested Object",
-						args = poisonedArgs,
-					},
-				},
-			}
+		InCombatLockdown = function()
+			return true
 		end,
 	})
 
@@ -1096,13 +1118,10 @@ QuestTogether:RegisterTest("tooltip quest detection does not iterate tooltip arg
 						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
 							return nil
 						end, function()
-							WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
-								cachedResult = {
-									guid = guid,
-									value = value,
-								}
+							WithPatchedMethod(QuestTogether, "GetQuestObjectiveTooltipLines", function()
+								error("tooltip scan should not run during combat when no cached result is available")
 							end, function()
-								AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+								AssertFalse(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
 							end)
 						end)
 					end)
@@ -1110,10 +1129,40 @@ QuestTogether:RegisterTest("tooltip quest detection does not iterate tooltip arg
 			end)
 		end)
 	end)
+end)
 
-	AssertTrue(cachedResult ~= nil)
-	AssertEquals(cachedResult.guid, "Creature-0-0-0-0-12345-0000000000")
-	AssertTrue(cachedResult.value)
+QuestTogether:RegisterTest("tooltip quest detection still uses cached combat result", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return true
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
+				return false
+			end, function()
+				WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
+					return true
+				end, function()
+					WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+						return "Creature-0-0-0-0-12345-0000000000"
+					end, function()
+						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
+							return true
+						end, function()
+							AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
 end)
 
 QuestTogether:RegisterTest("quest objective detection falls back to tooltip parsing after API misses", function()

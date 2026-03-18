@@ -51,6 +51,28 @@ local function CountKeys(tableValue)
 	return count
 end
 
+local function DrainQueuedQuestLogTasks(addon)
+	if not addon then
+		return 0
+	end
+
+	local queuedTasks = addon.onQuestLogUpdate
+	if type(queuedTasks) ~= "table" or #queuedTasks == 0 then
+		addon.onQuestLogUpdate = addon.onQuestLogUpdate or {}
+		return 0
+	end
+
+	addon.onQuestLogUpdate = {}
+	for index = 1, #queuedTasks do
+		local taskFn = queuedTasks[index]
+		if type(taskFn) == "function" then
+			taskFn()
+		end
+	end
+
+	return #queuedTasks
+end
+
 local function ParseObjectiveProgressFromText(objectiveText)
 	if type(objectiveText) ~= "string" or objectiveText == "" then
 		return nil
@@ -443,6 +465,14 @@ function QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
 end
 
 function QuestTogether:PLAYER_REGEN_ENABLED()
+	if self.pendingQuestLogTaskDrain then
+		self.pendingQuestLogTaskDrain = false
+		local drainedCount = DrainQueuedQuestLogTasks(self)
+		if drainedCount > 0 then
+			self:Debugf("quest", "Resuming deferred quest log tasks after combat count=%d", drainedCount)
+		end
+	end
+
 	if self.pendingTaskAreaRefresh then
 		local shouldAnnounce = self.pendingTaskAreaRefreshShouldAnnounce and true or false
 		self:Debugf("quest", "Resuming deferred task area refresh announce=%s", SafeText(shouldAnnounce, "false"))
@@ -698,11 +728,16 @@ function QuestTogether:UNIT_QUEST_LOG_CHANGED(_, unit)
 end
 
 function QuestTogether:QUEST_LOG_UPDATE()
-	local queuedTasks = self.onQuestLogUpdate
-	if #queuedTasks > 0 then
-		self.onQuestLogUpdate = {}
-		for index = 1, #queuedTasks do
-			queuedTasks[index]()
+	local inCombatLockdown = self.API and self.API.InCombatLockdown and self.API.InCombatLockdown()
+	if inCombatLockdown then
+		if type(self.onQuestLogUpdate) == "table" and #self.onQuestLogUpdate > 0 then
+			self.pendingQuestLogTaskDrain = true
+			self:Debugf("quest", "Deferring queued quest log tasks during combat count=%d", #self.onQuestLogUpdate)
+		end
+	else
+		local drainedCount = DrainQueuedQuestLogTasks(self)
+		if drainedCount > 0 then
+			self:Debugf("quest", "Drained queued quest log tasks count=%d", drainedCount)
 		end
 	end
 

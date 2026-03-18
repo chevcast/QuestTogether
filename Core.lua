@@ -797,12 +797,29 @@ QuestTogether.API = QuestTogether.API or {
 					return nil
 				end
 
-				local sanitizedInfo = {}
-				for key, value in pairs(questInfo) do
-					if not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(value)) then
-						sanitizedInfo[key] = value
-					end
+				-- Keep quest-log snapshots to a strict scalar allowlist.
+				-- Broadly copying the C_QuestLog info table can carry secure/forbidden references
+				-- that later taint Blizzard map pin update paths.
+				local titleValue = questInfo.title
+				local titleIsSecret = QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(titleValue)
+				local sanitizedInfo = {
+					title = (type(titleValue) == "string" and not titleIsSecret) and titleValue or nil,
+					isHeader = questInfo.isHeader == true,
+					isHidden = questInfo.isHidden == true,
+					isTask = questInfo.isTask == true,
+					isOnMap = questInfo.isOnMap == true,
+					hasLocalPOI = questInfo.hasLocalPOI == true,
+					isWorldQuest = questInfo.isWorldQuest == true,
+					isComplete = questInfo.isComplete == true,
+				}
+
+				local numericQuestID = QuestTogether and QuestTogether.SafeToNumber
+					and QuestTogether:SafeToNumber(questInfo.questID)
+					or nil
+				if numericQuestID and numericQuestID > 0 then
+					sanitizedInfo.questID = math.floor(numericQuestID + 0.5)
 				end
+
 				return sanitizedInfo
 			end
 			return nil
@@ -2648,6 +2665,9 @@ function QuestTogether:CreateBlizzardWaypoint(mapID, coordX, coordY)
 	if not numericMapID or not numericX or not numericY then
 		return false
 	end
+	if self.API and self.API.InCombatLockdown and self.API.InCombatLockdown() then
+		return false
+	end
 
 	if not (self.API and self.API.CanSetUserWaypointOnMap and self.API.CanSetUserWaypointOnMap(numericMapID)) then
 		return false
@@ -2661,8 +2681,10 @@ function QuestTogether:CreateBlizzardWaypoint(mapID, coordX, coordY)
 	if self.API.SetUserWaypoint then
 		self.API.SetUserWaypoint(point)
 	end
+	-- Super-tracking can trigger protected world-map pin refreshes while state changes are still
+	-- settling, so this remains best-effort and non-fatal.
 	if self.API.SetSuperTrackedUserWaypoint then
-		self.API.SetSuperTrackedUserWaypoint(true)
+		pcall(self.API.SetSuperTrackedUserWaypoint, true)
 	end
 	return true
 end
@@ -3251,6 +3273,9 @@ end
 function QuestTogether:QueueQuestLogTask(taskFn)
 	if type(taskFn) == "function" then
 		table.insert(self.onQuestLogUpdate, taskFn)
+		if self.API and self.API.InCombatLockdown and self.API.InCombatLockdown() then
+			self.pendingQuestLogTaskDrain = true
+		end
 		self:Debugf("quest", "Queued quest log task count=%d", #self.onQuestLogUpdate)
 	end
 end

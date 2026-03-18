@@ -278,93 +278,6 @@ local function BuildPseudoTooltipLinesFromHiddenTooltip(tooltipFrame)
 	return pseudoLines
 end
 
-local function BuildPseudoTooltipLinesFromTooltipData(tooltipData)
-	if type(tooltipData) ~= "table" or IsFrameForbidden(tooltipData) then
-		return {}
-	end
-
-	local tooltipLines = tooltipData.lines
-	if type(tooltipLines) ~= "table" then
-		return {}
-	end
-
-	local function IsSecret(value)
-		return QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(value)
-	end
-
-	local function NormalizeLineText(value)
-		if IsSecret(value) then
-			return nil
-		end
-		return type(value) == "string" and value or nil
-	end
-
-	local function NormalizeLineType(rawLineType)
-		if IsSecret(rawLineType) then
-			return nil
-		end
-
-		if Enum and Enum.TooltipDataLineType then
-			if rawLineType == Enum.TooltipDataLineType.QuestObjective then
-				return "QuestObjective"
-			end
-			if rawLineType == Enum.TooltipDataLineType.QuestPlayer then
-				return "QuestPlayer"
-			end
-			if rawLineType == Enum.TooltipDataLineType.None or rawLineType == Enum.TooltipDataLineType.NestedBlock then
-				return "Fallback"
-			end
-		end
-
-		local normalizedType = SafeText(rawLineType, "")
-		if normalizedType == "QuestObjective" then
-			return "QuestObjective"
-		end
-		if normalizedType == "QuestPlayer" then
-			return "QuestPlayer"
-		end
-		if normalizedType == "" or normalizedType == "None" or normalizedType == "NestedBlock" then
-			return "Fallback"
-		end
-
-		return nil
-	end
-
-	local pseudoLines = {}
-	local function AppendPseudoLineData(lineData, depth)
-		if IsSecret(lineData) or type(lineData) ~= "table" or depth > 4 then
-			return
-		end
-
-		local normalizedLineType = NormalizeLineType(lineData.type)
-		local leftText = NormalizeLineText(lineData.leftText)
-		local rightText = NormalizeLineText(lineData.rightText)
-		local centerText = NormalizeLineText(lineData.text)
-
-		if normalizedLineType then
-			pseudoLines[#pseudoLines + 1] = {
-				type = normalizedLineType,
-				leftText = leftText,
-				rightText = rightText,
-				text = centerText,
-			}
-		end
-
-		local nestedLines = IsSecret(lineData.lines) and nil or lineData.lines
-		if type(nestedLines) == "table" then
-			for _, nestedLineData in ipairs(nestedLines) do
-				AppendPseudoLineData(nestedLineData, depth + 1)
-			end
-		end
-	end
-
-	for _, lineData in ipairs(tooltipLines) do
-		AppendPseudoLineData(lineData, 0)
-	end
-
-	return pseudoLines
-end
-
 local function GetPersonalBubbleAnchorFontDefinition()
 	if ChatBubbleFont and ChatBubbleFont.GetFont then
 		local fontPath, _, fontFlags = ChatBubbleFont:GetFont()
@@ -1713,6 +1626,47 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 	return nil
 end
 
+function QuestTogether:GetQuestObjectiveTooltipLines(unitToken, unitGuid)
+	local scanTooltip = GetQuestScanTooltipFrame()
+	if not scanTooltip then
+		return nil
+	end
+	local tooltipOwner = GetQuestScanTooltipOwnerFrame()
+
+	local didPopulateTooltip = false
+	-- Tooltip scans are best-effort and run in very hot paths; guard frame population calls so
+	-- transient forbidden/invalid states do not break nameplate refreshes.
+	local okScan = pcall(function()
+		if scanTooltip.ClearLines then
+			scanTooltip:ClearLines()
+		end
+		if scanTooltip.SetOwner then
+			scanTooltip:SetOwner(tooltipOwner or UIParent, "ANCHOR_NONE")
+		end
+		-- Prefer SetUnit for quest scans so we avoid the shared hyperlink payload path used by
+		-- map/POI tooltip reward widgets.
+		if scanTooltip.SetUnit and type(unitToken) == "string" and unitToken ~= "" then
+			scanTooltip:SetUnit(unitToken)
+			didPopulateTooltip = true
+		elseif scanTooltip.SetHyperlink and type(unitGuid) == "string" and unitGuid ~= "" then
+			scanTooltip:SetHyperlink("unit:" .. unitGuid)
+			didPopulateTooltip = true
+		end
+	end)
+	if not okScan or not didPopulateTooltip then
+		if scanTooltip.Hide then
+			pcall(scanTooltip.Hide, scanTooltip)
+		end
+		return nil
+	end
+
+	local tooltipLines = BuildPseudoTooltipLinesFromHiddenTooltip(scanTooltip)
+	if scanTooltip.Hide then
+		pcall(scanTooltip.Hide, scanTooltip)
+	end
+	return tooltipLines
+end
+
 function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 	if not ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK then
 		return false
@@ -1746,60 +1700,15 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 		return cachedValue
 	end
 
-	-- Prefer C_TooltipInfo data so we avoid mutating hidden tooltip frames and tainting
-	-- shared tooltip progress-bar internals used by Blizzard map/tooltips.
-	local hasTooltipDataApi = self.API
-		and (type(self.API.GetTooltipDataForHyperlink) == "function" or type(self.API.GetTooltipDataForUnit) == "function")
-	if hasTooltipDataApi then
-		local hasObjectiveInTooltipData = false
-		if self.API.GetTooltipDataForHyperlink then
-			local tooltipData = self.API.GetTooltipDataForHyperlink("unit:" .. unitGuid)
-			if tooltipData and not self:IsSecretValue(tooltipData) then
-				local tooltipLines = BuildPseudoTooltipLinesFromTooltipData(tooltipData)
-				if self:EvaluateTooltipQuestObjectiveLines(tooltipLines) then
-					hasObjectiveInTooltipData = true
-				end
-			end
-		end
-
-		if not hasObjectiveInTooltipData and self.API.GetTooltipDataForUnit then
-			local tooltipData = self.API.GetTooltipDataForUnit(unitToken)
-			if tooltipData and not self:IsSecretValue(tooltipData) then
-				local tooltipLines = BuildPseudoTooltipLinesFromTooltipData(tooltipData)
-				if self:EvaluateTooltipQuestObjectiveLines(tooltipLines) then
-					hasObjectiveInTooltipData = true
-				end
-			end
-		end
-
-		self:SetCachedQuestObjectiveResult(unitGuid, hasObjectiveInTooltipData)
-		return hasObjectiveInTooltipData
-	end
-
-	local scanTooltip = GetQuestScanTooltipFrame()
-	if not scanTooltip then
-		self:SetCachedQuestObjectiveResult(unitGuid, false)
-		return false
-	end
-	local tooltipOwner = GetQuestScanTooltipOwnerFrame()
-
-	local okScan = pcall(function()
-		if scanTooltip.ClearLines then
-			scanTooltip:ClearLines()
-		end
-		if scanTooltip.SetOwner then
-			scanTooltip:SetOwner(tooltipOwner or UIParent, "ANCHOR_NONE")
-		end
-		scanTooltip:SetHyperlink("unit:" .. unitGuid)
-	end)
-	if not okScan then
-		self:SetCachedQuestObjectiveResult(unitGuid, false)
+	local inCombatLockdown = self.API and self.API.InCombatLockdown and self.API.InCombatLockdown()
+	if inCombatLockdown then
 		return false
 	end
 
-	local tooltipLines = BuildPseudoTooltipLinesFromHiddenTooltip(scanTooltip)
-	if scanTooltip.Hide then
-		pcall(scanTooltip.Hide, scanTooltip)
+	local tooltipLines = self:GetQuestObjectiveTooltipLines(unitToken, unitGuid)
+	if type(tooltipLines) ~= "table" then
+		self:SetCachedQuestObjectiveResult(unitGuid, false)
+		return false
 	end
 
 	-- Consider any unfinished quest objective text (including party-progress style lines)
