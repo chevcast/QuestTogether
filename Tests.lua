@@ -3317,6 +3317,144 @@ QuestTogether:RegisterTest("nameplate health tint uses resolved quest state from
 	AssertEquals(QuestTogether.nameplateQuestStateByUnitToken["nameplate1"], true)
 end)
 
+QuestTogether:RegisterTest("nameplate icon hide restores stale health tint when quest state resolves false", function()
+	local restoredUnitFrame = nil
+	local iconHidden = false
+	QuestTogether.isEnabled = true
+	local icon = {
+		Hide = function()
+			iconHidden = true
+		end,
+	}
+	local unitFrame = {
+		unit = "nameplate1",
+		healthBar = {},
+	}
+	local namePlateFrameBase = {
+		GetUnit = function()
+			return "nameplate1"
+		end,
+		UnitFrame = unitFrame,
+	}
+	QuestTogether.nameplateIconByUnitFrame[unitFrame] = icon
+
+	WithPatchedMethod(QuestTogether, "ShouldShowQuestNameplateIcon", function(_, unitToken, candidateFrame)
+		AssertEquals(unitToken, "nameplate1")
+		AssertEquals(candidateFrame, unitFrame)
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsQuestObjectiveNameplate", function(_, unitToken, candidateFrame)
+			AssertEquals(unitToken, "nameplate1")
+			AssertEquals(candidateFrame, unitFrame)
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "RefreshNameplateHealthTint", function(_, frameBase, isQuestObjective)
+				AssertEquals(frameBase, namePlateFrameBase)
+				AssertEquals(isQuestObjective, false)
+			end, function()
+				WithPatchedMethod(QuestTogether, "RestoreNameplateHealthColor", function(_, candidateFrame)
+					restoredUnitFrame = candidateFrame
+				end, function()
+					QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
+				end)
+			end)
+		end)
+	end)
+
+	AssertTrue(iconHidden)
+	AssertEquals(restoredUnitFrame, unitFrame)
+	AssertEquals(QuestTogether.nameplateQuestStateByUnitToken["nameplate1"], false)
+end)
+
+QuestTogether:RegisterTest("nameplate threat events schedule tint refresh for nameplate units", function()
+	local scheduled = {}
+
+	WithPatchedMethod(QuestTogether, "IsNameplateUnitToken", function(_, unitToken)
+		return unitToken == "nameplate7" or unitToken == "nameplate8"
+	end, function()
+		WithPatchedMethod(QuestTogether, "ScheduleNameplateHealthTintRefresh", function(_, unitToken, delaySeconds, preferCachedQuestState)
+			scheduled[#scheduled + 1] = {
+				unitToken = unitToken,
+				delaySeconds = delaySeconds,
+				preferCachedQuestState = preferCachedQuestState,
+			}
+		end, function()
+			QuestTogether:HandleNameplateEvent("UNIT_THREAT_SITUATION_UPDATE", "nameplate7")
+			QuestTogether:HandleNameplateEvent("UNIT_THREAT_LIST_UPDATE", "nameplate8")
+			QuestTogether:HandleNameplateEvent("UNIT_THREAT_SITUATION_UPDATE", "target")
+		end)
+	end)
+
+	AssertEquals(scheduled[1].unitToken, "nameplate7")
+	AssertEquals(scheduled[1].delaySeconds, nil)
+	AssertEquals(scheduled[1].preferCachedQuestState, true)
+	AssertEquals(scheduled[2].unitToken, "nameplate8")
+	AssertEquals(scheduled[2].delaySeconds, nil)
+	AssertEquals(scheduled[2].preferCachedQuestState, true)
+	AssertEquals(#scheduled, 2)
+end)
+
+QuestTogether:RegisterTest("scheduled nameplate tint refresh can preserve cached quest state", function()
+	local appliedUnitFrame = nil
+	local liveObjectiveChecks = 0
+	local namePlateFrameBase = CreateFrame("Frame", nil, UIParent)
+	local unitFrame = CreateFrame("Frame", nil, namePlateFrameBase)
+	local healthBar = CreateFrame("StatusBar", nil, unitFrame)
+	namePlateFrameBase.UnitFrame = unitFrame
+	unitFrame.unit = "nameplate9"
+	unitFrame.healthBar = healthBar
+	namePlateFrameBase:SetSize(100, 20)
+	unitFrame:SetAllPoints(namePlateFrameBase)
+	healthBar:SetAllPoints(unitFrame)
+	namePlateFrameBase:Show()
+	unitFrame:Show()
+	healthBar:Show()
+
+	QuestTogether.isEnabled = true
+	QuestTogether.nameplateQuestStateByUnitToken["nameplate9"] = true
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(_, callback)
+			callback()
+		end,
+		GetNamePlateForUnit = function(unitToken)
+			AssertEquals(unitToken, "nameplate9")
+			return namePlateFrameBase
+		end,
+	})
+
+	local ok, err = pcall(function()
+		WithPatchedMethod(QuestTogether, "IsNameplateUnitToken", function(_, unitToken)
+			return unitToken == "nameplate9"
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsQuestObjectiveNameplate", function()
+				liveObjectiveChecks = liveObjectiveChecks + 1
+				return false
+			end, function()
+				WithPatchedMethod(QuestTogether, "ShouldApplyQuestHealthTint", function(_, candidateFrame, isQuestObjective)
+					AssertEquals(candidateFrame, unitFrame)
+					AssertEquals(isQuestObjective, true)
+					return true
+				end, function()
+					WithPatchedMethod(QuestTogether, "ApplyQuestTintToNameplate", function(_, candidateFrame)
+						appliedUnitFrame = candidateFrame
+						return true
+					end, function()
+						QuestTogether:ScheduleNameplateHealthTintRefresh("nameplate9", 0, true)
+					end)
+				end)
+			end)
+		end)
+	end)
+
+	if not ok then
+		error(err, 0)
+	end
+
+	AssertEquals(liveObjectiveChecks, 0)
+	AssertEquals(appliedUnitFrame, unitFrame)
+	AssertEquals(QuestTogether.nameplateQuestStateByUnitToken["nameplate9"], true)
+end)
+
 QuestTogether:RegisterTest("separate chat window inherits main chat font size when enabled", function()
 	local appliedFontSize = nil
 	local fakeMainFrame = {

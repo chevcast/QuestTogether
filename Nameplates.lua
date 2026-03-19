@@ -2662,7 +2662,7 @@ function QuestTogether:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObj
 	end
 end
 
-function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken, delaySeconds)
+function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken, delaySeconds, preferCachedQuestState)
 	if not self:IsNameplateUnitToken(unitToken) then
 		return
 	end
@@ -2673,14 +2673,11 @@ function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken, delaySecond
 	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = true
 	self.API.Delay(delaySeconds or 0, function()
 		self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
-		if not self.isEnabled or not C_NamePlate or not C_NamePlate.GetNamePlateForUnit then
+		if not self.isEnabled or not self.API or type(self.API.GetNamePlateForUnit) ~= "function" then
 			return
 		end
 
-		local okFrame, namePlateFrameBase = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
-		if not okFrame then
-			return
-		end
+		local namePlateFrameBase = self.API.GetNamePlateForUnit(unitToken)
 		if
 			not namePlateFrameBase
 			or not namePlateFrameBase.UnitFrame
@@ -2704,8 +2701,14 @@ function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken, delaySecond
 			self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 		end
 
-		local isQuestObjective = self:IsQuestObjectiveNameplate(liveUnitToken, unitFrame)
-		self.nameplateQuestStateByUnitToken[liveUnitToken] = isQuestObjective and true or false
+		local isQuestObjective = nil
+		local cachedQuestObjective = self.nameplateQuestStateByUnitToken[liveUnitToken]
+		if preferCachedQuestState and cachedQuestObjective ~= nil then
+			isQuestObjective = cachedQuestObjective == true
+		else
+			isQuestObjective = self:IsQuestObjectiveNameplate(liveUnitToken, unitFrame)
+			self.nameplateQuestStateByUnitToken[liveUnitToken] = isQuestObjective and true or false
+		end
 
 		local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame, isQuestObjective)
 		if shouldTint then
@@ -2786,7 +2789,7 @@ function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 	end
 	self:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObjective)
 	if isQuestObjective and type(unitToken) == "string" and unitToken ~= "" then
-		self:ScheduleNameplateHealthTintRefresh(unitToken, 0.05)
+		self:ScheduleNameplateHealthTintRefresh(unitToken, 0.05, true)
 	end
 
 	if shouldShow then
@@ -2804,6 +2807,9 @@ function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 	elseif icon then
 		if not IsFrameForbidden(icon) then
 			icon:Hide()
+		end
+		if isQuestObjective ~= true then
+			self:RestoreNameplateHealthColor(unitFrame)
 		end
 	end
 end
@@ -3114,53 +3120,65 @@ function QuestTogether:TryInstallNameplateHooks()
 	self:Debug("Using event-driven nameplate augmentation without shared health-color hooks", "nameplate")
 end
 
+function QuestTogether:HandleNameplateEvent(eventName, ...)
+	if eventName == "NAME_PLATE_UNIT_ADDED" then
+		self:OnNameplateAdded(...)
+	elseif eventName == "NAME_PLATE_UNIT_REMOVED" then
+		self:OnNameplateRemoved(...)
+	elseif eventName == "PLAYER_REGEN_ENABLED" then
+		if self.pendingNameplateRefreshAfterCombat then
+			self:Debug("Resuming deferred nameplate refresh after combat", "nameplate")
+			self.pendingNameplateRefreshAfterCombat = false
+			self:ScheduleFullNameplateRefresh(0.05)
+		end
+	elseif
+			eventName == "QUEST_LOG_UPDATE"
+			or eventName == "PLAYER_ENTERING_WORLD"
+			or eventName == "QUEST_REMOVED"
+			or eventName == "QUEST_ACCEPTED"
+			or eventName == "QUEST_ACCEPT_CONFIRM"
+			or eventName == "QUEST_COMPLETE"
+			or eventName == "QUEST_POI_UPDATE"
+			or eventName == "QUEST_DETAIL"
+			or eventName == "QUEST_FINISHED"
+			or eventName == "QUEST_GREETING"
+	then
+		self:RefreshNameplatesForQuestStateChange(eventName)
+	elseif eventName == "DISPLAY_SIZE_CHANGED" then
+		self:ScheduleFullNameplateRefresh(0.05)
+	elseif eventName == "CVAR_UPDATE" then
+		local cvarName = ...
+		if SafeFindPlain(string.lower(SafeText(cvarName, "")), "nameplate") then
+			self:Debugf("nameplate", "Refreshing nameplate augmentation after CVar change=%s", SafeText(cvarName, ""))
+			self:ScheduleFullNameplateRefresh(0.05)
+		end
+	elseif
+		eventName == "UNIT_HEALTH"
+		or eventName == "UNIT_MAXHEALTH"
+		or eventName == "UNIT_CONNECTION"
+		or eventName == "UNIT_THREAT_LIST_UPDATE"
+		or eventName == "UNIT_THREAT_SITUATION_UPDATE"
+	then
+		-- Combat threat styling can swap the live health-fill texture on Blizzard nameplates.
+		-- Re-anchor our overlay on the same unit-token events so the tint survives combat.
+		local unitToken = ...
+		if self:IsNameplateUnitToken(unitToken) then
+			self:ScheduleNameplateHealthTintRefresh(unitToken, nil, true)
+		end
+	elseif eventName == "UNIT_QUEST_LOG_CHANGED" then
+		local unitToken = ...
+		if unitToken == "player" then
+			self:RefreshNameplatesForQuestStateChange(eventName)
+		end
+	end
+end
+
 function QuestTogether:EnableNameplateAugmentation()
 	if not self.nameplateEventFrame then
 		self.nameplateEventFrame = CreateFrame("Frame")
 		self.nameplateRegisteredEvents = self.nameplateRegisteredEvents or {}
 		self.nameplateEventFrame:SetScript("OnEvent", function(_, eventName, ...)
-			if eventName == "NAME_PLATE_UNIT_ADDED" then
-				self:OnNameplateAdded(...)
-			elseif eventName == "NAME_PLATE_UNIT_REMOVED" then
-				self:OnNameplateRemoved(...)
-			elseif eventName == "PLAYER_REGEN_ENABLED" then
-				if self.pendingNameplateRefreshAfterCombat then
-					self:Debug("Resuming deferred nameplate refresh after combat", "nameplate")
-					self.pendingNameplateRefreshAfterCombat = false
-					self:ScheduleFullNameplateRefresh(0.05)
-				end
-			elseif
-					eventName == "QUEST_LOG_UPDATE"
-					or eventName == "PLAYER_ENTERING_WORLD"
-					or eventName == "QUEST_REMOVED"
-					or eventName == "QUEST_ACCEPTED"
-					or eventName == "QUEST_ACCEPT_CONFIRM"
-					or eventName == "QUEST_COMPLETE"
-					or eventName == "QUEST_POI_UPDATE"
-					or eventName == "QUEST_DETAIL"
-					or eventName == "QUEST_FINISHED"
-					or eventName == "QUEST_GREETING"
-			then
-				self:RefreshNameplatesForQuestStateChange(eventName)
-			elseif eventName == "DISPLAY_SIZE_CHANGED" then
-				self:ScheduleFullNameplateRefresh(0.05)
-			elseif eventName == "CVAR_UPDATE" then
-				local cvarName = ...
-				if SafeFindPlain(string.lower(SafeText(cvarName, "")), "nameplate") then
-					self:Debugf("nameplate", "Refreshing nameplate augmentation after CVar change=%s", SafeText(cvarName, ""))
-					self:ScheduleFullNameplateRefresh(0.05)
-				end
-			elseif eventName == "UNIT_HEALTH" or eventName == "UNIT_MAXHEALTH" or eventName == "UNIT_CONNECTION" then
-				local unitToken = ...
-				if self:IsNameplateUnitToken(unitToken) then
-					self:ScheduleNameplateHealthTintRefresh(unitToken)
-				end
-			elseif eventName == "UNIT_QUEST_LOG_CHANGED" then
-				local unitToken = ...
-				if unitToken == "player" then
-					self:RefreshNameplatesForQuestStateChange(eventName)
-				end
-			end
+			self:HandleNameplateEvent(eventName, ...)
 		end)
 	end
 
@@ -3193,6 +3211,8 @@ function QuestTogether:EnableNameplateAugmentation()
 	RegisterNameplateEvent(self, "UNIT_HEALTH")
 	RegisterNameplateEvent(self, "UNIT_MAXHEALTH")
 	RegisterNameplateEvent(self, "UNIT_CONNECTION")
+	RegisterNameplateEvent(self, "UNIT_THREAT_LIST_UPDATE")
+	RegisterNameplateEvent(self, "UNIT_THREAT_SITUATION_UPDATE")
 	RegisterNameplateEvent(self, "PLAYER_ENTERING_WORLD")
 	RegisterNameplateEvent(self, "PLAYER_REGEN_ENABLED")
 	RegisterNameplateEvent(self, "DISPLAY_SIZE_CHANGED")

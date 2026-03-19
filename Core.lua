@@ -840,6 +840,23 @@ QuestTogether.API = QuestTogether.API or {
 
 			return normalizedInArea, normalizedOnMap, normalizedObjectiveCount, taskName, normalizedDisplayAsObjective
 		end,
+		GetNamePlateForUnit = function(unitToken)
+			if not (C_NamePlate and C_NamePlate.GetNamePlateForUnit) then
+				return nil
+			end
+			if type(unitToken) ~= "string" or unitToken == "" then
+				return nil
+			end
+
+			local ok, namePlateFrameBase = pcall(C_NamePlate.GetNamePlateForUnit, unitToken, false)
+			if not ok then
+				return nil
+			end
+			if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(namePlateFrameBase) then
+				return nil
+			end
+			return namePlateFrameBase
+		end,
 		GetPlayerMapID = function(unitToken)
 			if not (C_Map and C_Map.GetBestMapForUnit) then
 				return nil
