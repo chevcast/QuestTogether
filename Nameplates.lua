@@ -280,12 +280,10 @@ local function GetPersonalBubbleAnchorFontDefinition()
 end
 
 local function IsWorldMapVisible()
-	if not WorldMapFrame or IsFrameForbidden(WorldMapFrame) or not WorldMapFrame.IsShown then
+	if not (QuestTogether and QuestTogether.API and type(QuestTogether.API.IsWorldMapVisible) == "function") then
 		return false
 	end
-
-	local ok, isShown = pcall(WorldMapFrame.IsShown, WorldMapFrame)
-	return ok and isShown and true or false
+	return QuestTogether.API.IsWorldMapVisible() and true or false
 end
 
 local function GetAnnouncementBubbleVisualConfig()
@@ -2974,11 +2972,52 @@ function QuestTogether:RefreshNameplatesForQuestStateChange(reason)
 		return false
 	end
 
+	if self.API and self.API.IsWorldMapVisible and self.API.IsWorldMapVisible() then
+		self.pendingNameplateRefreshAfterMapHidden = true
+		self:Debugf(
+			"nameplate",
+			"Deferring nameplate refresh while world map is visible reason=%s",
+			SafeText(reason, "")
+		)
+		self:ScheduleDeferredNameplateRefreshAfterMapHidden()
+		return false
+	end
+
 	self.pendingNameplateRefreshAfterCombat = false
+	self.pendingNameplateRefreshAfterMapHidden = false
 	self:RebuildNameplateQuestTitleCache()
 	self:ClearNameplateQuestObjectiveCache()
 	self:RefreshNameplateAugmentation()
 	return true
+end
+
+function QuestTogether:ScheduleDeferredNameplateRefreshAfterMapHidden()
+	if self.nameplateMapVisibilityRetryPending then
+		return
+	end
+
+	local delayFn = self.API and self.API.Delay
+	if type(delayFn) ~= "function" then
+		return
+	end
+
+	self.nameplateMapVisibilityRetryPending = true
+	delayFn(0.2, function()
+		QuestTogether.nameplateMapVisibilityRetryPending = false
+		if not QuestTogether.isEnabled then
+			return
+		end
+		if not QuestTogether.pendingNameplateRefreshAfterMapHidden then
+			return
+		end
+		if QuestTogether.API and QuestTogether.API.IsWorldMapVisible and QuestTogether.API.IsWorldMapVisible() then
+			QuestTogether:ScheduleDeferredNameplateRefreshAfterMapHidden()
+			return
+		end
+
+		QuestTogether.pendingNameplateRefreshAfterMapHidden = false
+		QuestTogether:RefreshNameplatesForQuestStateChange("WorldMapHidden")
+	end)
 end
 
 function QuestTogether:ScheduleFullNameplateRefresh(delaySeconds)
@@ -3242,6 +3281,8 @@ function QuestTogether:DisableNameplateAugmentation()
 	wipe(self.nameplateRefreshGenerationByUnitToken)
 	wipe(self.nameplateHealthTintRefreshPendingByUnitToken)
 	self.pendingNameplateRefreshAfterCombat = false
+	self.pendingNameplateRefreshAfterMapHidden = false
+	self.nameplateMapVisibilityRetryPending = false
 	self:ForEachVisibleNamePlate(function(frame)
 		self:HideNameplateIcon(frame)
 	end)

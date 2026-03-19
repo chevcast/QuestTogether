@@ -59,6 +59,9 @@ local function CreateApiWithOverrides(overrides)
 		GetQuestPOIsOnMap = function()
 			return nil
 		end,
+		IsWorldMapVisible = function()
+			return false
+		end,
 		IsTaskQuestActive = function()
 			return nil
 		end,
@@ -126,6 +129,12 @@ local function WithIsolatedState(testFn)
 	local originalPendingQuestRemovals = QuestTogether.pendingQuestRemovals
 	local originalIsLoggingOut = QuestTogether.isLoggingOut
 	local originalQuestLogChatFrameID = QuestTogether.db.profile.questLogChatFrameID
+	local originalPendingTaskAreaRefreshAfterMapHidden = QuestTogether.pendingTaskAreaRefreshAfterMapHidden
+	local originalPendingTaskAreaRefreshAfterMapHiddenShouldAnnounce =
+		QuestTogether.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce
+	local originalTaskAreaMapVisibilityRetryPending = QuestTogether.taskAreaMapVisibilityRetryPending
+	local originalPendingNameplateRefreshAfterMapHidden = QuestTogether.pendingNameplateRefreshAfterMapHidden
+	local originalNameplateMapVisibilityRetryPending = QuestTogether.nameplateMapVisibilityRetryPending
 
 	if QuestTogether.UnregisterRuntimeEvents then
 		QuestTogether:UnregisterRuntimeEvents()
@@ -166,6 +175,11 @@ local function WithIsolatedState(testFn)
 	QuestTogether.pendingQuestCompareRequests = {}
 	QuestTogether.pendingQuestRemovals = {}
 	QuestTogether.isLoggingOut = false
+	QuestTogether.pendingTaskAreaRefreshAfterMapHidden = false
+	QuestTogether.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce = false
+	QuestTogether.taskAreaMapVisibilityRetryPending = false
+	QuestTogether.pendingNameplateRefreshAfterMapHidden = false
+	QuestTogether.nameplateMapVisibilityRetryPending = false
 
 	local ok, err = pcall(testFn)
 
@@ -222,6 +236,12 @@ local function WithIsolatedState(testFn)
 	QuestTogether.pendingQuestCompareRequests = originalPendingQuestCompareRequests
 	QuestTogether.pendingQuestRemovals = originalPendingQuestRemovals
 	QuestTogether.isLoggingOut = originalIsLoggingOut
+	QuestTogether.pendingTaskAreaRefreshAfterMapHidden = originalPendingTaskAreaRefreshAfterMapHidden
+	QuestTogether.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce =
+		originalPendingTaskAreaRefreshAfterMapHiddenShouldAnnounce
+	QuestTogether.taskAreaMapVisibilityRetryPending = originalTaskAreaMapVisibilityRetryPending
+	QuestTogether.pendingNameplateRefreshAfterMapHidden = originalPendingNameplateRefreshAfterMapHidden
+	QuestTogether.nameplateMapVisibilityRetryPending = originalNameplateMapVisibilityRetryPending
 
 	if originalIsEnabled then
 		if QuestTogether.RegisterRuntimeEvents then
@@ -527,6 +547,51 @@ QuestTogether:RegisterTest("task area refresh defers during combat and resumes o
 			AssertEquals(refreshCalls[2], "bonus:true")
 			AssertFalse(QuestTogether.pendingTaskAreaRefresh)
 			AssertFalse(QuestTogether.pendingTaskAreaRefreshShouldAnnounce)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("task area refresh defers while world map is visible and resumes after it closes", function()
+	local refreshCalls = {}
+	local delayedCallbacks = {}
+	local mapVisible = true
+
+	QuestTogether.isEnabled = true
+	QuestTogether.pendingTaskAreaRefreshAfterMapHidden = nil
+	QuestTogether.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce = nil
+	QuestTogether.taskAreaMapVisibilityRetryPending = nil
+
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return false
+		end,
+		IsWorldMapVisible = function()
+			return mapVisible
+		end,
+		Delay = function(_, callback)
+			delayedCallbacks[#delayedCallbacks + 1] = callback
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshWorldQuestAreaState", function(_, shouldAnnounce)
+		refreshCalls[#refreshCalls + 1] = "world:" .. tostring(shouldAnnounce)
+	end, function()
+		WithPatchedMethod(QuestTogether, "RefreshBonusObjectiveAreaState", function(_, shouldAnnounce)
+			refreshCalls[#refreshCalls + 1] = "bonus:" .. tostring(shouldAnnounce)
+		end, function()
+			AssertFalse(QuestTogether:RefreshTaskAreaStates(true))
+			AssertEquals(#refreshCalls, 0)
+			AssertTrue(QuestTogether.pendingTaskAreaRefreshAfterMapHidden)
+			AssertTrue(QuestTogether.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce)
+			AssertEquals(#delayedCallbacks, 1)
+
+			mapVisible = false
+			delayedCallbacks[1]()
+
+			AssertEquals(refreshCalls[1], "world:true")
+			AssertEquals(refreshCalls[2], "bonus:true")
+			AssertFalse(QuestTogether.pendingTaskAreaRefreshAfterMapHidden)
+			AssertFalse(QuestTogether.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce)
 		end)
 	end)
 end)
@@ -1146,6 +1211,53 @@ QuestTogether:RegisterTest("task area snapshot accepts boolean-like task-active 
 			local bonusSnapshot = QuestTogether:GetTaskAreaSnapshot("bonus")
 			AssertEquals(worldSnapshot[33334], "World Quest Via Active Task Fallback")
 			AssertEquals(bonusSnapshot[33334], nil)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("task area snapshot avoids map task API reads that taint Blizzard map pins", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		GetNumQuestLogEntries = function()
+			return 1
+		end,
+		GetQuestLogInfo = function(questLogIndex)
+			AssertEquals(questLogIndex, 1)
+			return {
+				questID = 33335,
+				title = "Bonus Objective Without Map Arrays",
+				isHeader = false,
+				isHidden = false,
+				isTask = true,
+				isOnMap = false,
+				hasLocalPOI = false,
+				isWorldQuest = false,
+			}
+		end,
+		GetLocalTaskQuests = function()
+			return { 33335 }
+		end,
+		GetTaskInfo = function(questId)
+			AssertEquals(questId, 33335)
+			return true, true, 1, "Bonus Objective Without Map Arrays", true
+		end,
+		GetTaskQuestsOnMap = function()
+			error("GetTaskQuestsOnMap should not be called")
+		end,
+		GetQuestPOIsOnMap = function()
+			error("GetQuestPOIsOnMap should not be called")
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "IsWorldQuest", function(_, questId)
+		AssertEquals(questId, 33335)
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsBonusObjective", function(_, questId)
+			AssertEquals(questId, 33335)
+			return false
+		end, function()
+			local bonusSnapshot = QuestTogether:GetTaskAreaSnapshot("bonus")
+			AssertEquals(bonusSnapshot[33335], "Bonus Objective Without Map Arrays")
 		end)
 	end)
 end)
@@ -3392,6 +3504,56 @@ QuestTogether:RegisterTest("nameplate threat events schedule tint refresh for na
 	AssertEquals(scheduled[2].delaySeconds, nil)
 	AssertEquals(scheduled[2].preferCachedQuestState, true)
 	AssertEquals(#scheduled, 2)
+end)
+
+QuestTogether:RegisterTest("nameplate refresh defers while world map is visible and resumes after it closes", function()
+	local delayedCallbacks = {}
+	local mapVisible = true
+	local rebuildCalls = 0
+	local clearCalls = 0
+	local augmentationCalls = 0
+
+	QuestTogether.pendingNameplateRefreshAfterMapHidden = nil
+	QuestTogether.nameplateMapVisibilityRetryPending = nil
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return false
+		end,
+		IsWorldMapVisible = function()
+			return mapVisible
+		end,
+		Delay = function(_, callback)
+			delayedCallbacks[#delayedCallbacks + 1] = callback
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RebuildNameplateQuestTitleCache", function()
+		rebuildCalls = rebuildCalls + 1
+	end, function()
+		WithPatchedMethod(QuestTogether, "ClearNameplateQuestObjectiveCache", function()
+			clearCalls = clearCalls + 1
+		end, function()
+			WithPatchedMethod(QuestTogether, "RefreshNameplateAugmentation", function()
+				augmentationCalls = augmentationCalls + 1
+			end, function()
+				AssertFalse(QuestTogether:RefreshNameplatesForQuestStateChange("QUEST_POI_UPDATE"))
+				AssertTrue(QuestTogether.pendingNameplateRefreshAfterMapHidden)
+				AssertEquals(#delayedCallbacks, 1)
+				AssertEquals(rebuildCalls, 0)
+				AssertEquals(clearCalls, 0)
+				AssertEquals(augmentationCalls, 0)
+
+				mapVisible = false
+				delayedCallbacks[1]()
+
+				AssertFalse(QuestTogether.pendingNameplateRefreshAfterMapHidden)
+				AssertEquals(rebuildCalls, 1)
+				AssertEquals(clearCalls, 1)
+				AssertEquals(augmentationCalls, 1)
+			end)
+		end)
+	end)
 end)
 
 QuestTogether:RegisterTest("scheduled nameplate tint refresh can preserve cached quest state", function()

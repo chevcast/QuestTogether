@@ -79,61 +79,6 @@ local function NormalizeBooleanLike(addon, value)
 	return nil
 end
 
-local function BuildCurrentMapTaskQuestSet(addon)
-	if not addon or not addon.API then
-		return nil
-	end
-	if type(addon.API.GetPlayerMapID) ~= "function" or type(addon.API.GetTaskQuestsOnMap) ~= "function" then
-		return nil
-	end
-
-	local playerMapID = addon.API.GetPlayerMapID("player")
-	local normalizedMapID = addon.SafeToNumber and addon:SafeToNumber(playerMapID) or nil
-	if not normalizedMapID or normalizedMapID <= 0 then
-		return nil
-	end
-	normalizedMapID = math.floor(normalizedMapID + 0.5)
-
-	local questIdSet = {}
-	local addedAny = false
-
-	local questIds = addon.API.GetTaskQuestsOnMap(normalizedMapID)
-	if type(questIds) == "table" then
-		for index = 1, #questIds do
-			local normalizedQuestId = NormalizeQuestId(addon, questIds[index])
-			if normalizedQuestId then
-				questIdSet[normalizedQuestId] = true
-				addedAny = true
-			end
-		end
-	end
-
-	if type(addon.API.GetQuestPOIsOnMap) == "function" then
-		local questPOIs = addon.API.GetQuestPOIsOnMap(normalizedMapID)
-		if type(questPOIs) == "table" then
-			for index = 1, #questPOIs do
-				local poi = questPOIs[index]
-				if type(poi) == "table" then
-					local normalizedQuestId = NormalizeQuestId(addon, poi.questID)
-					if normalizedQuestId then
-						local includeQuest = poi.isQuestStart ~= true and poi.isMapIndicatorQuest ~= true
-						if includeQuest then
-							questIdSet[normalizedQuestId] = true
-							addedAny = true
-						end
-					end
-				end
-			end
-		end
-	end
-
-	if not addedAny then
-		return nil
-	end
-
-	return questIdSet
-end
-
 local function BuildLocalTaskQuestSet(addon)
 	if not addon or not addon.API or type(addon.API.GetLocalTaskQuests) ~= "function" then
 		return nil
@@ -163,11 +108,16 @@ end
 
 local function BuildTaskAreaContext(addon, taskType)
 	local localTaskQuestSet = BuildLocalTaskQuestSet(addon)
-	local mapTaskQuestSet = nil
-	if taskType ~= "world" then
-		mapTaskQuestSet = BuildCurrentMapTaskQuestSet(addon)
+	-- Do not read C_TaskQuest/C_QuestLog map task arrays here.
+	-- Those tables can taint Blizzard map pin update paths such as SharedMapPoiTemplates.
+	return localTaskQuestSet, nil
+end
+
+local function IsWorldMapVisible(addon)
+	if not (addon and addon.API and type(addon.API.IsWorldMapVisible) == "function") then
+		return false
 	end
-	return localTaskQuestSet, mapTaskQuestSet
+	return addon.API.IsWorldMapVisible() and true or false
 end
 
 local function BuildQuestLogQuestInfoIndex(addon)
@@ -793,6 +743,37 @@ function QuestTogether:RefreshBonusObjectiveAreaState(shouldAnnounce)
 	self:RefreshTaskAreaState("bonus", shouldAnnounce)
 end
 
+function QuestTogether:ScheduleDeferredTaskAreaRefreshAfterMapHidden()
+	if self.taskAreaMapVisibilityRetryPending then
+		return
+	end
+
+	local delayFn = self.API and self.API.Delay
+	if type(delayFn) ~= "function" then
+		return
+	end
+
+	self.taskAreaMapVisibilityRetryPending = true
+	delayFn(0.2, function()
+		QuestTogether.taskAreaMapVisibilityRetryPending = false
+		if not QuestTogether.isEnabled then
+			return
+		end
+		if not QuestTogether.pendingTaskAreaRefreshAfterMapHidden then
+			return
+		end
+		if IsWorldMapVisible(QuestTogether) then
+			QuestTogether:ScheduleDeferredTaskAreaRefreshAfterMapHidden()
+			return
+		end
+
+		local shouldAnnounce = QuestTogether.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce and true or false
+		QuestTogether.pendingTaskAreaRefreshAfterMapHidden = false
+		QuestTogether.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce = false
+		QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
+	end)
+end
+
 function QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
 	local inCombatLockdown = self.API and self.API.InCombatLockdown and self.API.InCombatLockdown()
 	if inCombatLockdown then
@@ -804,12 +785,28 @@ function QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
 		return false
 	end
 
+	if IsWorldMapVisible(self) then
+		self.pendingTaskAreaRefreshAfterMapHidden = true
+		if shouldAnnounce then
+			self.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce = true
+		end
+		self:Debugf(
+			"quest",
+			"Deferring task area refresh while world map is visible announce=%s",
+			SafeText(shouldAnnounce, "false")
+		)
+		self:ScheduleDeferredTaskAreaRefreshAfterMapHidden()
+		return false
+	end
+
 	local resolvedShouldAnnounce = shouldAnnounce
-	if self.pendingTaskAreaRefreshShouldAnnounce then
+	if self.pendingTaskAreaRefreshShouldAnnounce or self.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce then
 		resolvedShouldAnnounce = true
 	end
 	self.pendingTaskAreaRefresh = false
 	self.pendingTaskAreaRefreshShouldAnnounce = false
+	self.pendingTaskAreaRefreshAfterMapHidden = false
+	self.pendingTaskAreaRefreshAfterMapHiddenShouldAnnounce = false
 
 	self:RefreshWorldQuestAreaState(resolvedShouldAnnounce)
 	self:RefreshBonusObjectiveAreaState(resolvedShouldAnnounce)

@@ -876,6 +876,22 @@ QuestTogether.API = QuestTogether.API or {
 			end
 			return math.floor(numericMapID + 0.5)
 		end,
+		IsWorldMapVisible = function()
+			if not WorldMapFrame then
+				return false
+			end
+			if WorldMapFrame.IsForbidden then
+				local okForbidden, isForbidden = pcall(WorldMapFrame.IsForbidden, WorldMapFrame)
+				if okForbidden and isForbidden then
+					return false
+				end
+			end
+			if not WorldMapFrame.IsShown then
+				return false
+			end
+			local okShown, isShown = pcall(WorldMapFrame.IsShown, WorldMapFrame)
+			return okShown and isShown and true or false
+		end,
 		GetLocalTaskQuests = function()
 			if type(GetTasksTable) ~= "function" then
 				return nil
