@@ -13,7 +13,7 @@ Design constraints:
 
 local QuestTogether = _G.QuestTogether
 local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
-local ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK = true
+local DEFAULT_ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK = false
 local ANNOUNCEMENT_BUBBLE_Y_OFFSET = 22
 local ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS = 0.2
 local ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS = 0.4
@@ -142,6 +142,7 @@ end
 QuestTogether.nameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache or {}
 QuestTogether.nameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache or {}
 QuestTogether.nameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken or {}
+QuestTogether.nameplateQuestGuidByUnitToken = QuestTogether.nameplateQuestGuidByUnitToken or {}
 QuestTogether.nameplateTooltipGuidByUnitToken = QuestTogether.nameplateTooltipGuidByUnitToken or {}
 QuestTogether.nameplateIconByUnitFrame = QuestTogether.nameplateIconByUnitFrame
 	or setmetatable({}, { __mode = "k" })
@@ -1505,6 +1506,7 @@ end
 function QuestTogether:ClearNameplateQuestObjectiveCache()
 	wipe(self.nameplateQuestObjectiveCache)
 	wipe(self.nameplateQuestStateByUnitToken)
+	wipe(self.nameplateQuestGuidByUnitToken)
 end
 
 function QuestTogether:RebuildNameplateQuestTitleCache()
@@ -1628,8 +1630,14 @@ function QuestTogether:GetQuestObjectiveTooltipLines(unitToken, unitGuid)
 	return BuildPseudoTooltipLinesFromTooltipData(tooltipData)
 end
 
+function QuestTogether:IsNameplateTooltipScanEnabled()
+	-- Structured tooltip scans are the most taint-prone remaining fallback path.
+	-- Keep the parser code available, but leave the live scan disabled by default.
+	return DEFAULT_ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK
+end
+
 function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
-	if not ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK then
+	if not self:IsNameplateTooltipScanEnabled() then
 		return false
 	end
 
@@ -2690,22 +2698,31 @@ function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken, delaySecond
 		local liveUnitToken = ResolveNameplateUnitToken(namePlateFrameBase, unitFrame)
 		if not liveUnitToken then
 			self.nameplateQuestStateByUnitToken[unitToken] = nil
+			self.nameplateQuestGuidByUnitToken[unitToken] = nil
 			self:RestoreNameplateHealthColor(unitFrame)
 			return
 		end
 
 		if liveUnitToken ~= unitToken then
 			self.nameplateQuestStateByUnitToken[unitToken] = nil
+			self.nameplateQuestGuidByUnitToken[unitToken] = nil
 			self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 		end
 
 		local isQuestObjective = nil
 		local cachedQuestObjective = self.nameplateQuestStateByUnitToken[liveUnitToken]
-		if preferCachedQuestState and cachedQuestObjective ~= nil then
+		local currentUnitGuid = self:GetNameplateUnitGuid(liveUnitToken)
+		local cachedUnitGuid = self.nameplateQuestGuidByUnitToken[liveUnitToken]
+		local canReuseCachedQuestState = preferCachedQuestState
+			and cachedQuestObjective ~= nil
+			and IsNonEmptyString(currentUnitGuid)
+			and currentUnitGuid == cachedUnitGuid
+		if canReuseCachedQuestState then
 			isQuestObjective = cachedQuestObjective == true
 		else
 			isQuestObjective = self:IsQuestObjectiveNameplate(liveUnitToken, unitFrame)
 			self.nameplateQuestStateByUnitToken[liveUnitToken] = isQuestObjective and true or false
+			self.nameplateQuestGuidByUnitToken[liveUnitToken] = currentUnitGuid
 		end
 
 		local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame, isQuestObjective)
@@ -2784,6 +2801,7 @@ function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 	local icon = self.nameplateIconByUnitFrame[unitFrame]
 	if unitToken then
 		self.nameplateQuestStateByUnitToken[unitToken] = isQuestObjective and true or false
+		self.nameplateQuestGuidByUnitToken[unitToken] = self:GetNameplateUnitGuid(unitToken)
 	end
 	self:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObjective)
 	if isQuestObjective and type(unitToken) == "string" and unitToken ~= "" then
@@ -2953,6 +2971,7 @@ end
 function QuestTogether:RefreshNameplateAugmentation()
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
 		wipe(self.nameplateQuestStateByUnitToken)
+		wipe(self.nameplateQuestGuidByUnitToken)
 		self:ForEachVisibleNamePlate(function(frame)
 			self:HideNameplateIcon(frame)
 		end)
@@ -2989,6 +3008,27 @@ function QuestTogether:RefreshNameplatesForQuestStateChange(reason)
 	self:ClearNameplateQuestObjectiveCache()
 	self:RefreshNameplateAugmentation()
 	return true
+end
+
+function QuestTogether:ScheduleDeferredNameplateQuestStateRefresh(reason, delaySeconds)
+	if self.pendingDeferredNameplateQuestStateRefresh then
+		return
+	end
+
+	local delayFn = self.API and self.API.Delay
+	if type(delayFn) ~= "function" then
+		self:RefreshNameplatesForQuestStateChange(reason)
+		return
+	end
+
+	self.pendingDeferredNameplateQuestStateRefresh = true
+	delayFn(delaySeconds or 0, function()
+		QuestTogether.pendingDeferredNameplateQuestStateRefresh = false
+		if not QuestTogether.isEnabled then
+			return
+		end
+		QuestTogether:RefreshNameplatesForQuestStateChange(reason)
+	end)
 end
 
 function QuestTogether:ScheduleDeferredNameplateRefreshAfterMapHidden()
@@ -3066,11 +3106,22 @@ function QuestTogether:OnNameplateAdded(unitToken)
 	end
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
 		self.nameplateQuestStateByUnitToken[unitToken] = nil
+		self.nameplateQuestGuidByUnitToken[unitToken] = nil
 		self.nameplateTooltipGuidByUnitToken[unitToken] = nil
+		self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
+		if self.API and self.API.GetNamePlateForUnit then
+			local namePlateFrameBase = self.API.GetNamePlateForUnit(unitToken)
+			if namePlateFrameBase then
+				-- Nameplate frames are recycled across zone and instance transitions.
+				-- In blocked contexts like arenas, clear any stale quest visuals immediately.
+				self:HideNameplateIcon(namePlateFrameBase)
+			end
+		end
 		return
 	end
 
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
+	self.nameplateQuestGuidByUnitToken[unitToken] = nil
 	self.nameplateTooltipGuidByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 
@@ -3092,6 +3143,7 @@ function QuestTogether:OnNameplateRemoved(unitToken)
 	end
 
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
+	self.nameplateQuestGuidByUnitToken[unitToken] = nil
 	self.nameplateTooltipGuidByUnitToken[unitToken] = nil
 	self.nameplateRefreshPendingByUnitToken[unitToken] = nil
 	self.nameplateRefreshGenerationByUnitToken[unitToken] = nil
@@ -3182,7 +3234,11 @@ function QuestTogether:HandleNameplateEvent(eventName, ...)
 			or eventName == "QUEST_FINISHED"
 			or eventName == "QUEST_GREETING"
 	then
-		self:RefreshNameplatesForQuestStateChange(eventName)
+		if eventName == "QUEST_POI_UPDATE" then
+			self:ScheduleDeferredNameplateQuestStateRefresh(eventName, 0)
+		else
+			self:RefreshNameplatesForQuestStateChange(eventName)
+		end
 	elseif eventName == "DISPLAY_SIZE_CHANGED" then
 		self:ScheduleFullNameplateRefresh(0.05)
 	elseif eventName == "CVAR_UPDATE" then
@@ -3276,6 +3332,7 @@ function QuestTogether:DisableNameplateAugmentation()
 
 	-- Hide our icon overlays and clear cached quest objective state.
 	wipe(self.nameplateQuestStateByUnitToken)
+	wipe(self.nameplateQuestGuidByUnitToken)
 	wipe(self.nameplateTooltipGuidByUnitToken)
 	wipe(self.nameplateRefreshPendingByUnitToken)
 	wipe(self.nameplateRefreshGenerationByUnitToken)

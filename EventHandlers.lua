@@ -774,6 +774,33 @@ function QuestTogether:ScheduleDeferredTaskAreaRefreshAfterMapHidden()
 	end)
 end
 
+function QuestTogether:ScheduleTaskAreaRefresh(shouldAnnounce, delaySeconds)
+	if shouldAnnounce then
+		self.pendingScheduledTaskAreaRefreshShouldAnnounce = true
+	end
+
+	if self.pendingScheduledTaskAreaRefresh then
+		return
+	end
+
+	local delayFn = self.API and self.API.Delay
+	if type(delayFn) ~= "function" then
+		self:RefreshTaskAreaStates(shouldAnnounce)
+		return
+	end
+
+	self.pendingScheduledTaskAreaRefresh = true
+	delayFn(delaySeconds or 0, function()
+		local announce = QuestTogether.pendingScheduledTaskAreaRefreshShouldAnnounce and true or false
+		QuestTogether.pendingScheduledTaskAreaRefresh = false
+		QuestTogether.pendingScheduledTaskAreaRefreshShouldAnnounce = false
+		if not QuestTogether.isEnabled then
+			return
+		end
+		QuestTogether:RefreshTaskAreaStates(announce)
+	end)
+end
+
 function QuestTogether:RefreshTaskAreaStates(shouldAnnounce)
 	local inCombatLockdown = self.API and self.API.InCombatLockdown and self.API.InCombatLockdown()
 	if inCombatLockdown then
@@ -925,7 +952,24 @@ end
 
 function QuestTogether:SUPER_TRACKING_CHANGED()
 	self:Debug("SUPER_TRACKING_CHANGED()", "events")
-	self:RefreshTaskAreaStates(true)
+	if self.pendingSuperTrackingTaskAreaRefresh then
+		return
+	end
+
+	local delayFn = self.API and self.API.Delay
+	if type(delayFn) ~= "function" then
+		self:RefreshTaskAreaStates(true)
+		return
+	end
+
+	self.pendingSuperTrackingTaskAreaRefresh = true
+	delayFn(0, function()
+		QuestTogether.pendingSuperTrackingTaskAreaRefresh = false
+		if not QuestTogether.isEnabled then
+			return
+		end
+		QuestTogether:RefreshTaskAreaStates(true)
+	end)
 end
 
 -- UNIT_QUEST_LOG_CHANGED indicates objective and completion changes.
@@ -1095,27 +1139,27 @@ function QuestTogether:QUEST_LOG_UPDATE()
 end
 
 function QuestTogether:QUEST_POI_UPDATE()
-	self:RefreshTaskAreaStates(true)
+	self:ScheduleTaskAreaRefresh(true, 0)
 end
 
 function QuestTogether:PLAYER_INSIDE_QUEST_BLOB_STATE_CHANGED()
-	self:RefreshTaskAreaStates(true)
+	self:ScheduleTaskAreaRefresh(true, 0)
 end
 
 function QuestTogether:AREA_POIS_UPDATED()
-	self:RefreshTaskAreaStates(true)
+	self:ScheduleTaskAreaRefresh(true, 0)
 end
 
 function QuestTogether:ZONE_CHANGED()
-	self:RefreshTaskAreaStates(true)
+	self:ScheduleTaskAreaRefresh(true, 0)
 end
 
 function QuestTogether:ZONE_CHANGED_INDOORS()
-	self:RefreshTaskAreaStates(true)
+	self:ScheduleTaskAreaRefresh(true, 0)
 end
 
 function QuestTogether:ZONE_CHANGED_NEW_AREA()
-	self:RefreshTaskAreaStates(true)
+	self:ScheduleTaskAreaRefresh(true, 0)
 end
 
 function QuestTogether:PLAYER_ENTERING_WORLD()
