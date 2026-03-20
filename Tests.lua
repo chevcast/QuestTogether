@@ -2086,6 +2086,49 @@ QuestTogether:RegisterTest("quest objective detection falls back to tooltip pars
 	AssertTrue(tooltipChecked)
 end)
 
+QuestTogether:RegisterTest("quest objective detection uses matching mouseover token when nameplate token misses", function()
+	local unitFrame = {}
+
+	QuestTogether.API = CreateApiWithOverrides({
+		UnitGUID = function(unitToken)
+			if unitToken == "nameplate1" then
+				return "Creature-0-0-0-0-12345-0000000000"
+			end
+			if unitToken == "mouseover" then
+				return "Creature-0-0-0-0-12345-0000000000"
+			end
+			return nil
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function(_, unitToken)
+		AssertEquals(unitToken, "nameplate1")
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function(_, unitToken)
+			return unitToken == "mouseover"
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetPlayerTracker", function()
+				return {}
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsNameplateUnitOnQuest", function()
+					return false
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function()
+						return false
+					end, function()
+						WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function()
+							return false
+						end, function()
+							AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate1", unitFrame))
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
 QuestTogether:RegisterTest("quest objective detection does not short-circuit on false frame flags", function()
 	local tooltipChecked = false
 	local unitFrame = {
@@ -2135,6 +2178,40 @@ QuestTogether:RegisterTest("tooltip quest detection prefers frame guid over live
 			"Creature-0-0-0-0-12345-0000000000"
 		)
 		end)
+end)
+
+QuestTogether:RegisterTest("tooltip quest scan uses hyperlink data without live unit tooltip fallback", function()
+	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
+	local titleLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestTitle or "QuestTitle"
+
+	QuestTogether.API = CreateApiWithOverrides({
+		GetTooltipDataForHyperlink = function(hyperlink)
+			AssertEquals(hyperlink, "unit:Creature-0-0-0-0-12345-0000000000")
+			return {
+				lines = {
+					{
+						type = titleLineType,
+						leftText = "Gnarlidin Trophies",
+					},
+					{
+						type = objectiveLineType,
+						leftText = "0/35 Gnarlidin Trophies",
+					},
+				},
+			}
+		end,
+		GetTooltipDataForUnit = function()
+			error("GetTooltipDataForUnit should not be called")
+		end,
+	})
+
+	local tooltipLines = QuestTogether:GetQuestObjectiveTooltipLines("nameplate1", "Creature-0-0-0-0-12345-0000000000")
+	AssertEquals(type(tooltipLines), "table")
+	AssertEquals(#tooltipLines, 2)
+	AssertEquals(tooltipLines[1].type, "QuestTitle")
+	AssertEquals(tooltipLines[1].leftText, "Gnarlidin Trophies")
+	AssertEquals(tooltipLines[2].type, "QuestObjective")
+	AssertEquals(tooltipLines[2].leftText, "0/35 Gnarlidin Trophies")
 end)
 
 QuestTogether:RegisterTest("tooltip objective evaluation accepts party-member progress lines", function()

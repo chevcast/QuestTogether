@@ -13,7 +13,7 @@ Design constraints:
 
 local QuestTogether = _G.QuestTogether
 local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
-local DEFAULT_ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK = false
+local DEFAULT_ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK = true
 local ANNOUNCEMENT_BUBBLE_Y_OFFSET = 22
 local ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS = 0.2
 local ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS = 0.4
@@ -214,12 +214,14 @@ local function BuildPseudoTooltipLinesFromTooltipData(tooltipData)
 			if Enum and Enum.TooltipDataLineType then
 				if lineType == Enum.TooltipDataLineType.QuestObjective then
 					normalizedType = "QuestObjective"
+				elseif lineType == Enum.TooltipDataLineType.QuestTitle then
+					normalizedType = "QuestTitle"
 				elseif lineType == Enum.TooltipDataLineType.QuestPlayer then
 					normalizedType = "QuestPlayer"
 				end
 			end
 			if normalizedType == nil and type(lineType) == "string" then
-				if lineType == "QuestObjective" or lineType == "QuestPlayer" then
+				if lineType == "QuestObjective" or lineType == "QuestTitle" or lineType == "QuestPlayer" then
 					normalizedType = lineType
 				end
 			end
@@ -1178,6 +1180,33 @@ function QuestTogether:IsNameplateUnitQuestBoss(unitToken)
 	return ok and isQuestBoss and true or false
 end
 
+function QuestTogether:GetMatchingQuestAssistUnitToken(unitToken)
+	if type(unitToken) ~= "string" or unitToken == "" then
+		return nil
+	end
+
+	local unitGuid = self:GetNameplateUnitGuid(unitToken)
+	if not IsNonEmptyString(unitGuid) then
+		return nil
+	end
+
+	local candidateTokens = {
+		"mouseover",
+		"target",
+		"focus",
+	}
+
+	for index = 1, #candidateTokens do
+		local candidateToken = candidateTokens[index]
+		local candidateGuid = self.API and self.API.UnitGUID and self.API.UnitGUID(candidateToken) or nil
+		if IsNonEmptyString(candidateGuid) and candidateGuid == unitGuid then
+			return candidateToken
+		end
+	end
+
+	return nil
+end
+
 function QuestTogether:CanPlayerAttackNameplateUnit(unitToken)
 	local ok, canAttack = pcall(UnitCanAttack, "player", unitToken)
 	return ok and canAttack and true or false
@@ -1610,19 +1639,15 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 end
 
 function QuestTogether:GetQuestObjectiveTooltipLines(unitToken, unitGuid)
-	local hasTooltipDataApi = self.API
-		and (type(self.API.GetTooltipDataForHyperlink) == "function" or type(self.API.GetTooltipDataForUnit) == "function")
-	if not hasTooltipDataApi then
+	if not (self.API and type(self.API.GetTooltipDataForHyperlink) == "function") then
 		return nil
 	end
 
-	local tooltipData = nil
-	if self.API.GetTooltipDataForHyperlink and type(unitGuid) == "string" and unitGuid ~= "" then
-		tooltipData = self.API.GetTooltipDataForHyperlink("unit:" .. unitGuid)
+	if type(unitGuid) ~= "string" or unitGuid == "" then
+		return nil
 	end
-	if (tooltipData == nil or self:IsSecretValue(tooltipData)) and self.API.GetTooltipDataForUnit then
-		tooltipData = self.API.GetTooltipDataForUnit(unitToken)
-	end
+
+	local tooltipData = self.API.GetTooltipDataForHyperlink("unit:" .. unitGuid)
 	if tooltipData == nil or self:IsSecretValue(tooltipData) then
 		return nil
 	end
@@ -1631,8 +1656,9 @@ function QuestTogether:GetQuestObjectiveTooltipLines(unitToken, unitGuid)
 end
 
 function QuestTogether:IsNameplateTooltipScanEnabled()
-	-- Structured tooltip scans are the most taint-prone remaining fallback path.
-	-- Keep the parser code available, but leave the live scan disabled by default.
+	-- Mirror Plater's safer quest scan shape:
+	-- use C_TooltipInfo.GetHyperlink("unit:" .. guid) on the nameplate GUID, then parse only
+	-- quest-relevant lines. Avoid the live-unit tooltip path.
 	return DEFAULT_ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK
 end
 
@@ -1716,13 +1742,29 @@ function QuestTogether:IsQuestObjectiveUnit(unitToken, unitFrame)
 		return true
 	end
 
+	local assistUnitToken = self:GetMatchingQuestAssistUnitToken(unitToken)
+	if assistUnitToken and self:IsNameplateUnitRelatedToActiveQuest(assistUnitToken) then
+		return true
+	end
+
 	for questId in pairs(self:GetPlayerTracker() or {}) do
 		if self:IsNameplateUnitOnQuest(unitToken, questId) then
+			return true
+		end
+		if assistUnitToken and self:IsNameplateUnitOnQuest(assistUnitToken, questId) then
 			return true
 		end
 	end
 
 	if self:IsQuestObjectiveViaTooltip(unitToken, unitFrame) then
+		return true
+	end
+
+	if assistUnitToken and self:IsQuestObjectiveViaTooltip(assistUnitToken, unitFrame) then
+		return true
+	end
+
+	if assistUnitToken and self:IsNameplateUnitQuestBoss(assistUnitToken) then
 		return true
 	end
 
