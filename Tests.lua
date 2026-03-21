@@ -121,8 +121,10 @@ local function WithIsolatedState(testFn)
 	local originalBonusObjectiveAreaStateByQuestID = QuestTogether.bonusObjectiveAreaStateByQuestID
 	local originalNameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken
 	local originalNameplateQuestGuidByUnitToken = QuestTogether.nameplateQuestGuidByUnitToken
+	local originalNameplateTooltipGuidByUnitToken = QuestTogether.nameplateTooltipGuidByUnitToken
 	local originalNameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache
 	local originalNameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache
+	local originalNameplateScanTooltip = QuestTogether.nameplateScanTooltip
 	local originalNameplateHealthOverlayByUnitFrame = QuestTogether.nameplateHealthOverlayByUnitFrame
 	local originalNameplateBubbleByUnitFrame = QuestTogether.nameplateBubbleByUnitFrame
 	local originalNameplateRefreshPendingByUnitToken = QuestTogether.nameplateRefreshPendingByUnitToken
@@ -175,8 +177,10 @@ local function WithIsolatedState(testFn)
 	QuestTogether.bonusObjectiveAreaStateByQuestID = {}
 	QuestTogether.nameplateQuestStateByUnitToken = {}
 	QuestTogether.nameplateQuestGuidByUnitToken = {}
+	QuestTogether.nameplateTooltipGuidByUnitToken = {}
 	QuestTogether.nameplateQuestObjectiveCache = {}
 	QuestTogether.nameplateQuestTitleCache = {}
+	QuestTogether.nameplateScanTooltip = nil
 	QuestTogether.nameplateHealthOverlayByUnitFrame = setmetatable({}, { __mode = "k" })
 	QuestTogether.nameplateBubbleByUnitFrame = setmetatable({}, { __mode = "k" })
 	QuestTogether.nameplateRefreshPendingByUnitToken = {}
@@ -240,8 +244,10 @@ local function WithIsolatedState(testFn)
 	QuestTogether.bonusObjectiveAreaStateByQuestID = originalBonusObjectiveAreaStateByQuestID
 	QuestTogether.nameplateQuestStateByUnitToken = originalNameplateQuestStateByUnitToken
 	QuestTogether.nameplateQuestGuidByUnitToken = originalNameplateQuestGuidByUnitToken
+	QuestTogether.nameplateTooltipGuidByUnitToken = originalNameplateTooltipGuidByUnitToken
 	QuestTogether.nameplateQuestObjectiveCache = originalNameplateQuestObjectiveCache
 	QuestTogether.nameplateQuestTitleCache = originalNameplateQuestTitleCache
+	QuestTogether.nameplateScanTooltip = originalNameplateScanTooltip
 	QuestTogether.nameplateHealthOverlayByUnitFrame = originalNameplateHealthOverlayByUnitFrame
 	QuestTogether.nameplateBubbleByUnitFrame = originalNameplateBubbleByUnitFrame
 	QuestTogether.nameplateRefreshPendingByUnitToken = originalNameplateRefreshPendingByUnitToken
@@ -2053,6 +2059,85 @@ QuestTogether:RegisterTest("tooltip quest detection still uses cached combat res
 	end)
 end)
 
+QuestTogether:RegisterTest("visible mouseover tooltip lines reuse shown tooltip text", function()
+	local unitGuid = "Creature-0-0-0-0-12345-0000000000"
+	local fakeTooltip = {}
+
+	WithPatchedMethod(QuestTogether, "GetVisibleMouseoverTooltipFrame", function(_, unitToken, candidateGuid)
+		AssertEquals(unitToken, "mouseover")
+		AssertEquals(candidateGuid, unitGuid)
+		return fakeTooltip
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetNameplateScanTooltipLineCount", function(_, tooltipFrame)
+			AssertEquals(tooltipFrame, fakeTooltip)
+			return 2
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetNameplateScanTooltipLeftText", function(_, tooltipFrame, lineIndex)
+				AssertEquals(tooltipFrame, fakeTooltip)
+				if lineIndex == 1 then
+					return "Encapsulated Void"
+				end
+				if lineIndex == 2 then
+					return "- Subdue Void Creatures or Kill Players (0%)"
+				end
+				return nil
+			end, function()
+				local tooltipLines = QuestTogether:GetVisibleMouseoverTooltipLines("mouseover", unitGuid)
+				AssertEquals(type(tooltipLines), "table")
+				AssertEquals(#tooltipLines, 2)
+				AssertEquals(tooltipLines[1].leftText, "Encapsulated Void")
+				AssertEquals(tooltipLines[2].leftText, "- Subdue Void Creatures or Kill Players (0%)")
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest objective detection uses matching mouseover tooltip when public APIs miss", function()
+	local unitFrame = {}
+
+	QuestTogether.API = CreateApiWithOverrides({
+		UnitGUID = function(unitToken)
+			if unitToken == "nameplate1" or unitToken == "mouseover" then
+				return "Creature-0-0-0-0-12345-0000000000"
+			end
+			return nil
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function(_, unitToken)
+		AssertEquals(unitToken, "nameplate1")
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateUnitRelatedToActiveQuest", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetPlayerTracker", function()
+				return {}
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsNameplateUnitOnQuest", function()
+					return false
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaVisibleMouseoverTooltip", function(_, unitToken, candidateFrame)
+						AssertEquals(unitToken, "mouseover")
+						AssertEquals(candidateFrame, unitFrame)
+						return true
+					end, function()
+						WithPatchedMethod(QuestTogether, "IsQuestObjectiveViaTooltip", function()
+							return false
+						end, function()
+							WithPatchedMethod(QuestTogether, "IsNameplateUnitQuestBoss", function()
+								return false
+							end, function()
+								AssertTrue(QuestTogether:IsQuestObjectiveUnit("nameplate1", unitFrame))
+							end)
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
 QuestTogether:RegisterTest("quest objective detection falls back to tooltip parsing after API misses", function()
 	local tooltipChecked = false
 	local unitFrame = {}
@@ -2180,38 +2265,64 @@ QuestTogether:RegisterTest("tooltip quest detection prefers frame guid over live
 		end)
 end)
 
-QuestTogether:RegisterTest("tooltip quest scan uses hyperlink data without live unit tooltip fallback", function()
-	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
-	local titleLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestTitle or "QuestTitle"
-
-	QuestTogether.API = CreateApiWithOverrides({
-		GetTooltipDataForHyperlink = function(hyperlink)
-			AssertEquals(hyperlink, "unit:Creature-0-0-0-0-12345-0000000000")
-			return {
-				lines = {
-					{
-						type = titleLineType,
-						leftText = "Gnarlidin Trophies",
-					},
-					{
-						type = objectiveLineType,
-						leftText = "0/35 Gnarlidin Trophies",
-					},
-				},
-			}
+QuestTogether:RegisterTest("tooltip quest scan uses addon-owned hidden tooltip helpers", function()
+	local unitGuid = "Creature-0-0-0-0-12345-0000000000"
+	local fakeTooltip = {
+		hideCount = 0,
+		clearCount = 0,
+		owner = nil,
+		anchor = nil,
+		hyperlink = nil,
+		Hide = function(self)
+			self.hideCount = self.hideCount + 1
 		end,
-		GetTooltipDataForUnit = function()
-			error("GetTooltipDataForUnit should not be called")
+		ClearLines = function(self)
+			self.clearCount = self.clearCount + 1
 		end,
-	})
+		SetOwner = function(self, owner, anchor)
+			self.owner = owner
+			self.anchor = anchor
+		end,
+		SetHyperlink = function(self, hyperlink)
+			self.hyperlink = hyperlink
+		end,
+	}
 
-	local tooltipLines = QuestTogether:GetQuestObjectiveTooltipLines("nameplate1", "Creature-0-0-0-0-12345-0000000000")
-	AssertEquals(type(tooltipLines), "table")
-	AssertEquals(#tooltipLines, 2)
-	AssertEquals(tooltipLines[1].type, "QuestTitle")
-	AssertEquals(tooltipLines[1].leftText, "Gnarlidin Trophies")
-	AssertEquals(tooltipLines[2].type, "QuestObjective")
-	AssertEquals(tooltipLines[2].leftText, "0/35 Gnarlidin Trophies")
+	WithPatchedMethod(QuestTogether, "GetOrCreateNameplateScanTooltip", function()
+		return fakeTooltip
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetNameplateScanTooltipLineCount", function(_, scanTooltip)
+			AssertEquals(scanTooltip, fakeTooltip)
+			return 2
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetNameplateScanTooltipLeftText", function(_, scanTooltip, lineIndex)
+				AssertEquals(scanTooltip, fakeTooltip)
+				if lineIndex == 1 then
+					return "Gnarlidin Trophies"
+				end
+				if lineIndex == 2 then
+					return "0/35 Gnarlidin Trophies"
+				end
+				return nil
+			end, function()
+				local tooltipLines = QuestTogether:GetQuestObjectiveTooltipLines("nameplate1", unitGuid)
+				AssertEquals(fakeTooltip.hyperlink, "unit:" .. unitGuid)
+				AssertEquals(fakeTooltip.anchor, "ANCHOR_NONE")
+				AssertEquals(type(tooltipLines), "table")
+				AssertEquals(#tooltipLines, 2)
+				AssertEquals(tooltipLines[1].type, nil)
+				AssertEquals(tooltipLines[1].leftText, "Gnarlidin Trophies")
+				AssertEquals(tooltipLines[2].type, nil)
+				AssertEquals(tooltipLines[2].leftText, "0/35 Gnarlidin Trophies")
+				AssertEquals(fakeTooltip.hideCount, 2)
+				AssertEquals(fakeTooltip.clearCount, 2)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("tooltip quest scan is disabled by default to avoid map taint", function()
+	AssertFalse(QuestTogether:IsNameplateTooltipScanEnabled())
 end)
 
 QuestTogether:RegisterTest("tooltip objective evaluation accepts party-member progress lines", function()
