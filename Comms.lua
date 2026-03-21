@@ -86,6 +86,19 @@ local function SafeAddonString(addon, value, fallback)
 	return fallback or ""
 end
 
+local function SafePrimitiveString(addon, value, fallback)
+	if addon and addon.IsSecretValue and addon:IsSecretValue(value) then
+		return fallback or ""
+	end
+
+	local valueType = type(value)
+	if valueType == "string" or valueType == "number" or valueType == "boolean" or valueType == "nil" then
+		return tostring(value)
+	end
+
+	return fallback or ""
+end
+
 local function SafeTrimAddonString(addon, value, fallback)
 	if addon and addon.SafeTrimString then
 		return addon:SafeTrimString(value, fallback or "")
@@ -275,6 +288,67 @@ function QuestTogether:SanitizeAnnouncementText(text)
 		end
 	end
 	return sanitized
+end
+
+function QuestTogether:SanitizeAnnouncementExtraData(extraData)
+	local sanitized = {}
+	if type(extraData) ~= "table" or self:IsSecretValue(extraData) then
+		return sanitized
+	end
+
+	local iconAsset = SafePrimitiveString(self, extraData.iconAsset or "", "")
+	local iconKind = SafePrimitiveString(self, extraData.iconKind or "", "")
+	local emoteToken = SafePrimitiveString(self, extraData.emoteToken or "", "")
+	if iconAsset ~= "" then
+		sanitized.iconAsset = iconAsset
+	end
+	if iconKind ~= "" then
+		sanitized.iconKind = iconKind
+	end
+	if emoteToken ~= "" then
+		sanitized.emoteToken = emoteToken
+	end
+
+	return sanitized
+end
+
+function QuestTogether:SanitizeAnnouncementEventData(eventData)
+	if type(eventData) ~= "table" or self:IsSecretValue(eventData) then
+		return nil
+	end
+
+	local eventType = SafePrimitiveString(self, eventData.eventType or "", "")
+	local senderName = SafePrimitiveString(self, eventData.senderName or "", "")
+	local text = self:SanitizeAnnouncementText(eventData.text)
+	if eventType == "" or senderName == "" or text == "" then
+		return nil
+	end
+
+	local sanitizedExtraData = self:SanitizeAnnouncementExtraData(eventData)
+	local normalizedQuestId = self.NormalizeQuestID and self:NormalizeQuestID(eventData.questId) or nil
+	local numericCoordX = self.SafeToNumber and self:SafeToNumber(eventData.coordX) or nil
+	local numericCoordY = self.SafeToNumber and self:SafeToNumber(eventData.coordY) or nil
+	local normalizedWarMode = nil
+	if self.NormalizeAnnouncementWarModeValue then
+		normalizedWarMode = self:NormalizeAnnouncementWarModeValue(eventData.warMode)
+	end
+
+	return {
+		version = SafeNumber(self, eventData.version) or ANNOUNCEMENT_WIRE_VERSION,
+		eventType = SafePrimitiveString(self, eventType, ""),
+		senderGUID = SafePrimitiveString(self, eventData.senderGUID or "", ""),
+		classFile = SafePrimitiveString(self, eventData.classFile or "", ""),
+		senderName = senderName,
+		text = text,
+		questId = normalizedQuestId and SafePrimitiveString(self, normalizedQuestId, "") or "",
+		iconAsset = sanitizedExtraData.iconAsset or "",
+		iconKind = sanitizedExtraData.iconKind or "",
+		zoneName = SafePrimitiveString(self, eventData.zoneName or "", ""),
+		coordX = numericCoordX and string.format("%.1f", numericCoordX) or "",
+		coordY = numericCoordY and string.format("%.1f", numericCoordY) or "",
+		warMode = normalizedWarMode == nil and "" or (normalizedWarMode and "1" or "0"),
+		emoteToken = sanitizedExtraData.emoteToken or "",
+	}
 end
 
 function QuestTogether:EncodePingRequestPayload(requestData)
@@ -573,7 +647,7 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 		return nil
 	end
 
-	return {
+	return self:SanitizeAnnouncementEventData({
 		version = version,
 		eventType = eventType,
 		senderGUID = senderGUID,
@@ -588,7 +662,7 @@ function QuestTogether:DecodeAnnouncementPayload(payload)
 		coordY = coordY,
 		warMode = warMode,
 		emoteToken = emoteToken,
-	}
+	})
 end
 
 function QuestTogether:GetAnnouncementChannelLocalID()
@@ -874,13 +948,10 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId, ext
 	end
 	local sanitizedText = self:SanitizeAnnouncementText(text)
 	local iconAsset, iconKind = self:GetAnnouncementIconInfo(eventType, questId)
-	if type(extraData) == "table" then
-		local overrideIconAsset = SafeAddonString(self, extraData.iconAsset or "", "")
-		local overrideIconKind = SafeAddonString(self, extraData.iconKind or "", "")
-		if overrideIconAsset ~= "" then
-			iconAsset = overrideIconAsset
-			iconKind = overrideIconKind ~= "" and overrideIconKind or iconKind
-		end
+	local sanitizedExtraData = self:SanitizeAnnouncementExtraData(extraData)
+	if sanitizedExtraData.iconAsset then
+		iconAsset = sanitizedExtraData.iconAsset
+		iconKind = sanitizedExtraData.iconKind or iconKind
 	end
 	local locationInfo = self.GetPlayerAnnouncementLocationInfo and self:GetPlayerAnnouncementLocationInfo() or nil
 	local numericCoordX = locationInfo and self.SafeToNumber and self:SafeToNumber(locationInfo.coordX) or nil
@@ -889,7 +960,7 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId, ext
 		return nil
 	end
 
-	return {
+	return self:SanitizeAnnouncementEventData({
 		version = ANNOUNCEMENT_WIRE_VERSION,
 		eventType = SafeAddonString(self, eventType or "", ""),
 		senderGUID = SafeAddonString(self, senderGUID or "", ""),
@@ -903,8 +974,8 @@ function QuestTogether:BuildLocalAnnouncementEvent(eventType, text, questId, ext
 		coordX = numericCoordX and string.format("%.1f", numericCoordX) or "",
 		coordY = numericCoordY and string.format("%.1f", numericCoordY) or "",
 		warMode = locationInfo and SafeAddonString(self, locationInfo.warMode and "1" or "0", "") or "",
-		emoteToken = type(extraData) == "table" and SafeAddonString(self, extraData.emoteToken or "", "") or "",
-	}
+		emoteToken = sanitizedExtraData.emoteToken or "",
+	})
 end
 
 function QuestTogether:BuildAnnouncementEventForUnit(unitToken, eventType, text)
@@ -932,7 +1003,7 @@ function QuestTogether:BuildAnnouncementEventForUnit(unitToken, eventType, text)
 	end
 	local senderName = SafeAddonString(self, unitName, "") .. "-" .. SafeAddonString(self, NormalizeRealmName(self, unitRealm), "")
 
-	return {
+	return self:SanitizeAnnouncementEventData({
 		version = ANNOUNCEMENT_WIRE_VERSION,
 		eventType = SafeAddonString(self, eventType or "", ""),
 		senderGUID = SafeAddonString(self, senderGUID or "", ""),
@@ -947,7 +1018,7 @@ function QuestTogether:BuildAnnouncementEventForUnit(unitToken, eventType, text)
 		coordY = "",
 		warMode = "",
 		emoteToken = "",
-	}
+	})
 end
 
 function QuestTogether:BuildPingResponse(requestId)
@@ -1257,6 +1328,12 @@ function QuestTogether:SendAnnouncementWireEvent(eventData)
 		self:DebugState("comms", "Rejected wire event", eventData)
 		return false
 	end
+	local originalEventData = eventData
+	eventData = self:SanitizeAnnouncementEventData(eventData)
+	if not eventData then
+		self:DebugState("comms", "Rejected wire event", originalEventData)
+		return false
+	end
 
 	local wireMessage = self:SerializeWireMessage(ANNOUNCEMENT_COMMAND, self:EncodeAnnouncementPayload(eventData))
 	return self:SendWireMessageToAnnouncementRoutes(
@@ -1416,8 +1493,9 @@ function QuestTogether:ShouldPlayRemoteEmoteForAnnouncement(eventData)
 end
 
 function QuestTogether:HandleAnnouncementEvent(eventData, isLocal)
+	eventData = self:SanitizeAnnouncementEventData(eventData)
 	if type(eventData) ~= "table" then
-		self:Debug("Rejected announcement event because payload was not a table", "comms")
+		self:Debug("Rejected announcement event because payload was invalid", "comms")
 		return false
 	end
 	local allowedByOption = self:ShouldDisplayAnnouncementType(eventData.eventType)

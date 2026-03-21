@@ -498,9 +498,29 @@ QuestTogether.API = QuestTogether.API or {
 		return FCF_GetChatWindowInfo(chatFrameID)
 	end,
 	GetChatFrameByID = function(chatFrameID)
-		return FCF_GetChatFrameByID(chatFrameID)
+		local chatFrame = FCF_GetChatFrameByID(chatFrameID)
+		if QuestTogether and QuestTogether.CanAccessForeignFrame and not QuestTogether:CanAccessForeignFrame(chatFrame) then
+			return nil
+		end
+		return chatFrame
+	end,
+	GetCVar = function(cvarName)
+		if not (C_CVar and C_CVar.GetCVar and type(cvarName) == "string" and cvarName ~= "") then
+			return nil
+		end
+		local ok, value = pcall(C_CVar.GetCVar, cvarName)
+		if not ok then
+			return nil
+		end
+		if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(value) then
+			return nil
+		end
+		return value
 	end,
 	RemoveChatWindowChannel = function(chatFrame, channelName)
+		if QuestTogether and QuestTogether.CanAccessForeignFrame and not QuestTogether:CanAccessForeignFrame(chatFrame) then
+			return nil
+		end
 		if chatFrame and chatFrame.RemoveChannel then
 			return chatFrame:RemoveChannel(channelName)
 		end
@@ -523,9 +543,15 @@ QuestTogether.API = QuestTogether.API or {
 		return FCF_OpenNewWindow(name, noDefaultChannels)
 	end,
 	CloseChatWindow = function(chatFrame)
+		if QuestTogether and QuestTogether.CanAccessForeignFrame and not QuestTogether:CanAccessForeignFrame(chatFrame) then
+			return nil
+		end
 		return FCF_Close(chatFrame)
 	end,
 	SetChatWindowFontSize = function(chatFrame, fontSize)
+		if QuestTogether and QuestTogether.CanAccessForeignFrame and not QuestTogether:CanAccessForeignFrame(chatFrame) then
+			return nil
+		end
 		return FCF_SetChatWindowFontSize(nil, chatFrame, fontSize)
 	end,
 		RegisterAddonPrefix = function(prefix)
@@ -1352,17 +1378,67 @@ QuestTogether.API = QuestTogether.API or {
 		GetMapInfo = function(mapID)
 			if C_Map and C_Map.GetMapInfo then
 				local ok, mapInfo = pcall(C_Map.GetMapInfo, mapID)
-				return ok and mapInfo or nil
+				if not ok or type(mapInfo) ~= "table" then
+					return nil
+				end
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(mapInfo) then
+					return nil
+				end
+
+				local sanitizedInfo = {}
+				local numericMapID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(mapInfo.mapID)
+					or nil
+				if not numericMapID then
+					numericMapID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(mapID) or nil
+				end
+				if numericMapID and numericMapID > 0 then
+					sanitizedInfo.mapID = math.floor(numericMapID + 0.5)
+				end
+
+				local mapName = mapInfo.name
+				if not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(mapName)) then
+					if type(mapName) == "string" and mapName ~= "" then
+						sanitizedInfo.name = mapName
+					end
+				end
+
+				return sanitizedInfo
 			end
 			return nil
 		end,
-			GetPlayerMapPosition = function(mapID, unitToken)
-				if C_Map and C_Map.GetPlayerMapPosition then
-					local ok, mapPosition = pcall(C_Map.GetPlayerMapPosition, mapID, unitToken)
-					return ok and mapPosition or nil
+		GetPlayerMapPosition = function(mapID, unitToken)
+			if C_Map and C_Map.GetPlayerMapPosition then
+				local ok, mapPosition = pcall(C_Map.GetPlayerMapPosition, mapID, unitToken)
+				if not ok or not mapPosition then
+					return nil
 				end
-				return nil
-			end,
+				if QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(mapPosition) then
+					return nil
+				end
+
+				local rawX = mapPosition.x
+				local rawY = mapPosition.y
+				if (rawX == nil or rawY == nil) and mapPosition.GetXY then
+					local okXY, xValue, yValue = pcall(mapPosition.GetXY, mapPosition)
+					if okXY then
+						rawX = rawX or xValue
+						rawY = rawY or yValue
+					end
+				end
+
+				local numericX = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(rawX) or nil
+				local numericY = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(rawY) or nil
+				if numericX == nil or numericY == nil then
+					return nil
+				end
+
+				return {
+					x = numericX,
+					y = numericY,
+				}
+			end
+			return nil
+		end,
 		GetTooltipDataForHyperlink = function(hyperlink)
 			if C_TooltipInfo and C_TooltipInfo.GetHyperlink and type(hyperlink) == "string" and hyperlink ~= "" then
 				local ok, tooltipData = pcall(C_TooltipInfo.GetHyperlink, hyperlink)
@@ -1433,6 +1509,50 @@ function QuestTogether:IsSecretValue(value)
 	end
 
 	return raw_issecretvalue(value) and true or false
+end
+
+function QuestTogether:IsForbiddenFrame(frame)
+	local frameType = type(frame)
+	if not frame or (frameType ~= "table" and frameType ~= "userdata") then
+		return false
+	end
+	if type(frame.IsForbidden) ~= "function" then
+		return false
+	end
+
+	local ok, forbidden = pcall(frame.IsForbidden, frame)
+	return ok and forbidden and true or false
+end
+
+function QuestTogether:CanAccessForeignFrame(frame, requireShown)
+	local frameType = type(frame)
+	if not frame or (frameType ~= "table" and frameType ~= "userdata") then
+		return false
+	end
+	if self:IsForbiddenFrame(frame) then
+		return false
+	end
+
+	if requireShown then
+		if type(frame.IsShown) ~= "function" then
+			return false
+		end
+		local okShown, isShown = pcall(frame.IsShown, frame)
+		if not okShown or not isShown then
+			return false
+		end
+	end
+
+	return true
+end
+
+function QuestTogether:TryAddMessageToChatFrame(chatFrame, message)
+	if not self:CanAccessForeignFrame(chatFrame) or type(chatFrame.AddMessage) ~= "function" then
+		return false
+	end
+
+	local ok = pcall(chatFrame.AddMessage, chatFrame, self:SafeToString(message, ""))
+	return ok and true or false
 end
 
 function QuestTogether:SafeToNumber(value)
@@ -1872,9 +1992,7 @@ end
 function QuestTogether:Print(message)
 	local text = "|cff33ff99QuestTogether|r: " .. self:SafeToString(message)
 	local chatFrame = self:GetChatLogFrame()
-	if chatFrame and chatFrame.AddMessage then
-		chatFrame:AddMessage(text)
-	else
+	if not self:TryAddMessageToChatFrame(chatFrame, text) then
 		print("QuestTogether:", self:SafeToString(message))
 	end
 end
@@ -1882,9 +2000,7 @@ end
 function QuestTogether:PrintRaw(message)
 	local text = self:SafeToString(message)
 	local chatFrame = self:GetChatLogFrame()
-	if chatFrame and chatFrame.AddMessage then
-		chatFrame:AddMessage(text)
-	else
+	if not self:TryAddMessageToChatFrame(chatFrame, text) then
 		print(text)
 	end
 end
@@ -1944,7 +2060,7 @@ function QuestTogether:FindQuestLogChatFrame()
 	if configuredID and self.API.GetChatFrameByID and self.API.GetChatWindowInfo then
 		local configuredFrame = self.API.GetChatFrameByID(configuredID)
 		local configuredName = self.API.GetChatWindowInfo(configuredID)
-		if configuredFrame and configuredName == chatWindowName then
+		if self:CanAccessForeignFrame(configuredFrame) and configuredName == chatWindowName then
 			return configuredFrame, configuredID
 		end
 	end
@@ -1960,7 +2076,7 @@ function QuestTogether:FindQuestLogChatFrame()
 			if not chatFrame then
 				chatFrame = _G["ChatFrame" .. tostring(chatFrameID)]
 			end
-			if chatFrame then
+			if self:CanAccessForeignFrame(chatFrame) then
 				self:SetConfiguredQuestLogChatFrameID(chatFrameID)
 				return chatFrame, chatFrameID
 			end
@@ -1994,7 +2110,12 @@ function QuestTogether:FindVisibleQuestLogChatFrame(excludedFrame)
 			if not chatFrame then
 				chatFrame = _G["ChatFrame" .. tostring(chatFrameID)]
 			end
-			if chatFrame and chatFrame ~= excludedFrame and self:IsQuestLogChatFrameVisible(chatFrame) then
+			if
+				chatFrame
+				and chatFrame ~= excludedFrame
+				and self:CanAccessForeignFrame(chatFrame)
+				and self:IsQuestLogChatFrameVisible(chatFrame)
+			then
 				self:SetConfiguredQuestLogChatFrameID(chatFrameID)
 				return chatFrame, chatFrameID
 			end
@@ -2005,7 +2126,7 @@ function QuestTogether:FindVisibleQuestLogChatFrame(excludedFrame)
 end
 
 function QuestTogether:IsQuestLogChatFrame(chatFrame)
-	if not chatFrame or not chatFrame.GetID then
+	if not self:CanAccessForeignFrame(chatFrame) or not chatFrame.GetID then
 		return false
 	end
 
@@ -2027,7 +2148,7 @@ function QuestTogether:IsQuestLogChatFrame(chatFrame)
 end
 
 function QuestTogether:IsQuestLogChatFrameVisible(chatFrame)
-	if not self:IsQuestLogChatFrame(chatFrame) then
+	if not self:CanAccessForeignFrame(chatFrame) or not self:IsQuestLogChatFrame(chatFrame) then
 		return false
 	end
 
@@ -2042,7 +2163,7 @@ function QuestTogether:IsQuestLogChatFrameVisible(chatFrame)
 	end
 
 	local chatTab = _G[frameName .. "Tab"]
-	return chatTab and chatTab.IsShown and chatTab:IsShown() or false
+	return self:CanAccessForeignFrame(chatTab) and chatTab.IsShown and chatTab:IsShown() or false
 end
 
 function QuestTogether:HandleQuestLogChatFrameClosed(chatFrame)
@@ -2112,20 +2233,20 @@ function QuestTogether:TryInstallChatWindowHooks()
 end
 
 function QuestTogether:ActivateQuestLogChatFrame(chatFrame)
-	if not chatFrame or not chatFrame.GetID then
+	if not self:CanAccessForeignFrame(chatFrame) or not chatFrame.GetID then
 		return false
 	end
 
 	local chatTab = _G[chatFrame:GetName() .. "Tab"]
 	local frameShown = chatFrame.IsShown and chatFrame:IsShown()
-	local tabShown = chatTab and chatTab.IsShown and chatTab:IsShown()
+	local tabShown = self:CanAccessForeignFrame(chatTab) and chatTab.IsShown and chatTab:IsShown() or false
 	if frameShown or tabShown then
 		return true
 	end
 
 	if FCF_CheckShowChatFrame then
 		FCF_CheckShowChatFrame(chatFrame)
-		if chatTab then
+		if self:CanAccessForeignFrame(chatTab) then
 			FCF_CheckShowChatFrame(chatTab)
 		end
 	end
@@ -2141,7 +2262,7 @@ function QuestTogether:ActivateQuestLogChatFrame(chatFrame)
 			FCF_FadeInChatFrame(selectedFrame)
 		end
 	end
-	if ChatFrameUtil and ChatFrameUtil.SetLastActiveWindow and chatFrame.editBox then
+	if ChatFrameUtil and ChatFrameUtil.SetLastActiveWindow and self:CanAccessForeignFrame(chatFrame.editBox) then
 		ChatFrameUtil.SetLastActiveWindow(chatFrame.editBox)
 	end
 
@@ -2161,7 +2282,7 @@ function QuestTogether:EnsureQuestLogChatFrame()
 	end
 
 	local chatFrame, chatFrameID = self.API.OpenChatWindow(self.questLogWindowName or "QuestTogether", true)
-	if not chatFrame then
+	if not self:CanAccessForeignFrame(chatFrame) then
 		return nil, nil
 	end
 
@@ -2179,6 +2300,10 @@ end
 function QuestTogether:CloseQuestLogChatFrame()
 	local chatFrame, chatFrameID = self:FindQuestLogChatFrame()
 	if not chatFrame then
+		self:SetConfiguredQuestLogChatFrameID(nil)
+		return false
+	end
+	if not self:CanAccessForeignFrame(chatFrame) then
 		self:SetConfiguredQuestLogChatFrameID(nil)
 		return false
 	end
@@ -2217,11 +2342,16 @@ function QuestTogether:ReconcileQuestLogChatDestination()
 end
 
 function QuestTogether:ApplyMainChatFontSizeToChatFrame(chatFrame)
-	if not chatFrame or not chatFrame.GetID or not self.API.GetChatWindowInfo or not self.API.SetChatWindowFontSize then
+	if
+		not self:CanAccessForeignFrame(chatFrame)
+		or not chatFrame.GetID
+		or not self.API.GetChatWindowInfo
+		or not self.API.SetChatWindowFontSize
+	then
 		return false
 	end
 	local mainChatFrame = self:GetMainChatFrame()
-	if not mainChatFrame or not mainChatFrame.GetID then
+	if not self:CanAccessForeignFrame(mainChatFrame) or not mainChatFrame.GetID then
 		return false
 	end
 
@@ -2252,9 +2382,7 @@ end
 function QuestTogether:PrintChatLogRaw(message)
 	local text = tostring(message)
 	local chatFrame = self:GetChatLogFrame()
-	if chatFrame and chatFrame.AddMessage then
-		chatFrame:AddMessage(text)
-	else
+	if not self:TryAddMessageToChatFrame(chatFrame, text) then
 		self:PrintRaw(text)
 	end
 end
@@ -3846,6 +3974,10 @@ function QuestTogether:OpenHudEditMode()
 
 	if not EditModeManagerFrame then
 		self:Debug("HUD Edit Mode unavailable", "editmode")
+		return false
+	end
+	if not self:CanAccessForeignFrame(EditModeManagerFrame) then
+		self:Debug("HUD Edit Mode frame is forbidden", "editmode")
 		return false
 	end
 

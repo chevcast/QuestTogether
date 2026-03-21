@@ -1,5 +1,10 @@
 # QuestTogether Notes
 
+## Agent Context
+
+- Read `LLM_CONTEXT.md` before changing Blizzard-facing, nameplate, tooltip, aura, or other taint-sensitive code.
+- If prompt budget is tight, read `LLM_CONTEXT_MIN.md` first, then `LLM_CONTEXT.md` if more detail is needed.
+
 ## Testing
 
 - Keep `/qt test` safe for a live WoW session.

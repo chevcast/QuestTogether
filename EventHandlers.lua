@@ -449,12 +449,7 @@ end
 function QuestTogether:HandleQuestCompleted(questTitle, questId, extraData)
 	self:Debugf("quest", "Quest completed questId=%s title=%s", SafeText(questId, "?"), SafeText(questTitle, "Unknown"))
 	local completionEmote = self:PickRandomCompletionEmote()
-	local announcementExtraData = {}
-	if type(extraData) == "table" then
-		for key, value in pairs(extraData) do
-			announcementExtraData[key] = value
-		end
-	end
+	local announcementExtraData = self.SanitizeAnnouncementExtraData and self:SanitizeAnnouncementExtraData(extraData) or {}
 	announcementExtraData.emoteToken = completionEmote
 	if questId and self:IsWorldQuest(questId) then
 		self:PublishAnnouncementEvent(

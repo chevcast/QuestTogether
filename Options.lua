@@ -18,11 +18,14 @@ local function SafeText(value, fallback)
 end
 
 local function IsFrameMutable(frame)
+	if QuestTogether and QuestTogether.CanAccessForeignFrame then
+		return QuestTogether:CanAccessForeignFrame(frame)
+	end
+
 	if not frame then
 		return false
 	end
 
-	-- Avoid touching forbidden Blizzard frames to reduce taint propagation.
 	if frame.IsForbidden and frame:IsForbidden() then
 		return false
 	end
@@ -78,11 +81,11 @@ local function HasBit(mask, bitValue)
 end
 
 local function GetNumericCVarValue(cvarName, fallbackValue)
-	if not (C_CVar and C_CVar.GetCVar and type(cvarName) == "string" and cvarName ~= "") then
+	if not (QuestTogether and QuestTogether.API and type(QuestTogether.API.GetCVar) == "function") then
 		return fallbackValue
 	end
 
-	local rawValue = C_CVar.GetCVar(cvarName)
+	local rawValue = QuestTogether.API.GetCVar(cvarName)
 	local numericValue = QuestTogether:SafeToNumber(rawValue)
 	if numericValue == nil then
 		return fallbackValue
