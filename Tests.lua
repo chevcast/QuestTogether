@@ -59,6 +59,9 @@ local function CreateApiWithOverrides(overrides)
 		GetQuestPOIsOnMap = function()
 			return nil
 		end,
+		IsModifiedClick = function()
+			return false
+		end,
 		IsWorldMapVisible = function()
 			return false
 		end,
@@ -116,7 +119,6 @@ local function WithIsolatedState(testFn)
 	local originalNameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken
 	local originalNameplateQuestGuidByUnitToken = QuestTogether.nameplateQuestGuidByUnitToken
 	local originalNameplateTooltipGuidByUnitToken = QuestTogether.nameplateTooltipGuidByUnitToken
-	local originalNameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache
 	local originalNameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache
 	local originalNameplateScanTooltip = QuestTogether.nameplateScanTooltip
 	local originalNameplateHealthOverlayByUnitFrame = QuestTogether.nameplateHealthOverlayByUnitFrame
@@ -142,10 +144,9 @@ local function WithIsolatedState(testFn)
 	local originalPendingScheduledTaskAreaRefreshShouldAnnounce =
 		QuestTogether.pendingScheduledTaskAreaRefreshShouldAnnounce
 	local originalPendingSuperTrackingTaskAreaRefresh = QuestTogether.pendingSuperTrackingTaskAreaRefresh
-	local originalPendingNameplateRefreshAfterCombat = QuestTogether.pendingNameplateRefreshAfterCombat
-	local originalPendingNameplateRefreshAfterMapHidden = QuestTogether.pendingNameplateRefreshAfterMapHidden
-	local originalNameplateMapVisibilityRetryPending = QuestTogether.nameplateMapVisibilityRetryPending
 	local originalPendingDeferredNameplateQuestStateRefresh = QuestTogether.pendingDeferredNameplateQuestStateRefresh
+	local originalDeferredNameplateQuestStateRefreshGeneration =
+		QuestTogether.deferredNameplateQuestStateRefreshGeneration
 
 	if QuestTogether.UnregisterRuntimeEvents then
 		QuestTogether:UnregisterRuntimeEvents()
@@ -174,8 +175,7 @@ local function WithIsolatedState(testFn)
 	QuestTogether.bonusObjectiveAreaStateByQuestID = {}
 	QuestTogether.nameplateQuestStateByUnitToken = {}
 	QuestTogether.nameplateQuestGuidByUnitToken = {}
-	QuestTogether.nameplateTooltipGuidByUnitToken = {}
-	QuestTogether.nameplateQuestObjectiveCache = {}
+	QuestTogether.nameplateTooltipGuidByUnitToken = nil
 	QuestTogether.nameplateQuestTitleCache = {}
 	QuestTogether.nameplateScanTooltip = nil
 	QuestTogether.nameplateHealthOverlayByUnitFrame = setmetatable({}, { __mode = "k" })
@@ -197,10 +197,8 @@ local function WithIsolatedState(testFn)
 	QuestTogether.pendingScheduledTaskAreaRefresh = false
 	QuestTogether.pendingScheduledTaskAreaRefreshShouldAnnounce = false
 	QuestTogether.pendingSuperTrackingTaskAreaRefresh = false
-	QuestTogether.pendingNameplateRefreshAfterCombat = false
-	QuestTogether.pendingNameplateRefreshAfterMapHidden = false
-	QuestTogether.nameplateMapVisibilityRetryPending = false
 	QuestTogether.pendingDeferredNameplateQuestStateRefresh = false
+	QuestTogether.deferredNameplateQuestStateRefreshGeneration = 0
 
 	local ok, err = pcall(testFn)
 
@@ -245,7 +243,6 @@ local function WithIsolatedState(testFn)
 	QuestTogether.nameplateQuestStateByUnitToken = originalNameplateQuestStateByUnitToken
 	QuestTogether.nameplateQuestGuidByUnitToken = originalNameplateQuestGuidByUnitToken
 	QuestTogether.nameplateTooltipGuidByUnitToken = originalNameplateTooltipGuidByUnitToken
-	QuestTogether.nameplateQuestObjectiveCache = originalNameplateQuestObjectiveCache
 	QuestTogether.nameplateQuestTitleCache = originalNameplateQuestTitleCache
 	QuestTogether.nameplateScanTooltip = originalNameplateScanTooltip
 	QuestTogether.nameplateHealthOverlayByUnitFrame = originalNameplateHealthOverlayByUnitFrame
@@ -270,10 +267,9 @@ local function WithIsolatedState(testFn)
 	QuestTogether.pendingScheduledTaskAreaRefreshShouldAnnounce =
 		originalPendingScheduledTaskAreaRefreshShouldAnnounce
 	QuestTogether.pendingSuperTrackingTaskAreaRefresh = originalPendingSuperTrackingTaskAreaRefresh
-	QuestTogether.pendingNameplateRefreshAfterCombat = originalPendingNameplateRefreshAfterCombat
-	QuestTogether.pendingNameplateRefreshAfterMapHidden = originalPendingNameplateRefreshAfterMapHidden
-	QuestTogether.nameplateMapVisibilityRetryPending = originalNameplateMapVisibilityRetryPending
 	QuestTogether.pendingDeferredNameplateQuestStateRefresh = originalPendingDeferredNameplateQuestStateRefresh
+	QuestTogether.deferredNameplateQuestStateRefreshGeneration =
+		originalDeferredNameplateQuestStateRefreshGeneration
 
 	if originalIsEnabled then
 		if QuestTogether.RegisterRuntimeEvents then
@@ -458,7 +454,7 @@ QuestTogether:RegisterTest("wire message parsers fail soft on values that cannot
 	AssertEquals(QuestTogether:SanitizeAnnouncementText(failingToString), "")
 end)
 
-QuestTogether:RegisterTest("nameplate tooltip scan guid cache does not write custom fields on Blizzard frames", function()
+QuestTogether:RegisterTest("nameplate tooltip scan guid does not write custom fields or cache guid state", function()
 	local unitToken = "nameplate9"
 	local unitFrame = {
 		namePlateUnitGUID = "Creature-0-0-0-0-99999-0000000000",
@@ -467,10 +463,10 @@ QuestTogether:RegisterTest("nameplate tooltip scan guid cache does not write cus
 	local guid = QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 	AssertEquals(guid, "Creature-0-0-0-0-99999-0000000000")
 	AssertEquals(unitFrame.qtTooltipScanGuid, nil)
-	AssertEquals(QuestTogether.nameplateTooltipGuidByUnitToken[unitToken], guid)
+	AssertEquals(QuestTogether.nameplateTooltipGuidByUnitToken, nil)
 
 	QuestTogether:OnNameplateRemoved(unitToken)
-	AssertEquals(QuestTogether.nameplateTooltipGuidByUnitToken[unitToken], nil)
+	AssertEquals(QuestTogether.nameplateTooltipGuidByUnitToken, nil)
 end)
 
 QuestTogether:RegisterTest("profile assignment is stored per character key", function()
@@ -1843,23 +1839,102 @@ QuestTogether:RegisterTest("progressbar objective text strips trailing parenthet
 	)
 end)
 
-QuestTogether:RegisterTest("known nameplate addons suppress the QuestTogether quest icon", function()
+QuestTogether:RegisterTest("known nameplate addons no longer suppress the QuestTogether quest icon", function()
+	QuestTogether.isEnabled = true
 	QuestTogether.db.profile.nameplateQuestIconEnabled = true
+	local unitFrame = {
+		unit = "nameplate1",
+		healthBar = {},
+	}
 	QuestTogether.API = CreateApiWithOverrides({
 		IsAddOnLoaded = function(addonName)
 			return addonName == "Plater"
 		end,
 	})
 
-	WithPatchedMethod(QuestTogether, "IsQuestObjectiveNameplate", function()
-		return true
+	WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+		return false
 	end, function()
-		AssertFalse(QuestTogether:ShouldShowQuestNameplateIcon("nameplate1", {}))
+		WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function(_, unitToken)
+			AssertEquals(unitToken, "nameplate1")
+			return true
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function(_, unitToken)
+				AssertEquals(unitToken, "nameplate1")
+				return false
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsNameplateUnitConnected", function(_, unitToken)
+					AssertEquals(unitToken, "nameplate1")
+					return true
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitDead", function(_, unitToken)
+						AssertEquals(unitToken, "nameplate1")
+						return false
+					end, function()
+						WithPatchedMethod(QuestTogether, "IsNameplateUnitTapDenied", function(_, unitToken)
+							AssertEquals(unitToken, "nameplate1")
+							return false
+						end, function()
+							AssertTrue(QuestTogether:ShouldShowQuestNameplateIconForResolvedState("nameplate1", unitFrame, true))
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("quest nameplate icon display no longer requires attackable units", function()
+	QuestTogether.isEnabled = true
+	QuestTogether.db.profile.nameplateQuestIconEnabled = true
+	local unitFrame = {
+		namePlateUnitToken = "nameplate1",
+		healthBar = {},
+	}
+	QuestTogether.API = CreateApiWithOverrides({
+		IsAddOnLoaded = function()
+			return false
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
+		error("attackable-unit gating should not run for quest icon display")
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function(_, unitToken)
+				AssertEquals(unitToken, "nameplate1")
+				return true
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function(_, unitToken)
+					AssertEquals(unitToken, "nameplate1")
+					return false
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitConnected", function(_, unitToken)
+						AssertEquals(unitToken, "nameplate1")
+						return true
+					end, function()
+						WithPatchedMethod(QuestTogether, "IsNameplateUnitDead", function(_, unitToken)
+							AssertEquals(unitToken, "nameplate1")
+							return false
+						end, function()
+							WithPatchedMethod(QuestTogether, "IsNameplateUnitTapDenied", function(_, unitToken)
+								AssertEquals(unitToken, "nameplate1")
+								return false
+							end, function()
+								AssertTrue(QuestTogether:ShouldShowQuestNameplateIconForResolvedState(nil, unitFrame, true))
+								AssertTrue(QuestTogether:ShouldApplyQuestHealthTint(unitFrame, true))
+							end)
+						end)
+					end)
+				end)
+			end)
+		end)
 	end)
 end)
 
 QuestTogether:RegisterTest("tooltip quest detection uses isolated tooltip line scan for objectives", function()
-	local cachedResult = nil
 	local titleLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestTitle or "QuestTitle"
 	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
 	QuestTogether.nameplateQuestTitleCache["Tracking the Trail"] = true
@@ -1870,69 +1945,45 @@ QuestTogether:RegisterTest("tooltip quest detection uses isolated tooltip line s
 		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
 			return false
 		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
-				return false
+			WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+				return "Creature-0-0-0-0-12345-0000000000"
 			end, function()
-				WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
-					return true
+				WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function(_, unitGuid)
+					AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
+					return nil
 				end, function()
-					WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
-						return "Creature-0-0-0-0-12345-0000000000"
-					end, function()
-						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
-							return nil
-						end, function()
-							WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function(_, unitGuid)
-								AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
-								return nil
+					WithPatchedMethod(
+						QuestTogether,
+						"GetStructuredQuestObjectiveTooltipLines",
+						function(_, unitToken, unitGuid)
+							AssertEquals(unitToken, "nameplate1")
+							AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
+							return {
+								{
+									type = titleLineType,
+									leftText = "Tracking the Trail",
+								},
+								{
+									type = objectiveLineType,
+									leftText = "1/8 Digested Object",
+								},
+							}
+						end,
+						function()
+							WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
+								error("hidden tooltip fallback should not run when structured data succeeds")
 							end, function()
-								WithPatchedMethod(
-									QuestTogether,
-									"GetStructuredQuestObjectiveTooltipLines",
-									function(_, unitToken, unitGuid)
-										AssertEquals(unitToken, "nameplate1")
-										AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
-										return {
-											{
-												type = titleLineType,
-												leftText = "Tracking the Trail",
-											},
-											{
-												type = objectiveLineType,
-												leftText = "1/8 Digested Object",
-											},
-										}
-									end,
-									function()
-										WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
-											error("hidden tooltip fallback should not run when structured data succeeds")
-										end, function()
-											WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
-												cachedResult = {
-													guid = guid,
-													value = value,
-												}
-											end, function()
-												AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
-											end)
-										end)
-									end
-								)
+								AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
 							end)
-						end)
-					end)
+						end
+					)
 				end)
 			end)
 		end)
 	end)
-
-	AssertTrue(cachedResult ~= nil)
-	AssertEquals(cachedResult.guid, "Creature-0-0-0-0-12345-0000000000")
-	AssertTrue(cachedResult.value)
 end)
 
 QuestTogether:RegisterTest("tooltip quest detection recognizes fallback-style progress lines", function()
-	local cachedResult = nil
 	QuestTogether.nameplateQuestTitleCache["Tracking the Trail"] = true
 
 	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
@@ -1941,62 +1992,37 @@ QuestTogether:RegisterTest("tooltip quest detection recognizes fallback-style pr
 		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
 			return false
 		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
-				return false
+			WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+				return "Creature-0-0-0-0-12345-0000000000"
 			end, function()
-				WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
-					return true
+				WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
+					return nil
 				end, function()
-					WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
-						return "Creature-0-0-0-0-12345-0000000000"
+					WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function(_, unitToken, unitGuid)
+						AssertEquals(unitToken, "nameplate1")
+						AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
+						return {
+							{
+								leftText = "Tracking the Trail",
+							},
+							{
+								leftText = "- Subdue Creatures or Kill Players (40%)",
+							},
+						}
 					end, function()
-						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
-							return nil
+						WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
+							error("legacy hidden tooltip fallback should not run on structured-tooltip clients")
 						end, function()
-							WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
-								return nil
-							end, function()
-								WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function()
-									return nil
-								end, function()
-									WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function(_, unitGuid)
-										AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
-										return {
-											{
-												type = nil,
-												leftText = "Tracking the Trail",
-											},
-											{
-												type = nil,
-												leftText = "- Subdue Creatures or Kill Players (40%)",
-											},
-										}
-									end, function()
-										WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
-											cachedResult = {
-												guid = guid,
-												value = value,
-											}
-										end, function()
-											AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
-										end)
-									end)
-								end)
-							end)
+							AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
 						end)
 					end)
 				end)
 			end)
 		end)
 	end)
-
-	AssertTrue(cachedResult ~= nil)
-	AssertEquals(cachedResult.guid, "Creature-0-0-0-0-12345-0000000000")
-	AssertTrue(cachedResult.value)
 end)
 
 QuestTogether:RegisterTest("tooltip quest detection does not iterate tooltip arg payloads", function()
-	local cachedResult = nil
 	local titleLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestTitle or "QuestTitle"
 	local objectiveLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective or "QuestObjective"
 	local poisonedArgs = setmetatable({}, {
@@ -2015,130 +2041,27 @@ QuestTogether:RegisterTest("tooltip quest detection does not iterate tooltip arg
 		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
 			return false
 		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
-				return false
+			WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+				return "Creature-0-0-0-0-12345-0000000000"
 			end, function()
-				WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
-					return true
+				WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
+					return nil
 				end, function()
-					WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
-						return "Creature-0-0-0-0-12345-0000000000"
+					WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function()
+						return {
+							{
+								type = titleLineType,
+								leftText = "Tracking the Trail",
+							},
+							{
+								type = objectiveLineType,
+								leftText = "1/8 Digested Object",
+								args = poisonedArgs,
+							},
+						}
 					end, function()
-						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
-							return nil
-						end, function()
-							WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
-								return nil
-							end, function()
-								WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function()
-									return {
-										{
-											type = titleLineType,
-											leftText = "Tracking the Trail",
-										},
-										{
-											type = objectiveLineType,
-											leftText = "1/8 Digested Object",
-											args = poisonedArgs,
-										},
-									}
-								end, function()
-									WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
-										error("hidden tooltip fallback should not run when structured data succeeds")
-									end, function()
-										WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
-											cachedResult = {
-												guid = guid,
-												value = value,
-											}
-										end, function()
-											AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
-										end)
-									end)
-								end)
-							end)
-						end)
-					end)
-				end)
-			end)
-		end)
-	end)
-
-	AssertTrue(cachedResult ~= nil)
-	AssertEquals(cachedResult.guid, "Creature-0-0-0-0-12345-0000000000")
-	AssertTrue(cachedResult.value)
-end)
-
-QuestTogether:RegisterTest("tooltip quest detection skips live tooltip scans in combat without cache", function()
-	QuestTogether.API = CreateApiWithOverrides({
-		InCombatLockdown = function()
-			return true
-		end,
-	})
-
-	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
-			return false
-		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
-				return false
-			end, function()
-				WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
-					return true
-				end, function()
-					WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
-						return "Creature-0-0-0-0-12345-0000000000"
-					end, function()
-						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
-							return nil
-						end, function()
-							WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
-								return nil
-							end, function()
-								WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function()
-									return nil
-								end, function()
-									WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
-										error("hidden tooltip fallback should not run during combat when no cached result is available")
-									end, function()
-										AssertFalse(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
-									end)
-								end)
-							end)
-						end)
-					end)
-				end)
-			end)
-		end)
-	end)
-end)
-
-QuestTogether:RegisterTest("tooltip quest detection still uses cached combat result", function()
-	QuestTogether.API = CreateApiWithOverrides({
-		InCombatLockdown = function()
-			return true
-		end,
-	})
-
-	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
-		return true
-	end, function()
-		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
-			return false
-		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
-				return false
-			end, function()
-				WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
-					return true
-				end, function()
-					WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
-						return "Creature-0-0-0-0-12345-0000000000"
-					end, function()
-						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
-							return true
+						WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
+							error("hidden tooltip fallback should not run when structured data succeeds")
 						end, function()
 							AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
 						end)
@@ -2147,6 +2070,181 @@ QuestTogether:RegisterTest("tooltip quest detection still uses cached combat res
 			end)
 		end)
 	end)
+end)
+
+QuestTogether:RegisterTest("tooltip quest detection still uses live structured scans in combat", function()
+	QuestTogether.nameplateQuestTitleCache["Tracking the Trail"] = true
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return true
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+				return "Creature-0-0-0-0-12345-0000000000"
+			end, function()
+				WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
+					return nil
+				end, function()
+					WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function(_, unitToken, unitGuid)
+						AssertEquals(unitToken, "nameplate1")
+						AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
+						return {
+							{
+								leftText = "Tracking the Trail",
+							},
+							{
+								leftText = "1/8 Digested Object",
+							},
+						}
+					end, function()
+						WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
+							error("legacy hidden tooltip fallback should not run on structured-tooltip clients")
+						end, function()
+							AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("tooltip quest detection still uses structured scans while world map is visible like Plater", function()
+	QuestTogether.nameplateQuestTitleCache["Tracking the Trail"] = true
+	QuestTogether.API = CreateApiWithOverrides({
+		IsWorldMapVisible = function()
+			return true
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+				return "Creature-0-0-0-0-12345-0000000000"
+			end, function()
+				WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
+					return nil
+				end, function()
+					WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function(_, unitToken, unitGuid)
+						AssertEquals(unitToken, "nameplate1")
+						AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
+						return {
+							{
+								leftText = "Tracking the Trail",
+							},
+							{
+								leftText = "1/8 Digested Object",
+							},
+						}
+					end, function()
+						AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("tooltip quest detection rescans in combat instead of reusing cached results", function()
+	local structuredScanCount = 0
+	QuestTogether.nameplateQuestTitleCache["Tracking the Trail"] = true
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return true
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+				return "Creature-0-0-0-0-12345-0000000000"
+			end, function()
+				WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
+					return nil
+				end, function()
+					WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function()
+						structuredScanCount = structuredScanCount + 1
+						if structuredScanCount == 1 then
+							return nil
+						end
+						return {
+							{
+								leftText = "Tracking the Trail",
+							},
+							{
+								leftText = "1/8 Digested Object",
+							},
+						}
+					end, function()
+						AssertFalse(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+						AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+					end)
+				end)
+			end)
+		end)
+	end)
+
+	AssertEquals(structuredScanCount, 2)
+end)
+
+QuestTogether:RegisterTest("tooltip quest detection rescans after an initial false result", function()
+	local structuredScanCount = 0
+	QuestTogether.nameplateQuestTitleCache["Tracking the Trail"] = true
+
+	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+		return true
+	end, function()
+		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+			return false
+		end, function()
+			WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+				return "Creature-0-0-0-0-12345-0000000000"
+			end, function()
+				WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
+					return nil
+				end, function()
+					WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function()
+						structuredScanCount = structuredScanCount + 1
+						if structuredScanCount == 1 then
+							return nil
+						end
+						return {
+							{
+								leftText = "Tracking the Trail",
+							},
+							{
+								leftText = "- Subdue Creatures or Kill Players (40%)",
+							},
+						}
+					end, function()
+						WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
+							error("legacy hidden tooltip fallback should not run on structured-tooltip clients")
+						end, function()
+							AssertFalse(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+							AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+
+	AssertEquals(structuredScanCount, 2)
 end)
 
 QuestTogether:RegisterTest("quest objective detection uses tooltip parsing as the only decision path", function()
@@ -2226,7 +2324,7 @@ QuestTogether:RegisterTest("tooltip quest detection prefers frame guid over live
 		end)
 end)
 
-QuestTogether:RegisterTest("tooltip quest scan uses addon-owned hidden tooltip helpers", function()
+QuestTogether:RegisterTest("legacy tooltip quest scan uses addon-owned hidden tooltip helpers", function()
 	local unitGuid = "Creature-0-0-0-0-12345-0000000000"
 	local fakeTooltip = {
 		hideCount = 0,
@@ -2249,12 +2347,8 @@ QuestTogether:RegisterTest("tooltip quest scan uses addon-owned hidden tooltip h
 		end,
 	}
 	QuestTogether.API = CreateApiWithOverrides({
-		GetTooltipDataForHyperlink = function()
-			return nil
-		end,
-		GetTooltipDataForUnit = function()
-			return nil
-		end,
+		GetTooltipDataForHyperlink = false,
+		GetTooltipDataForUnit = false,
 	})
 
 	WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function()
@@ -2343,9 +2437,24 @@ QuestTogether:RegisterTest("tooltip quest scan prefers structured tooltip lines 
 	end)
 end)
 
+QuestTogether:RegisterTest("structured tooltip quest scan does not fall back to unit tooltip payloads", function()
+	local unitGuid = "Creature-0-0-0-0-12345-0000000000"
+
+	QuestTogether.API = CreateApiWithOverrides({
+		GetTooltipDataForHyperlink = function(hyperlink)
+			AssertEquals(hyperlink, "unit:" .. unitGuid)
+			return nil
+		end,
+		GetTooltipDataForUnit = function()
+			error("unit tooltip fallback is not part of Plater's retail tooltip path")
+		end,
+	})
+
+	AssertEquals(QuestTogether:GetStructuredQuestObjectiveTooltipLines("nameplate1", unitGuid), nil)
+end)
+
 QuestTogether:RegisterTest("tooltip quest detection prefers Questie lines before Blizzard tooltip APIs", function()
 	local titleLineType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestTitle or "QuestTitle"
-	local cachedResult = nil
 	QuestTogether.nameplateQuestTitleCache["Tracking the Trail"] = true
 
 	WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
@@ -2354,60 +2463,46 @@ QuestTogether:RegisterTest("tooltip quest detection prefers Questie lines before
 		WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
 			return false
 		end, function()
-			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
-				return false
+			WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
+				return "Creature-0-0-0-0-12345-0000000000"
 			end, function()
-				WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
-					return true
+				WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function(_, unitGuid)
+					AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
+					return {
+						{
+							type = titleLineType,
+							leftText = "Tracking the Trail",
+						},
+						{
+							leftText = "1/8 Digested Object",
+						},
+					}
 				end, function()
-					WithPatchedMethod(QuestTogether, "GetNameplateTooltipScanGuid", function()
-						return "Creature-0-0-0-0-12345-0000000000"
+					WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function()
+						error("structured tooltip fallback should not run when Questie data is available")
 					end, function()
-						WithPatchedMethod(QuestTogether, "GetCachedQuestObjectiveResult", function()
-							return nil
+						WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
+							error("hidden tooltip fallback should not run when Questie data is available")
 						end, function()
-							WithPatchedMethod(QuestTogether, "GetQuestieQuestObjectiveTooltipLines", function(_, unitGuid)
-								AssertEquals(unitGuid, "Creature-0-0-0-0-12345-0000000000")
-								return {
-									{
-										type = titleLineType,
-										leftText = "Tracking the Trail",
-									},
-									{
-										leftText = "1/8 Digested Object",
-									},
-								}
-							end, function()
-								WithPatchedMethod(QuestTogether, "GetStructuredQuestObjectiveTooltipLines", function()
-									error("structured tooltip fallback should not run when Questie data is available")
-								end, function()
-									WithPatchedMethod(QuestTogether, "GetHiddenQuestObjectiveTooltipLines", function()
-										error("hidden tooltip fallback should not run when Questie data is available")
-									end, function()
-										WithPatchedMethod(QuestTogether, "SetCachedQuestObjectiveResult", function(_, guid, value)
-											cachedResult = {
-												guid = guid,
-												value = value,
-											}
-										end, function()
-											AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
-										end)
-									end)
-								end)
-							end)
+							AssertTrue(QuestTogether:IsQuestObjectiveViaTooltip("nameplate1", {}))
 						end)
 					end)
 				end)
 			end)
 		end)
 	end)
-
-	AssertTrue(cachedResult ~= nil)
-	AssertEquals(cachedResult.guid, "Creature-0-0-0-0-12345-0000000000")
-	AssertTrue(cachedResult.value)
 end)
 
-QuestTogether:RegisterTest("hidden tooltip fallback is enabled by default to match Plater", function()
+QuestTogether:RegisterTest("structured tooltip clients do not use legacy hidden tooltip fallback", function()
+	QuestTogether.API = CreateApiWithOverrides()
+	AssertFalse(QuestTogether:IsNameplateTooltipScanEnabled())
+end)
+
+QuestTogether:RegisterTest("legacy hidden tooltip fallback stays enabled when structured tooltip APIs are unavailable", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		GetTooltipDataForHyperlink = false,
+		GetTooltipDataForUnit = false,
+	})
 	AssertTrue(QuestTogether:IsNameplateTooltipScanEnabled())
 end)
 
@@ -2428,15 +2523,25 @@ QuestTogether:RegisterTest("nameplate quest title cache mirrors Plater quest log
 				isHidden = false,
 			}
 		end,
+		GetPlayerMapID = function(unitToken)
+			AssertEquals(unitToken, "player")
+			return 2222
+		end,
+		GetTaskQuestsOnMap = function(mapID)
+			AssertEquals(mapID, 2222)
+			return { 30303 }
+		end,
+		GetTaskQuestTitle = function(questID)
+			AssertEquals(questID, 30303)
+			return "World Quest"
+		end,
 	})
 
 	WithPatchedMethod(QuestTogether, "GetActiveWorldQuestAreaSnapshot", function()
-		return {
-			[30303] = "World Quest",
-		}
+		error("area snapshot fallback is not part of Plater's quest cache")
 	end, function()
-		WithPatchedMethod(QuestTogether, "GetActiveBonusObjectiveAreaSnapshot", function()
-			error("bonus objective titles are not part of Plater's quest cache")
+		WithPatchedMethod(QuestTogether, "GetQuestTitle", function()
+			error("quest-title fallback is not part of Plater's world quest cache")
 		end, function()
 			QuestTogether:RebuildNameplateQuestTitleCache()
 		end)
@@ -2446,6 +2551,62 @@ QuestTogether:RegisterTest("nameplate quest title cache mirrors Plater quest log
 	AssertTrue(QuestTogether.nameplateQuestTitleCache["World Quest"])
 	AssertEquals(QuestTogether.nameplateQuestTitleCache["Tracked Quest"], nil)
 	AssertEquals(QuestTogether.nameplateQuestTitleCache["Bonus Objective"], nil)
+end)
+
+QuestTogether:RegisterTest("nameplate quest title cache includes hidden quest log titles like Plater", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstance = function()
+			return false
+		end,
+		GetNumQuestLogEntries = function()
+			return 1
+		end,
+		GetQuestLogInfo = function(questLogIndex)
+			AssertEquals(questLogIndex, 1)
+			return {
+				questID = 20202,
+				title = "Hidden Quest",
+				isHeader = false,
+				isHidden = true,
+			}
+		end,
+	})
+
+	QuestTogether:RebuildNameplateQuestTitleCache()
+
+	AssertTrue(QuestTogether.nameplateQuestTitleCache["Hidden Quest"])
+end)
+
+QuestTogether:RegisterTest("nameplate quest title cache still rebuilds during combat like Plater", function()
+	QuestTogether.API = CreateApiWithOverrides({
+		IsInInstance = function()
+			return false
+		end,
+		InCombatLockdown = function()
+			return true
+		end,
+		GetNumQuestLogEntries = function()
+			return 1
+		end,
+		GetQuestLogInfo = function(entryIndex)
+			AssertEquals(entryIndex, 1)
+			return {
+				title = "Combat Quest",
+				isHeader = false,
+				questID = 12345,
+			}
+		end,
+		GetPlayerMapID = function()
+			return nil
+		end,
+		GetTaskQuestsOnMap = function()
+			return nil
+		end,
+	})
+
+	QuestTogether:RebuildNameplateQuestTitleCache()
+
+	AssertTrue(QuestTogether.nameplateQuestTitleCache["Combat Quest"])
 end)
 
 QuestTogether:RegisterTest("nameplate quest title cache stays empty in instances", function()
@@ -2540,7 +2701,10 @@ QuestTogether:RegisterTest("tooltip objective evaluation accepts party-member pr
 		{
 			type = playerLineType,
 			leftText = "Friend-Realm",
-			rightText = "3/8 Digested Object",
+		},
+		{
+			type = objectiveLineType,
+			leftText = "3/8 Digested Object",
 		},
 	})
 
@@ -2558,7 +2722,10 @@ QuestTogether:RegisterTest("tooltip objective evaluation accepts normalized stri
 		{
 			type = "QuestPlayer",
 			leftText = "Friend-Realm",
-			rightText = "3/8 Digested Object",
+		},
+		{
+			type = "QuestObjective",
+			leftText = "3/8 Digested Object",
 		},
 	})
 
@@ -2583,7 +2750,10 @@ QuestTogether:RegisterTest("tooltip objective evaluation ignores complete-only o
 		{
 			type = playerLineType,
 			leftText = "Friend-Realm",
-			rightText = "8/8 Digested Object",
+		},
+		{
+			type = objectiveLineType,
+			leftText = "8/8 Digested Object",
 		},
 	})
 
@@ -2687,20 +2857,16 @@ QuestTogether:RegisterTest("tooltip objective evaluation stops when tooltip line
 	end)
 end)
 
-QuestTogether:RegisterTest("tooltip quest scan guid prefers live frame guid over stale token cache", function()
-	QuestTogether.nameplateTooltipGuidByUnitToken["nameplate1"] = "Creature-0-0-0-0-11111-0000000000"
-	local unitFrame = {
-		namePlateUnitGUID = "Creature-0-0-0-0-22222-0000000000",
+QuestTogether:RegisterTest("tooltip quest scan guid does not fall back to stale token cache state", function()
+	QuestTogether.nameplateTooltipGuidByUnitToken = {
+		nameplate1 = "Creature-0-0-0-0-11111-0000000000",
 	}
 
-	AssertEquals(
-		QuestTogether:GetNameplateTooltipScanGuid("nameplate1", unitFrame),
-		"Creature-0-0-0-0-22222-0000000000"
-	)
-	AssertEquals(
-		QuestTogether.nameplateTooltipGuidByUnitToken["nameplate1"],
-		"Creature-0-0-0-0-22222-0000000000"
-	)
+	WithPatchedMethod(QuestTogether, "GetNameplateUnitGuid", function()
+		return nil
+	end, function()
+		AssertEquals(QuestTogether:GetNameplateTooltipScanGuid("nameplate1", {}), nil)
+	end)
 end)
 
 QuestTogether:RegisterTest("personal bubble anchor persists per character and resets to defaults", function()
@@ -3861,7 +4027,10 @@ QuestTogether:RegisterTest("nameplate icon refresh schedules a short follow-up t
 	}
 
 	QuestTogether.isEnabled = true
-	WithPatchedMethod(QuestTogether, "ShouldShowQuestNameplateIcon", function()
+	WithPatchedMethod(QuestTogether, "ShouldShowQuestNameplateIconForResolvedState", function(_, unitToken, unitFrame, isQuestObjective)
+		AssertEquals(unitToken, "nameplate1")
+		AssertEquals(unitFrame, namePlateFrameBase.UnitFrame)
+		AssertEquals(isQuestObjective, true)
 		return false
 	end, function()
 		WithPatchedMethod(QuestTogether, "IsQuestObjectiveNameplate", function()
@@ -3898,9 +4067,10 @@ QuestTogether:RegisterTest("nameplate health tint uses resolved quest state from
 		},
 	}
 
-	WithPatchedMethod(QuestTogether, "ShouldShowQuestNameplateIcon", function(_, unitToken, unitFrame)
+	WithPatchedMethod(QuestTogether, "ShouldShowQuestNameplateIconForResolvedState", function(_, unitToken, unitFrame, isQuestObjective)
 		AssertEquals(unitToken, "nameplate1")
 		AssertEquals(unitFrame, namePlateFrameBase.UnitFrame)
+		AssertEquals(isQuestObjective, true)
 		return false
 	end, function()
 		WithPatchedMethod(QuestTogether, "IsQuestObjectiveNameplate", function(_, unitToken, unitFrame)
@@ -3912,28 +4082,26 @@ QuestTogether:RegisterTest("nameplate health tint uses resolved quest state from
 				appliedUnitFrame = unitFrame
 				return true
 			end, function()
-				WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
-					return true
-				end, function()
-					WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
-						return false
-					end, function()
-						WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
+						WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
 							return true
 						end, function()
-							WithPatchedMethod(QuestTogether, "IsNameplateUnitConnected", function()
-								return true
+							WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
+								return false
 							end, function()
-								WithPatchedMethod(QuestTogether, "IsNameplateUnitDead", function()
-									return false
+								WithPatchedMethod(QuestTogether, "IsNameplateUnitConnected", function()
+									return true
 								end, function()
-									WithPatchedMethod(QuestTogether, "IsNameplateUnitTapDenied", function()
+									WithPatchedMethod(QuestTogether, "IsNameplateUnitDead", function()
 										return false
 									end, function()
-										WithPatchedMethod(QuestTogether, "IsQuestObjectiveUnit", function()
+										WithPatchedMethod(QuestTogether, "IsNameplateUnitTapDenied", function()
 											return false
 										end, function()
-											QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
+											WithPatchedMethod(QuestTogether, "IsQuestObjectiveUnit", function()
+												return false
+											end, function()
+												QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
+											end)
 										end)
 									end)
 								end)
@@ -3941,12 +4109,73 @@ QuestTogether:RegisterTest("nameplate health tint uses resolved quest state from
 						end)
 					end)
 				end)
-			end)
-		end)
 	end)
 
 	AssertEquals(appliedUnitFrame, namePlateFrameBase.UnitFrame)
 	AssertEquals(QuestTogether.nameplateQuestStateByUnitToken["nameplate1"], true)
+end)
+
+QuestTogether:RegisterTest("nameplate icon refresh resolves namePlateUnitToken like Plater", function()
+	local resolvedUnitToken = nil
+	local namePlateFrameBase = {
+		UnitFrame = {
+			namePlateUnitToken = "nameplate9",
+			healthBar = {},
+		},
+	}
+
+	QuestTogether.isEnabled = true
+	WithPatchedMethod(QuestTogether, "IsQuestObjectiveNameplate", function(_, unitToken, unitFrame)
+		resolvedUnitToken = unitToken
+		AssertEquals(unitFrame, namePlateFrameBase.UnitFrame)
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "RefreshNameplateHealthTint", function() end, function()
+			QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
+		end)
+	end)
+
+	AssertEquals(resolvedUnitToken, "nameplate9")
+end)
+
+QuestTogether:RegisterTest("nameplate health tint no longer requires attackable units", function()
+	local unitFrame = {
+		unit = "nameplate1",
+		healthBar = {},
+	}
+
+	QuestTogether.isEnabled = true
+	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
+
+	WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function()
+			return true
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function()
+				return false
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsNameplateUnitConnected", function()
+					return true
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitDead", function()
+						return false
+					end, function()
+						WithPatchedMethod(QuestTogether, "IsNameplateUnitTapDenied", function()
+							return false
+						end, function()
+							WithPatchedMethod(QuestTogether, "CanPlayerAttackNameplateUnit", function()
+								error("attackable-unit gating should not run for quest tinting")
+							end, function()
+								AssertTrue(QuestTogether:ShouldApplyQuestHealthTint(unitFrame, true))
+							end)
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
 end)
 
 QuestTogether:RegisterTest("blocked-context nameplate add clears recycled quest visuals immediately", function()
@@ -3989,7 +4218,6 @@ QuestTogether:RegisterTest("blocked-context nameplate add clears recycled quest 
 	AssertEquals(scheduledUnitToken, nil)
 	AssertEquals(QuestTogether.nameplateQuestStateByUnitToken["nameplate1"], nil)
 	AssertEquals(QuestTogether.nameplateQuestGuidByUnitToken["nameplate1"], nil)
-	AssertEquals(QuestTogether.nameplateTooltipGuidByUnitToken["nameplate1"], nil)
 	AssertEquals(QuestTogether.nameplateHealthTintRetryCountByUnitToken["nameplate1"], nil)
 end)
 
@@ -4014,9 +4242,10 @@ QuestTogether:RegisterTest("nameplate icon hide restores stale health tint when 
 	}
 	QuestTogether.nameplateIconByUnitFrame[unitFrame] = icon
 
-	WithPatchedMethod(QuestTogether, "ShouldShowQuestNameplateIcon", function(_, unitToken, candidateFrame)
+	WithPatchedMethod(QuestTogether, "ShouldShowQuestNameplateIconForResolvedState", function(_, unitToken, candidateFrame, isQuestObjective)
 		AssertEquals(unitToken, "nameplate1")
 		AssertEquals(candidateFrame, unitFrame)
+		AssertEquals(isQuestObjective, false)
 		return false
 	end, function()
 		WithPatchedMethod(QuestTogether, "IsQuestObjectiveNameplate", function(_, unitToken, candidateFrame)
@@ -4070,11 +4299,16 @@ QuestTogether:RegisterTest("nameplate threat events schedule tint refresh for na
 	AssertEquals(#scheduled, 2)
 end)
 
-QuestTogether:RegisterTest("scheduled nameplate refresh defers per-unit mutation during combat", function()
-	local getNamePlateCalls = 0
+QuestTogether:RegisterTest("scheduled nameplate refresh runs per-unit mutation during combat like Plater", function()
+	local refreshCalls = 0
+	local namePlateFrameBase = {
+		UnitFrame = {},
+		IsShown = function()
+			return true
+		end,
+	}
 
 	QuestTogether.isEnabled = true
-	QuestTogether.pendingNameplateRefreshAfterCombat = false
 	QuestTogether.API = CreateApiWithOverrides({
 		InCombatLockdown = function()
 			return true
@@ -4082,73 +4316,161 @@ QuestTogether:RegisterTest("scheduled nameplate refresh defers per-unit mutation
 		Delay = function(_, callback)
 			callback()
 		end,
-		GetNamePlateForUnit = function()
-			getNamePlateCalls = getNamePlateCalls + 1
-			return {
-				UnitFrame = {},
-				IsShown = function()
-					return true
-				end,
-			}
-		end,
 	})
 
 	WithPatchedMethod(QuestTogether, "IsNameplateUnitToken", function(_, unitToken)
 		return unitToken == "nameplate11"
 	end, function()
-		WithPatchedMethod(QuestTogether, "RefreshNameplateIcon", function()
-			error("nameplate mutation should defer during combat")
+		WithPatchedMethod(QuestTogether, "GetAccessibleNameplateFrameForUnit", function(_, unitToken, requireShown)
+			AssertEquals(unitToken, "nameplate11")
+			AssertTrue(requireShown)
+			return namePlateFrameBase, namePlateFrameBase.UnitFrame
 		end, function()
-			QuestTogether:ScheduleNameplateRefresh("nameplate11")
+			WithPatchedMethod(QuestTogether, "RefreshNameplateIcon", function(_, frameBase)
+				AssertEquals(frameBase, namePlateFrameBase)
+				refreshCalls = refreshCalls + 1
+			end, function()
+				QuestTogether:ScheduleNameplateRefresh("nameplate11")
+			end)
 		end)
 	end)
 
-	AssertTrue(QuestTogether.pendingNameplateRefreshAfterCombat)
-	AssertEquals(getNamePlateCalls, 0)
+	AssertEquals(refreshCalls, 5)
 end)
 
-QuestTogether:RegisterTest("nameplate refresh defers while world map is visible and resumes after it closes", function()
-	local delayedCallbacks = {}
-	local mapVisible = true
+QuestTogether:RegisterTest("combat nameplate add clears stale visuals and schedules a live refresh", function()
+	local hiddenFrame = nil
+	local scheduledUnitToken = nil
+	local unitFrame = {
+		unit = "nameplate12",
+		healthBar = {},
+	}
+	local namePlateFrameBase = {
+		UnitFrame = unitFrame,
+		GetUnit = function()
+			return "nameplate12"
+		end,
+	}
+
+	QuestTogether.isEnabled = true
+	QuestTogether.nameplateQuestStateByUnitToken["nameplate12"] = true
+	QuestTogether.nameplateQuestGuidByUnitToken["nameplate12"] = "Creature-0-0-0-0-121212-0000000000"
+	QuestTogether.nameplateHealthTintRetryCountByUnitToken["nameplate12"] = 1
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return true
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "IsNameplateUnitToken", function(_, unitToken)
+		return unitToken == "nameplate12"
+	end, function()
+		WithPatchedMethod(QuestTogether, "GetAccessibleNameplateFrameForUnit", function(_, unitToken, requireShown)
+			AssertEquals(unitToken, "nameplate12")
+			AssertEquals(requireShown, false)
+			return namePlateFrameBase, unitFrame
+		end, function()
+			WithPatchedMethod(QuestTogether, "HideNameplateIcon", function(_, frameBase)
+				hiddenFrame = frameBase
+			end, function()
+				WithPatchedMethod(QuestTogether, "ScheduleNameplateRefresh", function(_, unitToken)
+					scheduledUnitToken = unitToken
+				end, function()
+					QuestTogether:OnNameplateAdded("nameplate12")
+				end)
+			end)
+		end)
+	end)
+
+	AssertEquals(QuestTogether.nameplateQuestStateByUnitToken["nameplate12"], nil)
+	AssertEquals(QuestTogether.nameplateQuestGuidByUnitToken["nameplate12"], nil)
+	AssertEquals(QuestTogether.nameplateHealthTintRetryCountByUnitToken["nameplate12"], nil)
+	AssertEquals(hiddenFrame, namePlateFrameBase)
+	AssertEquals(scheduledUnitToken, "nameplate12")
+end)
+
+QuestTogether:RegisterTest("combat nameplate remove clears cached quest state", function()
+	local hiddenFrame = nil
+	local unitFrame = {
+		unit = "nameplate13",
+		healthBar = {},
+	}
+	local namePlateFrameBase = {
+		UnitFrame = unitFrame,
+	}
+
+	QuestTogether.nameplateQuestStateByUnitToken["nameplate13"] = true
+	QuestTogether.nameplateQuestGuidByUnitToken["nameplate13"] = "Creature-0-0-0-0-131313-0000000000"
+	QuestTogether.nameplateRefreshPendingByUnitToken["nameplate13"] = true
+	QuestTogether.nameplateRefreshGenerationByUnitToken["nameplate13"] = 7
+	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken["nameplate13"] = true
+	QuestTogether.nameplateHealthTintRetryCountByUnitToken["nameplate13"] = 2
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return true
+		end,
+		GetNamePlateForUnit = function(unitToken)
+			AssertEquals(unitToken, "nameplate13")
+			return namePlateFrameBase
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "IsNameplateUnitToken", function(_, unitToken)
+		return unitToken == "nameplate13"
+	end, function()
+		WithPatchedMethod(QuestTogether, "HideNameplateIcon", function(_, frameBase)
+			hiddenFrame = frameBase
+		end, function()
+			QuestTogether:OnNameplateRemoved("nameplate13")
+		end)
+	end)
+
+	AssertEquals(hiddenFrame, namePlateFrameBase)
+	AssertEquals(QuestTogether.nameplateQuestStateByUnitToken["nameplate13"], nil)
+	AssertEquals(QuestTogether.nameplateQuestGuidByUnitToken["nameplate13"], nil)
+	AssertEquals(QuestTogether.nameplateRefreshPendingByUnitToken["nameplate13"], nil)
+	AssertEquals(QuestTogether.nameplateRefreshGenerationByUnitToken["nameplate13"], nil)
+	AssertEquals(QuestTogether.nameplateHealthTintRefreshPendingByUnitToken["nameplate13"], nil)
+	AssertEquals(QuestTogether.nameplateHealthTintRetryCountByUnitToken["nameplate13"], nil)
+end)
+
+QuestTogether:RegisterTest("combat enter and leave schedule full nameplate refreshes", function()
+	local scheduled = {}
+
+	WithPatchedMethod(QuestTogether, "ScheduleFullNameplateRefresh", function(_, delaySeconds)
+		scheduled[#scheduled + 1] = delaySeconds
+	end, function()
+		QuestTogether:HandleNameplateEvent("PLAYER_REGEN_DISABLED")
+		QuestTogether:HandleNameplateEvent("PLAYER_REGEN_ENABLED")
+	end)
+
+	AssertEquals(scheduled[1], 0)
+	AssertEquals(scheduled[2], 0)
+	AssertEquals(#scheduled, 2)
+end)
+
+QuestTogether:RegisterTest("nameplate refresh still runs while world map is visible like Plater", function()
 	local rebuildCalls = 0
 	local clearCalls = 0
 	local augmentationCalls = 0
 
-	QuestTogether.pendingNameplateRefreshAfterMapHidden = nil
-	QuestTogether.nameplateMapVisibilityRetryPending = nil
 	QuestTogether.isEnabled = true
 	QuestTogether.API = CreateApiWithOverrides({
-		InCombatLockdown = function()
-			return false
-		end,
 		IsWorldMapVisible = function()
-			return mapVisible
-		end,
-		Delay = function(_, callback)
-			delayedCallbacks[#delayedCallbacks + 1] = callback
+			return true
 		end,
 	})
 
 	WithPatchedMethod(QuestTogether, "RebuildNameplateQuestTitleCache", function()
 		rebuildCalls = rebuildCalls + 1
 	end, function()
-		WithPatchedMethod(QuestTogether, "ClearNameplateQuestObjectiveCache", function()
+		WithPatchedMethod(QuestTogether, "ClearNameplateResolvedQuestState", function()
 			clearCalls = clearCalls + 1
 		end, function()
 			WithPatchedMethod(QuestTogether, "RefreshNameplateAugmentation", function()
 				augmentationCalls = augmentationCalls + 1
 			end, function()
-				AssertFalse(QuestTogether:RefreshNameplatesForQuestStateChange("QUEST_POI_UPDATE"))
-				AssertTrue(QuestTogether.pendingNameplateRefreshAfterMapHidden)
-				AssertEquals(#delayedCallbacks, 1)
-				AssertEquals(rebuildCalls, 0)
-				AssertEquals(clearCalls, 0)
-				AssertEquals(augmentationCalls, 0)
-
-				mapVisible = false
-				delayedCallbacks[1]()
-
-				AssertFalse(QuestTogether.pendingNameplateRefreshAfterMapHidden)
+				AssertTrue(QuestTogether:RefreshNameplatesForQuestStateChange("QUEST_POI_UPDATE"))
 				AssertEquals(rebuildCalls, 1)
 				AssertEquals(clearCalls, 1)
 				AssertEquals(augmentationCalls, 1)
@@ -4157,13 +4479,13 @@ QuestTogether:RegisterTest("nameplate refresh defers while world map is visible 
 	end)
 end)
 
-QuestTogether:RegisterTest("nameplate quest poi refresh defers off the live event stack", function()
+QuestTogether:RegisterTest("nameplate quest state events use Plater-style delayed refresh", function()
 	local refreshCalls = 0
 	local scheduledCalls = 0
 
 	QuestTogether.API = CreateApiWithOverrides({
 		Delay = function(seconds, callback)
-			AssertEquals(seconds, 0)
+			AssertEquals(seconds, 1)
 			scheduledCalls = scheduledCalls + 1
 			callback()
 		end,
@@ -4181,6 +4503,105 @@ QuestTogether:RegisterTest("nameplate quest poi refresh defers off the live even
 
 	AssertEquals(scheduledCalls, 1)
 	AssertEquals(refreshCalls, 1)
+end)
+
+QuestTogether:RegisterTest("nameplate quest state refresh coalesces like Plater quest log updates", function()
+	local scheduledCallbacks = {}
+	local refreshCalls = 0
+
+	QuestTogether.isEnabled = true
+	QuestTogether.pendingDeferredNameplateQuestStateRefresh = false
+	QuestTogether.deferredNameplateQuestStateRefreshGeneration = 0
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(seconds, callback)
+			AssertEquals(seconds, 1)
+			scheduledCallbacks[#scheduledCallbacks + 1] = callback
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshNameplatesForQuestStateChange", function(_, reason)
+		refreshCalls = refreshCalls + 1
+		AssertEquals(reason, "QUEST_LOG_UPDATE")
+		return true
+	end, function()
+		QuestTogether:HandleNameplateEvent("QUEST_POI_UPDATE")
+		QuestTogether:HandleNameplateEvent("QUEST_LOG_UPDATE")
+
+		AssertEquals(#scheduledCallbacks, 2)
+		scheduledCallbacks[1]()
+		AssertEquals(refreshCalls, 0)
+		scheduledCallbacks[2]()
+		AssertEquals(refreshCalls, 1)
+		AssertFalse(QuestTogether.pendingDeferredNameplateQuestStateRefresh)
+	end)
+end)
+
+QuestTogether:RegisterTest("nameplate augmentation schedules Plater startup refresh timing", function()
+	local scheduled = {}
+	local deferredReason = nil
+	local deferredDelay = nil
+	local visibleRefreshReason = nil
+
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(seconds, callback)
+			scheduled[#scheduled + 1] = {
+				seconds = seconds,
+				callback = callback,
+			}
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "ScheduleDeferredNameplateQuestStateRefresh", function(_, reason, delaySeconds)
+		deferredReason = reason
+		deferredDelay = delaySeconds
+	end, function()
+		WithPatchedMethod(QuestTogether, "RefreshVisibleNameplates", function(_, reason)
+			visibleRefreshReason = reason
+		end, function()
+			AssertTrue(QuestTogether:SchedulePlaterStartupNameplateRefreshes())
+			AssertEquals(#scheduled, 2)
+			AssertEquals(scheduled[1].seconds, 4.1)
+			AssertEquals(scheduled[2].seconds, 5.1)
+
+			scheduled[1].callback()
+			AssertEquals(deferredReason, "EnableNameplateAugmentationStartup")
+			AssertEquals(deferredDelay, 1)
+
+			scheduled[2].callback()
+			AssertEquals(visibleRefreshReason, "EnableNameplateAugmentationStartupFullRefresh")
+		end)
+	end)
+end)
+
+QuestTogether:RegisterTest("unit quest log changed schedules delayed nameplate refresh for any token", function()
+	local scheduledReason = nil
+	local scheduledDelay = nil
+
+	WithPatchedMethod(QuestTogether, "ScheduleDeferredNameplateQuestStateRefresh", function(_, reason, delaySeconds)
+		scheduledReason = reason
+		scheduledDelay = delaySeconds
+	end, function()
+		QuestTogether:HandleNameplateEvent("UNIT_QUEST_LOG_CHANGED", "party1")
+	end)
+
+	AssertEquals(scheduledReason, "UNIT_QUEST_LOG_CHANGED")
+	AssertEquals(scheduledDelay, 1)
+end)
+
+QuestTogether:RegisterTest("quest query complete schedules delayed nameplate refresh", function()
+	local scheduledReason = nil
+	local scheduledDelay = nil
+
+	WithPatchedMethod(QuestTogether, "ScheduleDeferredNameplateQuestStateRefresh", function(_, reason, delaySeconds)
+		scheduledReason = reason
+		scheduledDelay = delaySeconds
+	end, function()
+		QuestTogether:HandleNameplateEvent("QUEST_QUERY_COMPLETE")
+	end)
+
+	AssertEquals(scheduledReason, "QUEST_QUERY_COMPLETE")
+	AssertEquals(scheduledDelay, 1)
 end)
 
 QuestTogether:RegisterTest("scheduled nameplate tint refresh can preserve cached quest state", function()

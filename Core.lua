@@ -597,6 +597,13 @@ QuestTogether.API = QuestTogether.API or {
 	GetTime = function()
 		return GetTime()
 	end,
+	IsModifiedClick = function(action)
+		if type(IsModifiedClick) ~= "function" then
+			return false
+		end
+		local ok, modified = pcall(IsModifiedClick, action)
+		return ok and modified and true or false
+	end,
 		UnitExists = function(unitToken)
 			local ok, exists = pcall(UnitExists, unitToken)
 			return ok and exists and true or false
@@ -954,11 +961,15 @@ QuestTogether.API = QuestTogether.API or {
 			end
 			numericMapID = math.floor(numericMapID + 0.5)
 
-			if not (C_TaskQuest and C_TaskQuest.GetQuestsOnMap) then
+			if not C_TaskQuest then
+				return nil
+			end
+			local getTaskQuestsForMap = C_TaskQuest.GetQuestsForPlayerByMapID or C_TaskQuest.GetQuestsOnMap
+			if type(getTaskQuestsForMap) ~= "function" then
 				return nil
 			end
 
-			local ok, tasks = pcall(C_TaskQuest.GetQuestsOnMap, numericMapID)
+			local ok, tasks = pcall(getTaskQuestsForMap, numericMapID)
 			if not ok or (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(tasks)) then
 				return nil
 			end
@@ -970,7 +981,7 @@ QuestTogether.API = QuestTogether.API or {
 			for index = 1, #tasks do
 				local taskInfo = tasks[index]
 				if type(taskInfo) == "table" and not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(taskInfo)) then
-					local questID = taskInfo.questID
+					local questID = taskInfo.questId
 					if not (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(questID)) then
 						local numericQuestID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(questID)
 							or nil
@@ -982,6 +993,27 @@ QuestTogether.API = QuestTogether.API or {
 			end
 
 			return questIds
+		end,
+		GetTaskQuestTitle = function(questID)
+			local numericQuestID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(questID) or nil
+			if not numericQuestID or numericQuestID <= 0 then
+				return nil
+			end
+			numericQuestID = math.floor(numericQuestID + 0.5)
+
+			if not (C_TaskQuest and C_TaskQuest.GetQuestInfoByQuestID) then
+				return nil
+			end
+
+			local ok, questTitle = pcall(C_TaskQuest.GetQuestInfoByQuestID, numericQuestID)
+			if not ok or (QuestTogether and QuestTogether.IsSecretValue and QuestTogether:IsSecretValue(questTitle)) then
+				return nil
+			end
+			if type(questTitle) ~= "string" or questTitle == "" then
+				return nil
+			end
+
+			return questTitle
 		end,
 		GetQuestPOIsOnMap = function(mapID)
 			local numericMapID = QuestTogether and QuestTogether.SafeToNumber and QuestTogether:SafeToNumber(mapID) or nil
@@ -1074,9 +1106,6 @@ QuestTogether.API = QuestTogether.API or {
 			return false
 		end,
 		GetNumQuestLogEntries = function()
-			if InCombatLockdown and InCombatLockdown() then
-				return 0
-			end
 			if C_QuestLog and C_QuestLog.GetNumQuestLogEntries then
 				local ok, count = pcall(C_QuestLog.GetNumQuestLogEntries)
 				if not ok then
@@ -1093,9 +1122,6 @@ QuestTogether.API = QuestTogether.API or {
 			return 0
 		end,
 		GetQuestLogInfo = function(questLogIndex)
-			if InCombatLockdown and InCombatLockdown() then
-				return nil
-			end
 			local numericQuestLogIndex = QuestTogether and QuestTogether.SafeToNumber
 				and QuestTogether:SafeToNumber(questLogIndex)
 				or nil
@@ -3328,7 +3354,7 @@ function QuestTogether:HandleChatLogSpeakerLink(link, text, linkData, contextDat
 	if not speakerName or speakerName == "" then
 		return LinkProcessorResponse.Handled
 	end
-	if IsModifiedClick and IsModifiedClick() then
+	if self.API and self.API.IsModifiedClick and self.API.IsModifiedClick("CHATLINK") then
 		return LinkProcessorResponse.Handled
 	end
 	return self:ShowChatLogSpeakerMenu(contextData and contextData.frame or UIParent, speakerName) and LinkProcessorResponse.Handled
@@ -3340,7 +3366,7 @@ function QuestTogether:HandleChatLogQuestLink(link, text, linkData, contextData)
 	if not questId or questId == "" then
 		return LinkProcessorResponse.Handled
 	end
-	if IsModifiedClick and IsModifiedClick() then
+	if self.API and self.API.IsModifiedClick and self.API.IsModifiedClick("CHATLINK") then
 		return LinkProcessorResponse.Handled
 	end
 
@@ -3354,7 +3380,7 @@ function QuestTogether:HandleChatLogCoordLink(link, text, linkData, contextData)
 	if not mapID or not coordX or not coordY then
 		return LinkProcessorResponse.Handled
 	end
-	if IsModifiedClick and IsModifiedClick() then
+	if self.API and self.API.IsModifiedClick and self.API.IsModifiedClick("CHATLINK") then
 		return LinkProcessorResponse.Handled
 	end
 

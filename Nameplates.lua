@@ -12,8 +12,10 @@ Design constraints:
 ]]
 
 local QuestTogether = _G.QuestTogether
-local QUEST_SCAN_CACHE_TTL_SECONDS = 0.5
 local DEFAULT_ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK = true
+local PLATER_QUEST_STATE_REFRESH_DELAY_SECONDS = 1.0
+local PLATER_INITIAL_QUEST_LOG_UPDATED_DELAY_SECONDS = 4.1
+local PLATER_INITIAL_FULL_REFRESH_DELAY_SECONDS = 5.1
 local NAMEPLATE_SCAN_TOOLTIP_NAME = "QuestTogetherNameplateScanTooltip"
 local ANNOUNCEMENT_BUBBLE_Y_OFFSET = 22
 local ANNOUNCEMENT_BUBBLE_FADE_IN_SECONDS = 0.2
@@ -21,6 +23,8 @@ local ANNOUNCEMENT_BUBBLE_FADE_OUT_SECONDS = 0.4
 local PERSONAL_BUBBLE_SETTINGS_DIALOG_WIDTH = 380
 local PERSONAL_BUBBLE_SETTINGS_DIALOG_HEIGHT = 220
 local ApplyQuestIconVisual
+local EnsureQuestIcon
+local ResolveNameplateUnitToken
 local SafeUiNumber
 
 -- Original icon used by this addon's first nameplate implementation.
@@ -148,10 +152,8 @@ SafeUiNumber = function(value, fallback)
 end
 
 QuestTogether.nameplateQuestTitleCache = QuestTogether.nameplateQuestTitleCache or {}
-QuestTogether.nameplateQuestObjectiveCache = QuestTogether.nameplateQuestObjectiveCache or {}
 QuestTogether.nameplateQuestStateByUnitToken = QuestTogether.nameplateQuestStateByUnitToken or {}
 QuestTogether.nameplateQuestGuidByUnitToken = QuestTogether.nameplateQuestGuidByUnitToken or {}
-QuestTogether.nameplateTooltipGuidByUnitToken = QuestTogether.nameplateTooltipGuidByUnitToken or {}
 QuestTogether.nameplateIconByUnitFrame = QuestTogether.nameplateIconByUnitFrame
 	or setmetatable({}, { __mode = "k" })
 QuestTogether.nameplateHealthOverlayByUnitFrame = QuestTogether.nameplateHealthOverlayByUnitFrame
@@ -170,7 +172,6 @@ QuestTogether.nameplateHealthTintRefreshPendingByUnitToken =
 	QuestTogether.nameplateHealthTintRefreshPendingByUnitToken or {}
 QuestTogether.nameplateHealthTintRetryCountByUnitToken = QuestTogether.nameplateHealthTintRetryCountByUnitToken or {}
 QuestTogether.nameplateFullRefreshGeneration = QuestTogether.nameplateFullRefreshGeneration or 0
-QuestTogether.pendingNameplateRefreshAfterCombat = QuestTogether.pendingNameplateRefreshAfterCombat or false
 
 local function GetAnnouncementBubbleLifetimeSeconds()
 	local configuredDuration = QuestTogether:NormalizeChatBubbleDurationValue(QuestTogether:GetOption("chatBubbleDuration"))
@@ -252,13 +253,6 @@ local function GetPersonalBubbleAnchorFontDefinition()
 	end
 
 	return STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", ""
-end
-
-local function IsWorldMapVisible()
-	if not (QuestTogether and QuestTogether.API and type(QuestTogether.API.IsWorldMapVisible) == "function") then
-		return false
-	end
-	return QuestTogether.API.IsWorldMapVisible() and true or false
 end
 
 local function GetAnnouncementBubbleVisualConfig()
@@ -1098,10 +1092,6 @@ function QuestTogether:IsNameplateUnitToken(unitToken)
 	return ok and isMatch ~= nil
 end
 
-function QuestTogether:GetNameplateNowSeconds()
-	return self.API.GetTime()
-end
-
 function QuestTogether:DoesNameplateUnitExist(unitToken)
 	if self.API and self.API.UnitExists then
 		return self.API.UnitExists(unitToken)
@@ -1155,37 +1145,11 @@ function QuestTogether:GetAccessibleNameplateFrameForUnit(unitToken, requireShow
 	return namePlateFrameBase, namePlateFrameBase.UnitFrame
 end
 
-function QuestTogether:ShouldDeferNameplateMutation(reason)
-	if self.API and self.API.InCombatLockdown and self.API.InCombatLockdown() then
-		self.pendingNameplateRefreshAfterCombat = true
-		self:Debugf("nameplate", "Deferring nameplate mutation during combat reason=%s", SafeText(reason, ""))
-		return true
-	end
-
-	if self.API and self.API.IsWorldMapVisible and self.API.IsWorldMapVisible() then
-		self.pendingNameplateRefreshAfterMapHidden = true
-		self:Debugf(
-			"nameplate",
-			"Deferring nameplate mutation while world map is visible reason=%s",
-			SafeText(reason, "")
-		)
-		self:ScheduleDeferredNameplateRefreshAfterMapHidden()
-		return true
-	end
-
-	return false
-end
-
 -- Plater's update_quest_cache bails in instances in local retail Plater.lua:11373-11376.
 -- QuestTogether applies that same open-world boundary to nameplate quest detection.
 function QuestTogether:IsNameplateAugmentationBlockedInCurrentContext()
 	local isInInstance = self.API and self.API.IsInInstance and self.API.IsInInstance()
 	return isInInstance and true or false
-end
-
-function QuestTogether:CanPlayerAttackNameplateUnit(unitToken)
-	local ok, canAttack = pcall(UnitCanAttack, "player", unitToken)
-	return ok and canAttack and true or false
 end
 
 function QuestTogether:IsNameplateUnitPlayer(unitToken)
@@ -1267,7 +1231,7 @@ local function GetObjectiveProgressState(text)
 		return "complete"
 	end
 
-	local percentText = SafeMatch(text, "(%d+%.?%d*)%%")
+	local percentText = SafeMatch(text, "(%d+)%%")
 	if percentText then
 		local percentValue = SafeUiNumber(percentText, nil)
 		if percentValue == nil then
@@ -1352,16 +1316,6 @@ local function GetTooltipQuestLinePrimaryText(lineData)
 		return leftText
 	end
 
-	local centerText = SafeTrimText(lineData.text)
-	if centerText ~= "" then
-		return centerText
-	end
-
-	local rightText = SafeTrimText(lineData.rightText)
-	if rightText ~= "" then
-		return rightText
-	end
-
 	return nil
 end
 
@@ -1376,50 +1330,28 @@ local function IsThreatTooltipMarkerText(text)
 	return SafeTrimText(text) == SafeTrimText(THREAT_TOOLTIP)
 end
 
-local function GetTooltipQuestTextCandidates(addon, lineData)
+local function GetTooltipQuestLeftText(addon, lineData)
 	local leftText = lineData and lineData.leftText or nil
-	local rightText = lineData and lineData.rightText or nil
-	local centerText = lineData and lineData.text or nil
 	if addon and addon.IsSecretValue then
 		if addon:IsSecretValue(leftText) then
 			leftText = nil
 		end
-		if addon:IsSecretValue(rightText) then
-			rightText = nil
-		end
-		if addon:IsSecretValue(centerText) then
-			centerText = nil
-		end
 	end
 
 	if type(leftText) ~= "string" then
-		leftText = nil
-	end
-	if type(rightText) ~= "string" then
-		rightText = nil
-	end
-	if type(centerText) ~= "string" then
-		centerText = nil
+		return ""
 	end
 
-	return {
-		SafeTrimText(rightText),
-		SafeTrimText(leftText),
-		SafeTrimText(centerText),
-	}
+	return SafeTrimText(leftText)
 end
 
 -- Mirrors Plater.IsQuestObjective (local retail Plater.lua:11219-11347):
 -- find a matched quest title, walk following lines, stop at THREAT_TOOLTIP,
 -- and only mark the unit when at least one following objective is unfinished.
 function QuestTogether:TooltipLineHasUnfinishedObjectiveEvidence(lineData)
-	local textCandidates = GetTooltipQuestTextCandidates(self, lineData)
-
-	for candidateIndex = 1, #textCandidates do
-		local candidateText = textCandidates[candidateIndex]
-		if candidateText ~= "" and GetObjectiveProgressState(candidateText) == "unfinished" then
-			return true
-		end
+	local leftText = GetTooltipQuestLeftText(self, lineData)
+	if leftText ~= "" and GetObjectiveProgressState(leftText) == "unfinished" then
+		return true
 	end
 
 	return false
@@ -1457,8 +1389,7 @@ function QuestTogether:EvaluateTooltipQuestObjectiveLines(tooltipLines)
 	return false
 end
 
-function QuestTogether:ClearNameplateQuestObjectiveCache()
-	wipe(self.nameplateQuestObjectiveCache)
+function QuestTogether:ClearNameplateResolvedQuestState()
 	wipe(self.nameplateQuestStateByUnitToken)
 	wipe(self.nameplateQuestGuidByUnitToken)
 end
@@ -1481,7 +1412,6 @@ function QuestTogether:RebuildNameplateQuestTitleCache()
 			if
 				questDetails
 				and not questDetails.isHeader
-				and not questDetails.isHidden
 				and type(questDetails.title) == "string"
 				and questDetails.title ~= ""
 			then
@@ -1490,42 +1420,19 @@ function QuestTogether:RebuildNameplateQuestTitleCache()
 		end
 	end
 
-	if self.GetActiveWorldQuestAreaSnapshot then
-		local snapshot = self:GetActiveWorldQuestAreaSnapshot()
-		if type(snapshot) == "table" then
-			for _, questTitle in pairs(snapshot) do
+	if self.API and self.API.GetPlayerMapID and self.API.GetTaskQuestsOnMap then
+		local currentMapID = self.API.GetPlayerMapID("player")
+		local worldQuestIDs = currentMapID and self.API.GetTaskQuestsOnMap(currentMapID) or nil
+		if type(worldQuestIDs) == "table" then
+			for index = 1, #worldQuestIDs do
+				local questID = worldQuestIDs[index]
+				local questTitle = self.API.GetTaskQuestTitle and self.API.GetTaskQuestTitle(questID) or nil
 				if type(questTitle) == "string" and questTitle ~= "" then
 					self.nameplateQuestTitleCache[questTitle] = true
 				end
 			end
 		end
 	end
-end
-
--- Plater recomputes IsQuestObjective from live tooltip data during plate updates
--- (local retail Plater.lua:11169-11347). QuestTogether memoizes that same boolean
--- briefly so repeated refreshes do not rebuild tooltip state unnecessarily.
-function QuestTogether:GetCachedQuestObjectiveResult(guid)
-	local cached = self.nameplateQuestObjectiveCache[guid]
-	if not cached then
-		return nil
-	end
-
-	local nowSeconds = self:GetNameplateNowSeconds()
-	if cached.expiresAt and cached.expiresAt > nowSeconds then
-		return cached.value
-	end
-
-	self.nameplateQuestObjectiveCache[guid] = nil
-	return nil
-end
-
-function QuestTogether:SetCachedQuestObjectiveResult(guid, value)
-	local nowSeconds = self:GetNameplateNowSeconds()
-	self.nameplateQuestObjectiveCache[guid] = {
-		value = value and true or false,
-		expiresAt = nowSeconds + QUEST_SCAN_CACHE_TTL_SECONDS,
-	}
 end
 
 -- Plater.IsQuestObjective starts from the plate GUID at local retail
@@ -1540,38 +1447,26 @@ function QuestTogether:GetNameplateTooltipScanGuid(unitToken, unitFrame)
 	if IsFrameForbidden(plateFrame) then
 		plateFrame = nil
 	end
-	local candidateGuids = {
-		unitFrame and unitFrame.namePlateUnitGUID or nil,
-		plateFrame and plateFrame.namePlateUnitGUID or nil,
-	}
 
-	for index = 1, #candidateGuids do
-		local candidateGuid = candidateGuids[index]
-		if self:IsSecretValue(candidateGuid) then
-			candidateGuid = nil
-		end
-		if IsNonEmptyString(candidateGuid) then
-			if type(unitToken) == "string" and unitToken ~= "" then
-				self.nameplateTooltipGuidByUnitToken[unitToken] = candidateGuid
-			end
-			return candidateGuid
-		end
+	local unitFrameGuid = unitFrame and unitFrame.namePlateUnitGUID or nil
+	if self:IsSecretValue(unitFrameGuid) then
+		unitFrameGuid = nil
+	end
+	if IsNonEmptyString(unitFrameGuid) then
+		return unitFrameGuid
+	end
+
+	local plateFrameGuid = plateFrame and plateFrame.namePlateUnitGUID or nil
+	if self:IsSecretValue(plateFrameGuid) then
+		plateFrameGuid = nil
+	end
+	if IsNonEmptyString(plateFrameGuid) then
+		return plateFrameGuid
 	end
 
 	local liveGuid = self:GetNameplateUnitGuid(unitToken)
 	if IsNonEmptyString(liveGuid) then
-		if type(unitToken) == "string" and unitToken ~= "" then
-			self.nameplateTooltipGuidByUnitToken[unitToken] = liveGuid
-		end
 		return liveGuid
-	end
-
-	local cachedGuidByToken = type(unitToken) == "string" and self.nameplateTooltipGuidByUnitToken[unitToken] or nil
-	if self:IsSecretValue(cachedGuidByToken) then
-		cachedGuidByToken = nil
-	end
-	if IsNonEmptyString(cachedGuidByToken) then
-		return cachedGuidByToken
 	end
 
 	return nil
@@ -1603,8 +1498,8 @@ local function NormalizeQuestieTooltipQuestLineText(textValue)
 
 	local normalizedText = string.gsub(textValue, "|c%x%x%x%x%x%x%x%x", "")
 	normalizedText = string.gsub(normalizedText, "|r", "")
-	normalizedText = string.gsub(normalizedText, "^%[.-%]%s*", "")
-	normalizedText = string.gsub(normalizedText, "%s*%(%d+%)$", "")
+	normalizedText = string.gsub(normalizedText, "%[.*%] ", "")
+	normalizedText = string.gsub(normalizedText, " %(%d+%)", "")
 	normalizedText = SafeTrimText(normalizedText)
 	if normalizedText == "" then
 		return nil
@@ -1646,28 +1541,15 @@ function QuestTogether:SanitizeTooltipLineForQuestDetection(lineData)
 		return nil
 	end
 
-	local sanitizedLine = {
-		type = lineType,
-	}
 	local leftText = self:SanitizeTooltipQuestLineText(lineData.leftText)
-	local rightText = self:SanitizeTooltipQuestLineText(lineData.rightText)
-	local centerText = self:SanitizeTooltipQuestLineText(lineData.text)
-
-	if leftText then
-		sanitizedLine.leftText = leftText
-	end
-	if rightText then
-		sanitizedLine.rightText = rightText
-	end
-	if centerText then
-		sanitizedLine.text = centerText
-	end
-
-	if not sanitizedLine.leftText and not sanitizedLine.rightText and not sanitizedLine.text then
+	if not leftText then
 		return nil
 	end
 
-	return sanitizedLine
+	return {
+		type = lineType,
+		leftText = leftText,
+	}
 end
 
 function QuestTogether:ExtractQuestObjectiveTooltipLinesFromTooltipData(tooltipData)
@@ -1744,8 +1626,8 @@ function QuestTogether:GetQuestieQuestObjectiveTooltipLines(unitGuid)
 	return nil
 end
 
--- Structured Blizzard tooltip data is Plater's second source in local retail
--- Plater.lua:11197-11203 after Questie and before the hidden tooltip fallback.
+-- Structured Blizzard tooltip data is Plater's second source on retail/mainline
+-- in local retail Plater.lua:11208-11218 after Questie.
 function QuestTogether:GetStructuredQuestObjectiveTooltipLines(unitToken, unitGuid)
 	if type(unitGuid) ~= "string" or unitGuid == "" then
 		return nil
@@ -1762,18 +1644,11 @@ function QuestTogether:GetStructuredQuestObjectiveTooltipLines(unitToken, unitGu
 		end
 	end
 
-	if type(unitToken) == "string" and unitToken ~= "" and type(self.API.GetTooltipDataForUnit) == "function" then
-		local tooltipLines = self:ExtractQuestObjectiveTooltipLinesFromTooltipData(self.API.GetTooltipDataForUnit(unitToken))
-		if type(tooltipLines) == "table" and #tooltipLines > 0 then
-			return tooltipLines
-		end
-	end
-
 	return nil
 end
 
--- The hidden GameTooltip scan is Plater's final fallback in local retail
--- Plater.lua:11205-11209 when Questie and C_TooltipInfo do not yield quest lines.
+-- The hidden GameTooltip scan is only the non-mainline branch in Plater.IsQuestObjective
+-- at local retail Plater.lua:11219-11226. On retail clients, Plater stops after C_TooltipInfo.
 function QuestTogether:GetHiddenQuestObjectiveTooltipLines(unitGuid)
 	if type(unitGuid) ~= "string" or unitGuid == "" then
 		return nil
@@ -1787,9 +1662,18 @@ function QuestTogether:GetHiddenQuestObjectiveTooltipLines(unitGuid)
 	return self:ReadNameplateScanTooltipLines(scanTooltip, unitGuid)
 end
 
--- Test/helper entry point that mirrors the same Plater source order used by
--- IsQuestObjectiveViaTooltip: Questie, then structured Blizzard tooltip data,
--- then hidden-tooltip fallback.
+function QuestTogether:CanUseStructuredQuestTooltipAPI()
+	if not self.API then
+		return false
+	end
+
+	return type(self.API.GetTooltipDataForHyperlink) == "function"
+end
+
+-- Test/helper entry point that mirrors Plater's client-specific source order:
+-- retail/mainline uses Questie -> C_TooltipInfo (Plater.lua:11200-11218),
+-- while the legacy branch falls back to a hidden GameTooltip instead
+-- (Plater.lua:11219-11226).
 function QuestTogether:GetQuestObjectiveTooltipLines(unitToken, unitGuid)
 	if type(unitGuid) ~= "string" or unitGuid == "" then
 		return nil
@@ -1803,6 +1687,10 @@ function QuestTogether:GetQuestObjectiveTooltipLines(unitToken, unitGuid)
 	local structuredTooltipLines = self:GetStructuredQuestObjectiveTooltipLines(unitToken, unitGuid)
 	if type(structuredTooltipLines) == "table" and #structuredTooltipLines > 0 then
 		return structuredTooltipLines
+	end
+
+	if self:CanUseStructuredQuestTooltipAPI() then
+		return nil
 	end
 
 	return self:GetHiddenQuestObjectiveTooltipLines(unitGuid)
@@ -1939,23 +1827,23 @@ function QuestTogether:ReadNameplateScanTooltipLines(scanTooltip, unitGuid)
 end
 
 function QuestTogether:IsNameplateTooltipScanEnabled()
-	-- This only gates the hidden-tooltip fallback. Structured tooltip data remains the primary
-	-- detection path; the hidden fallback is allowed only because Plater relies on it too
-	-- in local retail Plater.lua:11205-11209.
+	-- On retail clients Plater stops after C_TooltipInfo (Plater.lua:11208-11218),
+	-- so the legacy hidden-tooltip path is disabled whenever structured tooltip APIs exist.
+	-- The hidden fallback remains enabled only for the non-mainline branch
+	-- mirrored from Plater.lua:11219-11226.
+	if self:CanUseStructuredQuestTooltipAPI() then
+		return false
+	end
 	return DEFAULT_ENABLE_TOOLTIP_QUEST_SCAN_FALLBACK
 end
 
--- Mirrors the source order in Plater.IsQuestObjective at local retail
--- Plater.lua:11191-11209: Questie first, then C_TooltipInfo, then hidden tooltip.
--- The world-map and combat guards are QuestTogether safety wrappers around that
--- same behavior so we do not force Blizzard tooltip state through restricted paths.
+-- Mirrors the client-specific source order in Plater.IsQuestObjective:
+-- retail/mainline uses Questie -> C_TooltipInfo (Plater.lua:11200-11218),
+-- while legacy clients use Questie -> hidden GameTooltip (Plater.lua:11219-11226).
+-- Plater does not special-case combat or world-map visibility here; QuestTogether now
+-- mirrors that and relies on guarded tooltip/frame access rather than map-state deferral.
 function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
-	if not unitToken or not self:DoesNameplateUnitExist(unitToken) then
-		return false
-	end
-	-- World map tooltips build shared reward/money widgets. Avoid unit-tooltip scans while
-	-- the map is visible so we do not taint those shared tooltip payloads.
-	if IsWorldMapVisible() then
+	if not unitToken then
 		return false
 	end
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
@@ -1970,35 +1858,23 @@ function QuestTogether:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
 		return false
 	end
 
-	local cachedValue = self:GetCachedQuestObjectiveResult(unitGuid)
-	if cachedValue ~= nil then
-		return cachedValue
-	end
-
 	local tooltipLines = self:GetQuestieQuestObjectiveTooltipLines(unitGuid)
 	if type(tooltipLines) ~= "table" or #tooltipLines == 0 then
 		tooltipLines = self:GetStructuredQuestObjectiveTooltipLines(unitToken, unitGuid)
 	end
 
 	if type(tooltipLines) ~= "table" or #tooltipLines == 0 then
-		local inCombatLockdown = self.API and self.API.InCombatLockdown and self.API.InCombatLockdown()
-		if inCombatLockdown then
-			return false
-		end
 		if not self:IsNameplateTooltipScanEnabled() then
 			return false
 		end
 
 		tooltipLines = self:GetHiddenQuestObjectiveTooltipLines(unitGuid)
 		if type(tooltipLines) ~= "table" or #tooltipLines == 0 then
-			self:SetCachedQuestObjectiveResult(unitGuid, false)
 			return false
 		end
 	end
 
-	local result = self:EvaluateTooltipQuestObjectiveLines(tooltipLines)
-	self:SetCachedQuestObjectiveResult(unitGuid, result)
-	return result
+	return self:EvaluateTooltipQuestObjectiveLines(tooltipLines)
 end
 
 -- Plater's quest-unit decision is tooltip-driven in local retail
@@ -2006,21 +1882,11 @@ end
 -- that same narrow path on purpose and do not layer extra Blizzard quest APIs,
 -- assist-token fallbacks, or foreign-frame flags on top of it.
 function QuestTogether:IsQuestObjectiveUnit(unitToken, unitFrame)
-	if not unitToken or not self:DoesNameplateUnitExist(unitToken) then
+	if not unitToken then
 		return false
 	end
 
 	return self:IsQuestObjectiveViaTooltip(unitToken, unitFrame)
-end
-
-function QuestTogether:ShouldShowQuestNameplateIcon(unitToken, unitFrame)
-	if not self:GetOption("nameplateQuestIconEnabled") then
-		return false
-	end
-	if self:GetLoadedKnownNameplateAddon() then
-		return false
-	end
-	return self:IsQuestObjectiveNameplate(unitToken, unitFrame)
 end
 
 function QuestTogether:GetLoadedKnownNameplateAddon()
@@ -2070,79 +1936,143 @@ function QuestTogether:IsQuestObjectiveNameplate(unitToken, unitFrame)
 		return false
 	end
 
-	-- This is QuestTogether display policy, not part of the mirrored Plater detection path.
-	-- Plater-style quest detection already happened inside IsQuestObjectiveUnit().
-	if not self:CanPlayerAttackNameplateUnit(unitToken) then
-		return false
-	end
-
 	return self:IsQuestObjectiveUnit(unitToken, unitFrame)
 end
 
--- Keep tinting conservative so we do not override important Blizzard states.
-function QuestTogether:ShouldApplyQuestHealthTint(frame, isQuestObjective)
+function QuestTogether:ShouldShowQuestNameplateIconForResolvedState(unitToken, unitFrame, isQuestObjective)
+	if not self:GetOption("nameplateQuestIconEnabled") then
+		return false
+	end
+
+	return self:ShouldApplyResolvedQuestVisualState(unitToken, unitFrame, isQuestObjective)
+end
+
+function QuestTogether:ApplyResolvedQuestStateToNameplate(
+	namePlateFrameBase,
+	unitToken,
+	unitFrame,
+	isQuestObjective,
+	scheduleTintFollowUp
+)
+	if not namePlateFrameBase or not unitFrame then
+		return
+	end
+
+	local resolvedUnitToken = unitToken
+	if not self:IsNameplateUnitToken(resolvedUnitToken) then
+		resolvedUnitToken = ResolveNameplateUnitToken(namePlateFrameBase, unitFrame)
+	end
+
+	local shouldShow = self:ShouldShowQuestNameplateIconForResolvedState(resolvedUnitToken, unitFrame, isQuestObjective)
+	local icon = self.nameplateIconByUnitFrame[unitFrame]
+	if resolvedUnitToken then
+		self.nameplateQuestStateByUnitToken[resolvedUnitToken] = isQuestObjective and true or false
+		self.nameplateQuestGuidByUnitToken[resolvedUnitToken] = self:GetNameplateUnitGuid(resolvedUnitToken)
+	end
+
+	self:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObjective)
+	if scheduleTintFollowUp and isQuestObjective and type(resolvedUnitToken) == "string" and resolvedUnitToken ~= "" then
+		self:ScheduleNameplateHealthTintRefresh(resolvedUnitToken, 0.05, true)
+	end
+
+	if shouldShow then
+		if icon then
+			self:ApplyNameplateQuestIconStyle(icon, unitFrame)
+		else
+			icon = EnsureQuestIcon(unitFrame)
+		end
+		if not icon then
+			return
+		end
+		if not IsFrameForbidden(icon) then
+			icon:Show()
+		end
+	elseif icon then
+		if not IsFrameForbidden(icon) then
+			icon:Hide()
+		end
+		if isQuestObjective ~= true then
+			self:RestoreNameplateHealthColor(unitFrame)
+		end
+	end
+end
+
+function QuestTogether:ShouldApplyResolvedQuestVisualState(unitToken, unitFrame, isQuestObjective)
 	if not self.isEnabled then
 		return false
 	end
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
 		return false
 	end
-
-	if not self:GetOption("nameplateQuestHealthColorEnabled") then
+	if isQuestObjective ~= true then
 		return false
 	end
 
-	if not frame or not frame.unit then
+	if not unitFrame then
 		return false
 	end
-	if IsFrameForbidden(frame) then
-		return false
-	end
-
-	if not self:IsNameplateUnitToken(frame.unit) then
+	if IsFrameForbidden(unitFrame) then
 		return false
 	end
 
-	if not frame.healthBar then
-		return false
+	local resolvedUnitToken = unitToken
+	if not self:IsNameplateUnitToken(resolvedUnitToken) then
+		resolvedUnitToken = ResolveNameplateUnitToken(nil, unitFrame)
 	end
-	if IsFrameForbidden(frame.healthBar) then
+	if not self:IsNameplateUnitToken(resolvedUnitToken) then
 		return false
 	end
 
-	if not self:DoesNameplateUnitExist(frame.unit) then
+	if not unitFrame.healthBar then
+		return false
+	end
+	if IsFrameForbidden(unitFrame.healthBar) then
+		return false
+	end
+
+	if not self:DoesNameplateUnitExist(resolvedUnitToken) then
 		return false
 	end
 
 	-- Never tint players; this is intended for quest mobs/NPCs.
-	if self:IsNameplateUnitPlayer(frame.unit) then
-		return false
-	end
-
-	-- Avoid tinting non-hostile/friendly nameplates.
-	if not self:CanPlayerAttackNameplateUnit(frame.unit) then
+	if self:IsNameplateUnitPlayer(resolvedUnitToken) then
 		return false
 	end
 
 	-- Preserve gray dead/disconnected/tap-denied states from Blizzard.
 	if
-		not self:IsNameplateUnitConnected(frame.unit)
-		or self:IsNameplateUnitDead(frame.unit)
-		or self:IsNameplateUnitTapDenied(frame.unit)
+		not self:IsNameplateUnitConnected(resolvedUnitToken)
+		or self:IsNameplateUnitDead(resolvedUnitToken)
+		or self:IsNameplateUnitTapDenied(resolvedUnitToken)
 	then
 		return false
 	end
 
+	return true
+end
+
+-- Keep tinting conservative so we do not override important Blizzard states.
+function QuestTogether:ShouldApplyQuestHealthTint(frame, isQuestObjective)
+	if not self:GetOption("nameplateQuestHealthColorEnabled") then
+		return false
+	end
+
+	local resolvedUnitToken = ResolveNameplateUnitToken(nil, frame)
+	if not resolvedUnitToken then
+		return false
+	end
+
 	if isQuestObjective ~= nil then
-		return isQuestObjective == true
+		return self:ShouldApplyResolvedQuestVisualState(resolvedUnitToken, frame, isQuestObjective)
 	end
 
-	local cachedQuestObjective = self.nameplateQuestStateByUnitToken[frame.unit]
+	local cachedQuestObjective = self.nameplateQuestStateByUnitToken[resolvedUnitToken]
 	if cachedQuestObjective ~= nil then
-		return cachedQuestObjective == true
+		return self:ShouldApplyResolvedQuestVisualState(resolvedUnitToken, frame, cachedQuestObjective == true)
 	end
 
-	return self:IsQuestObjectiveNameplate(frame.unit, frame)
+	local isQuestObjectiveNameplate = self:IsQuestObjectiveNameplate(resolvedUnitToken, frame)
+	return self:ShouldApplyResolvedQuestVisualState(resolvedUnitToken, frame, isQuestObjectiveNameplate)
 end
 
 local function GetIconBarAnchor(unitFrame)
@@ -2155,19 +2085,57 @@ local function GetIconBarAnchor(unitFrame)
 	return unitFrame
 end
 
-local function ResolveNameplateUnitToken(namePlateFrameBase, unitFrame)
-	local candidateTokens = {
-		namePlateFrameBase and not IsFrameForbidden(namePlateFrameBase) and namePlateFrameBase.GetUnit and namePlateFrameBase:GetUnit()
-			or nil,
-		unitFrame and unitFrame.unit or nil,
-		unitFrame and unitFrame.displayedUnit or nil,
-	}
+local function GetNameplateNameTextAnchor(unitFrame)
+	local unitFrameName = unitFrame and unitFrame.unitName or nil
+	if unitFrameName and not IsFrameForbidden(unitFrameName) then
+		return unitFrameName
+	end
 
-	for index = 1, #candidateTokens do
-		local candidateToken = candidateTokens[index]
-		if QuestTogether:IsNameplateUnitToken(candidateToken) then
-			return candidateToken
-		end
+	local unitFrameFallbackName = unitFrame and unitFrame.name or nil
+	if unitFrameFallbackName and not IsFrameForbidden(unitFrameFallbackName) then
+		return unitFrameFallbackName
+	end
+
+	local healthBarName = unitFrame and unitFrame.healthBar and unitFrame.healthBar.unitName or nil
+	if healthBarName and not IsFrameForbidden(healthBarName) then
+		return healthBarName
+	end
+
+	local healthBarFallbackName = unitFrame and unitFrame.healthBar and unitFrame.healthBar.name or nil
+	if healthBarFallbackName and not IsFrameForbidden(healthBarFallbackName) then
+		return healthBarFallbackName
+	end
+
+	return nil
+end
+
+ResolveNameplateUnitToken = function(namePlateFrameBase, unitFrame)
+	local plateFrameToken =
+		namePlateFrameBase and not IsFrameForbidden(namePlateFrameBase) and namePlateFrameBase.namePlateUnitToken or nil
+	if QuestTogether:IsNameplateUnitToken(plateFrameToken) then
+		return plateFrameToken
+	end
+
+	local plateFrameGetUnitToken =
+		namePlateFrameBase and not IsFrameForbidden(namePlateFrameBase) and namePlateFrameBase.GetUnit and namePlateFrameBase:GetUnit()
+			or nil
+	if QuestTogether:IsNameplateUnitToken(plateFrameGetUnitToken) then
+		return plateFrameGetUnitToken
+	end
+
+	local unitFrameNamePlateToken = unitFrame and unitFrame.namePlateUnitToken or nil
+	if QuestTogether:IsNameplateUnitToken(unitFrameNamePlateToken) then
+		return unitFrameNamePlateToken
+	end
+
+	local unitFrameUnitToken = unitFrame and unitFrame.unit or nil
+	if QuestTogether:IsNameplateUnitToken(unitFrameUnitToken) then
+		return unitFrameUnitToken
+	end
+
+	local displayedUnitToken = unitFrame and unitFrame.displayedUnit or nil
+	if QuestTogether:IsNameplateUnitToken(displayedUnitToken) then
+		return displayedUnitToken
 	end
 
 	return nil
@@ -2201,15 +2169,12 @@ function QuestTogether:ApplyNameplateQuestIconStyle(iconFrame, unitFrame)
 		end
 		iconFrame:SetPoint("LEFT", barAnchor, "RIGHT", 1, 0)
 	elseif style == "prefix" then
-		local nameText = unitFrame.name
-		if IsFrameForbidden(nameText) then
-			nameText = nil
-		end
+		local nameText = GetNameplateNameTextAnchor(unitFrame)
 		if nameText then
-			-- Prefix places the icon directly against the unit name text.
-			width = math.max(7, math.floor(width * 0.75 + 0.5))
-			height = math.max(10, math.floor(height * 0.75 + 0.5))
-			iconFrame:SetPoint("RIGHT", nameText, "LEFT", 0, 0)
+			-- Keep the prefix icon large enough to remain legible on live nameplates.
+			width = math.max(14, math.floor(width * 0.8 + 0.5))
+			height = math.max(14, math.floor(height * 0.8 + 0.5))
+			iconFrame:SetPoint("RIGHT", nameText, "LEFT", -2, 0)
 		elseif unitFrame.HealthBarsContainer then
 			iconFrame:SetPoint("BOTTOM", unitFrame.HealthBarsContainer, "TOP", 0, 11)
 		else
@@ -2229,7 +2194,7 @@ function QuestTogether:ApplyNameplateQuestIconStyle(iconFrame, unitFrame)
 	end
 end
 
-local function EnsureQuestIcon(unitFrame)
+EnsureQuestIcon = function(unitFrame)
 	if not unitFrame then
 		return nil
 	end
@@ -2245,7 +2210,7 @@ local function EnsureQuestIcon(unitFrame)
 
 	local iconFrame = CreateFrame("Frame", nil, unitFrame)
 	iconFrame:SetFrameStrata(unitFrame:GetFrameStrata() or "LOW")
-	iconFrame:SetFrameLevel(((unitFrame.GetFrameLevel and unitFrame:GetFrameLevel()) or 0) + 10)
+	iconFrame:SetFrameLevel(((unitFrame.GetFrameLevel and unitFrame:GetFrameLevel()) or 0) + 30)
 
 	local icon = iconFrame:CreateTexture(nil, "ARTWORK")
 	iconFrame.Icon = icon
@@ -2935,7 +2900,7 @@ function QuestTogether:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObj
 	end
 
 	local unitFrame = namePlateFrameBase.UnitFrame
-	local unitToken = unitFrame.unit or unitFrame.displayedUnit
+	local unitToken = ResolveNameplateUnitToken(namePlateFrameBase, unitFrame)
 	local shouldTint = self:ShouldApplyQuestHealthTint(unitFrame, isQuestObjective)
 	if shouldTint then
 		local applied = self:ApplyQuestTintToNameplate(unitFrame)
@@ -2966,9 +2931,6 @@ function QuestTogether:ScheduleNameplateHealthTintRefresh(unitToken, delaySecond
 	self.API.Delay(delaySeconds or 0, function()
 		self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
 		if not self.isEnabled or not self.API or type(self.API.GetNamePlateForUnit) ~= "function" then
-			return
-		end
-		if self:ShouldDeferNameplateMutation("ScheduleNameplateHealthTintRefresh") then
 			return
 		end
 
@@ -3048,9 +3010,6 @@ function QuestTogether:ScheduleNameplateRefresh(unitToken)
 			if not self.isEnabled then
 				return
 			end
-			if self:ShouldDeferNameplateMutation("ScheduleNameplateRefresh") then
-				return
-			end
 
 			local namePlateFrameBase = self:GetAccessibleNameplateFrameForUnit(unitToken, true)
 			if not namePlateFrameBase then
@@ -3073,37 +3032,8 @@ function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
 	local unitFrame = namePlateFrameBase.UnitFrame
 	local unitToken = ResolveNameplateUnitToken(namePlateFrameBase, unitFrame)
 	local isQuestObjective = self:IsQuestObjectiveNameplate(unitToken, unitFrame)
-	local shouldShow = self:ShouldShowQuestNameplateIcon(unitToken, unitFrame)
-	local icon = self.nameplateIconByUnitFrame[unitFrame]
-	if unitToken then
-		self.nameplateQuestStateByUnitToken[unitToken] = isQuestObjective and true or false
-		self.nameplateQuestGuidByUnitToken[unitToken] = self:GetNameplateUnitGuid(unitToken)
-	end
-	self:RefreshNameplateHealthTint(namePlateFrameBase, isQuestObjective)
-	if isQuestObjective and type(unitToken) == "string" and unitToken ~= "" then
-		self:ScheduleNameplateHealthTintRefresh(unitToken, 0.05, true)
-	end
 
-	if shouldShow then
-		if icon then
-			self:ApplyNameplateQuestIconStyle(icon, unitFrame)
-		else
-			icon = EnsureQuestIcon(unitFrame)
-		end
-		if not icon then
-			return
-		end
-		if not IsFrameForbidden(icon) then
-			icon:Show()
-		end
-	elseif icon then
-		if not IsFrameForbidden(icon) then
-			icon:Hide()
-		end
-		if isQuestObjective ~= true then
-			self:RestoreNameplateHealthColor(unitFrame)
-		end
-	end
+	self:ApplyResolvedQuestStateToNameplate(namePlateFrameBase, unitToken, unitFrame, isQuestObjective, true)
 end
 
 function QuestTogether:HideNameplateIcon(namePlateFrameBase)
@@ -3264,32 +3194,36 @@ function QuestTogether:RefreshNameplateAugmentation()
 	end)
 end
 
-function QuestTogether:RefreshNameplatesForQuestStateChange(reason)
-	if self:ShouldDeferNameplateMutation(reason) then
-		return false
-	end
+-- Mirrors Plater.UpdateAllPlates() (Plater.lua:6681-6692): refresh all visible plates
+-- against the current quest cache without rebuilding quest-log title inputs.
+function QuestTogether:RefreshVisibleNameplates(reason)
+	self:ClearNameplateResolvedQuestState()
+	self:RefreshNameplateAugmentation()
+	return true
+end
 
-	self.pendingNameplateRefreshAfterCombat = false
-	self.pendingNameplateRefreshAfterMapHidden = false
+function QuestTogether:RefreshNameplatesForQuestStateChange(reason)
 	self:RebuildNameplateQuestTitleCache()
-	self:ClearNameplateQuestObjectiveCache()
+	self:ClearNameplateResolvedQuestState()
 	self:RefreshNameplateAugmentation()
 	return true
 end
 
 function QuestTogether:ScheduleDeferredNameplateQuestStateRefresh(reason, delaySeconds)
-	if self.pendingDeferredNameplateQuestStateRefresh then
-		return
-	end
-
 	local delayFn = self.API and self.API.Delay
 	if type(delayFn) ~= "function" then
+		self.pendingDeferredNameplateQuestStateRefresh = false
 		self:RefreshNameplatesForQuestStateChange(reason)
 		return
 	end
 
+	self.deferredNameplateQuestStateRefreshGeneration = (self.deferredNameplateQuestStateRefreshGeneration or 0) + 1
+	local generation = self.deferredNameplateQuestStateRefreshGeneration
 	self.pendingDeferredNameplateQuestStateRefresh = true
-	delayFn(delaySeconds or 0, function()
+	delayFn(delaySeconds or PLATER_QUEST_STATE_REFRESH_DELAY_SECONDS, function()
+		if generation ~= QuestTogether.deferredNameplateQuestStateRefreshGeneration then
+			return
+		end
 		QuestTogether.pendingDeferredNameplateQuestStateRefresh = false
 		if not QuestTogether.isEnabled then
 			return
@@ -3298,40 +3232,35 @@ function QuestTogether:ScheduleDeferredNameplateQuestStateRefresh(reason, delayS
 	end)
 end
 
-function QuestTogether:ScheduleDeferredNameplateRefreshAfterMapHidden()
-	if self.nameplateMapVisibilityRetryPending then
-		return
+function QuestTogether:SchedulePlaterStartupNameplateRefreshes()
+	if not self.API or type(self.API.Delay) ~= "function" then
+		return false
 	end
 
-	local delayFn = self.API and self.API.Delay
-	if type(delayFn) ~= "function" then
-		return
-	end
-
-	self.nameplateMapVisibilityRetryPending = true
-	delayFn(0.2, function()
-		QuestTogether.nameplateMapVisibilityRetryPending = false
+	-- Mirrors Plater startup bootstrap in local retail Plater.lua:6357-6361:
+	-- queue QuestLogUpdated() after 4.1 seconds, which then waits the standard
+	-- 1-second quest-cache throttle, and separately trigger a full plate refresh
+	-- at 5.1 seconds after initialization.
+	self.API.Delay(PLATER_INITIAL_QUEST_LOG_UPDATED_DELAY_SECONDS, function()
 		if not QuestTogether.isEnabled then
 			return
 		end
-		if not QuestTogether.pendingNameplateRefreshAfterMapHidden then
-			return
-		end
-		if QuestTogether.API and QuestTogether.API.IsWorldMapVisible and QuestTogether.API.IsWorldMapVisible() then
-			QuestTogether:ScheduleDeferredNameplateRefreshAfterMapHidden()
-			return
-		end
-
-		QuestTogether.pendingNameplateRefreshAfterMapHidden = false
-		QuestTogether:RefreshNameplatesForQuestStateChange("WorldMapHidden")
+		QuestTogether:ScheduleDeferredNameplateQuestStateRefresh(
+			"EnableNameplateAugmentationStartup",
+			PLATER_QUEST_STATE_REFRESH_DELAY_SECONDS
+		)
 	end)
+	self.API.Delay(PLATER_INITIAL_FULL_REFRESH_DELAY_SECONDS, function()
+		if not QuestTogether.isEnabled then
+			return
+		end
+		QuestTogether:RefreshVisibleNameplates("EnableNameplateAugmentationStartupFullRefresh")
+	end)
+
+	return true
 end
 
 function QuestTogether:ScheduleFullNameplateRefresh(delaySeconds)
-	if self:ShouldDeferNameplateMutation("ScheduleFullNameplateRefresh") then
-		return
-	end
-
 	self.nameplateFullRefreshGeneration = (self.nameplateFullRefreshGeneration or 0) + 1
 	local generation = self.nameplateFullRefreshGeneration
 	local delayList = {
@@ -3350,11 +3279,8 @@ function QuestTogether:ScheduleFullNameplateRefresh(delaySeconds)
 			if not self.isEnabled then
 				return
 			end
-			if self:ShouldDeferNameplateMutation("ScheduleFullNameplateRefreshTick") then
-				return
-			end
 
-			self:RefreshNameplatesForQuestStateChange("ScheduleFullNameplateRefresh")
+			self:RefreshVisibleNameplates("ScheduleFullNameplateRefresh")
 		end)
 	end
 end
@@ -3370,7 +3296,6 @@ function QuestTogether:OnNameplateAdded(unitToken)
 	if self:IsNameplateAugmentationBlockedInCurrentContext() then
 		self.nameplateQuestStateByUnitToken[unitToken] = nil
 		self.nameplateQuestGuidByUnitToken[unitToken] = nil
-		self.nameplateTooltipGuidByUnitToken[unitToken] = nil
 		self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 		local namePlateFrameBase = self:GetAccessibleNameplateFrameForUnit(unitToken, false)
 		if namePlateFrameBase then
@@ -3381,12 +3306,12 @@ function QuestTogether:OnNameplateAdded(unitToken)
 		return
 	end
 
+	local namePlateFrameBase = self:GetAccessibleNameplateFrameForUnit(unitToken, false)
+
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
 	self.nameplateQuestGuidByUnitToken[unitToken] = nil
-	self.nameplateTooltipGuidByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRetryCountByUnitToken[unitToken] = nil
 
-	local namePlateFrameBase = self:GetAccessibleNameplateFrameForUnit(unitToken, false)
 	if namePlateFrameBase then
 		-- Nameplate frames are recycled. Clear any stale icon/tint immediately so visuals
 		-- from a previous unit cannot carry over while the deferred refresh resolves.
@@ -3403,7 +3328,6 @@ function QuestTogether:OnNameplateRemoved(unitToken)
 
 	self.nameplateQuestStateByUnitToken[unitToken] = nil
 	self.nameplateQuestGuidByUnitToken[unitToken] = nil
-	self.nameplateTooltipGuidByUnitToken[unitToken] = nil
 	self.nameplateRefreshPendingByUnitToken[unitToken] = nil
 	self.nameplateRefreshGenerationByUnitToken[unitToken] = nil
 	self.nameplateHealthTintRefreshPendingByUnitToken[unitToken] = nil
@@ -3469,12 +3393,10 @@ function QuestTogether:HandleNameplateEvent(eventName, ...)
 		self:OnNameplateAdded(...)
 	elseif eventName == "NAME_PLATE_UNIT_REMOVED" then
 		self:OnNameplateRemoved(...)
-	elseif eventName == "PLAYER_REGEN_ENABLED" then
-		if self.pendingNameplateRefreshAfterCombat then
-			self:Debug("Resuming deferred nameplate refresh after combat", "nameplate")
-			self.pendingNameplateRefreshAfterCombat = false
-			self:ScheduleFullNameplateRefresh(0.05)
-		end
+	elseif eventName == "PLAYER_REGEN_DISABLED" or eventName == "PLAYER_REGEN_ENABLED" then
+		-- Plater refreshes visible plates on both combat enter and leave
+		-- (Plater.lua:2319-2394). Mirror that instead of deferring combat updates.
+		self:ScheduleFullNameplateRefresh(0)
 	elseif
 			eventName == "QUEST_LOG_UPDATE"
 			or eventName == "PLAYER_ENTERING_WORLD"
@@ -3483,15 +3405,15 @@ function QuestTogether:HandleNameplateEvent(eventName, ...)
 			or eventName == "QUEST_ACCEPT_CONFIRM"
 			or eventName == "QUEST_COMPLETE"
 			or eventName == "QUEST_POI_UPDATE"
+			or eventName == "QUEST_QUERY_COMPLETE"
 			or eventName == "QUEST_DETAIL"
 			or eventName == "QUEST_FINISHED"
 			or eventName == "QUEST_GREETING"
 	then
-		if eventName == "QUEST_POI_UPDATE" then
-			self:ScheduleDeferredNameplateQuestStateRefresh(eventName, 0)
-		else
-			self:RefreshNameplatesForQuestStateChange(eventName)
-		end
+		-- Mirrors Plater.QuestLogUpdated() (Plater.lua:2428-2469, 11423-11427):
+		-- funnel quest-state events through a coalesced 1-second refresh so world-quest
+		-- cache inputs have time to populate before visible plates are re-evaluated.
+		self:ScheduleDeferredNameplateQuestStateRefresh(eventName, PLATER_QUEST_STATE_REFRESH_DELAY_SECONDS)
 	elseif eventName == "DISPLAY_SIZE_CHANGED" then
 		self:ScheduleFullNameplateRefresh(0.05)
 	elseif eventName == "CVAR_UPDATE" then
@@ -3514,10 +3436,9 @@ function QuestTogether:HandleNameplateEvent(eventName, ...)
 			self:ScheduleNameplateHealthTintRefresh(unitToken, nil, true)
 		end
 	elseif eventName == "UNIT_QUEST_LOG_CHANGED" then
-		local unitToken = ...
-		if unitToken == "player" then
-			self:RefreshNameplatesForQuestStateChange(eventName)
-		end
+		-- Plater feeds UNIT_QUEST_LOG_CHANGED through the same QuestLogUpdated() throttle
+		-- without filtering the token argument (Plater.lua:2468-2470).
+		self:ScheduleDeferredNameplateQuestStateRefresh(eventName, PLATER_QUEST_STATE_REFRESH_DELAY_SECONDS)
 	end
 end
 
@@ -3552,6 +3473,7 @@ function QuestTogether:EnableNameplateAugmentation()
 	RegisterNameplateEvent(self, "QUEST_ACCEPT_CONFIRM")
 	RegisterNameplateEvent(self, "QUEST_COMPLETE")
 	RegisterNameplateEvent(self, "QUEST_POI_UPDATE")
+	RegisterNameplateEvent(self, "QUEST_QUERY_COMPLETE")
 	RegisterNameplateEvent(self, "QUEST_DETAIL")
 	RegisterNameplateEvent(self, "QUEST_FINISHED")
 	RegisterNameplateEvent(self, "QUEST_GREETING")
@@ -3562,10 +3484,15 @@ function QuestTogether:EnableNameplateAugmentation()
 	RegisterNameplateEvent(self, "UNIT_THREAT_LIST_UPDATE")
 	RegisterNameplateEvent(self, "UNIT_THREAT_SITUATION_UPDATE")
 	RegisterNameplateEvent(self, "PLAYER_ENTERING_WORLD")
+	RegisterNameplateEvent(self, "PLAYER_REGEN_DISABLED")
 	RegisterNameplateEvent(self, "PLAYER_REGEN_ENABLED")
 	RegisterNameplateEvent(self, "DISPLAY_SIZE_CHANGED")
 	RegisterNameplateEvent(self, "CVAR_UPDATE")
-	self:RefreshNameplatesForQuestStateChange("EnableNameplateAugmentation")
+	self:ScheduleDeferredNameplateQuestStateRefresh(
+		"EnableNameplateAugmentation",
+		PLATER_QUEST_STATE_REFRESH_DELAY_SECONDS
+	)
+	self:SchedulePlaterStartupNameplateRefreshes()
 end
 
 function QuestTogether:DisableNameplateAugmentation()
@@ -3586,13 +3513,11 @@ function QuestTogether:DisableNameplateAugmentation()
 	-- Hide our icon overlays and clear cached quest objective state.
 	wipe(self.nameplateQuestStateByUnitToken)
 	wipe(self.nameplateQuestGuidByUnitToken)
-	wipe(self.nameplateTooltipGuidByUnitToken)
 	wipe(self.nameplateRefreshPendingByUnitToken)
 	wipe(self.nameplateRefreshGenerationByUnitToken)
 	wipe(self.nameplateHealthTintRefreshPendingByUnitToken)
-	self.pendingNameplateRefreshAfterCombat = false
-	self.pendingNameplateRefreshAfterMapHidden = false
-	self.nameplateMapVisibilityRetryPending = false
+	self.pendingDeferredNameplateQuestStateRefresh = false
+	self.deferredNameplateQuestStateRefreshGeneration = 0
 	self:ForEachVisibleNamePlate(function(frame)
 		self:HideNameplateIcon(frame)
 	end)
