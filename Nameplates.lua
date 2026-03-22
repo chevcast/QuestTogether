@@ -2983,42 +2983,38 @@ function QuestTogether:ScheduleNameplateRefresh(unitToken)
 		return
 	end
 
+	local delayFn = self.API and self.API.Delay
 	local generation = (self.nameplateRefreshGenerationByUnitToken[unitToken] or 0) + 1
 	self.nameplateRefreshGenerationByUnitToken[unitToken] = generation
 	self.nameplateRefreshPendingByUnitToken[unitToken] = true
 
-	-- Quest-related tooltip/API flags on fresh nameplates can lag behind the add event.
-	-- Run a short refresh burst so objective markers resolve once data catches up.
-	local refreshDelays = {
-		0,
-		0.05,
-		0.15,
-		0.35,
-		0.70,
-	}
-	local lastRefreshIndex = #refreshDelays
+	-- Mirrors Plater.ScheduleUpdateForNameplate() (local retail Plater.lua:1461-1481):
+	-- schedule one update for the unit instead of retry-bursting tooltip refreshes.
+	local function refreshScheduledNameplate()
+		if self.nameplateRefreshGenerationByUnitToken[unitToken] ~= generation then
+			return
+		end
+		self.nameplateRefreshPendingByUnitToken[unitToken] = nil
+		if not self.isEnabled then
+			return
+		end
 
-	for refreshIndex = 1, lastRefreshIndex do
-		local refreshDelay = refreshDelays[refreshIndex]
-		self.API.Delay(refreshDelay, function()
-			if self.nameplateRefreshGenerationByUnitToken[unitToken] ~= generation then
-				return
-			end
-			if refreshIndex == lastRefreshIndex then
-				self.nameplateRefreshPendingByUnitToken[unitToken] = nil
-			end
-			if not self.isEnabled then
-				return
-			end
+		local namePlateFrameBase = self:GetAccessibleNameplateFrameForUnit(unitToken, true)
+		if not namePlateFrameBase then
+			return
+		end
 
-			local namePlateFrameBase = self:GetAccessibleNameplateFrameForUnit(unitToken, true)
-			if not namePlateFrameBase then
-				return
-			end
-
-			self:RefreshNameplateIcon(namePlateFrameBase)
-		end)
+		self:RefreshNameplateIcon(namePlateFrameBase)
 	end
+
+	if type(delayFn) ~= "function" then
+		refreshScheduledNameplate()
+		return
+	end
+
+	delayFn(0, function()
+		refreshScheduledNameplate()
+	end)
 end
 
 function QuestTogether:RefreshNameplateIcon(namePlateFrameBase)
@@ -3237,9 +3233,9 @@ function QuestTogether:SchedulePlaterStartupNameplateRefreshes()
 		return false
 	end
 
-	-- Mirrors Plater startup bootstrap in local retail Plater.lua:6357-6361:
+	-- Mirrors Plater startup bootstrap in local retail Plater.lua:6357-6362:
 	-- queue QuestLogUpdated() after 4.1 seconds, which then waits the standard
-	-- 1-second quest-cache throttle, and separately trigger a full plate refresh
+	-- 1-second quest-cache throttle, and separately trigger FullRefreshAllPlates()
 	-- at 5.1 seconds after initialization.
 	self.API.Delay(PLATER_INITIAL_QUEST_LOG_UPDATED_DELAY_SECONDS, function()
 		if not QuestTogether.isEnabled then
@@ -3254,7 +3250,27 @@ function QuestTogether:SchedulePlaterStartupNameplateRefreshes()
 		if not QuestTogether.isEnabled then
 			return
 		end
-		QuestTogether:RefreshVisibleNameplates("EnableNameplateAugmentationStartupFullRefresh")
+		QuestTogether:FullRefreshVisibleNameplates("EnableNameplateAugmentationStartupFullRefresh")
+	end)
+
+	return true
+end
+
+-- Mirrors the scheduled-per-plate pass in Plater.FullRefreshAllPlates()
+-- (local retail Plater.lua:6697-6701) rather than running a direct visible refresh.
+function QuestTogether:FullRefreshVisibleNameplates(reason)
+	self:ClearNameplateResolvedQuestState()
+	self:ForEachVisibleNamePlate(function(frame)
+		if not frame or not frame.UnitFrame then
+			return
+		end
+
+		local unitToken = ResolveNameplateUnitToken(frame, frame.UnitFrame)
+		if not self:IsNameplateUnitToken(unitToken) then
+			return
+		end
+
+		self:ScheduleNameplateRefresh(unitToken)
 	end)
 
 	return true
@@ -3263,26 +3279,37 @@ end
 function QuestTogether:ScheduleFullNameplateRefresh(delaySeconds)
 	self.nameplateFullRefreshGeneration = (self.nameplateFullRefreshGeneration or 0) + 1
 	local generation = self.nameplateFullRefreshGeneration
-	local delayList = {
-		delaySeconds or 0,
-		0.10,
-		0.25,
-		0.50,
-	}
-
-	for index = 1, #delayList do
-		local scheduledDelay = delayList[index]
-		self.API.Delay(scheduledDelay, function()
-			if generation ~= self.nameplateFullRefreshGeneration then
-				return
-			end
-			if not self.isEnabled then
-				return
-			end
-
+	local delayFn = self.API and self.API.Delay
+	local scheduledDelay = SafeUiNumber(delaySeconds, 0) or 0
+	if type(delayFn) ~= "function" then
+		if self.isEnabled then
 			self:RefreshVisibleNameplates("ScheduleFullNameplateRefresh")
-		end)
+		end
+		return
 	end
+
+	if scheduledDelay <= 0 then
+		if generation ~= self.nameplateFullRefreshGeneration then
+			return
+		end
+		if not self.isEnabled then
+			return
+		end
+
+		self:RefreshVisibleNameplates("ScheduleFullNameplateRefresh")
+		return
+	end
+
+	delayFn(scheduledDelay, function()
+		if generation ~= self.nameplateFullRefreshGeneration then
+			return
+		end
+		if not self.isEnabled then
+			return
+		end
+
+		self:RefreshVisibleNameplates("ScheduleFullNameplateRefresh")
+	end)
 end
 
 function QuestTogether:OnNameplateAdded(unitToken)
@@ -3314,8 +3341,10 @@ function QuestTogether:OnNameplateAdded(unitToken)
 
 	if namePlateFrameBase then
 		-- Nameplate frames are recycled. Clear any stale icon/tint immediately so visuals
-		-- from a previous unit cannot carry over while the deferred refresh resolves.
+		-- from a previous unit cannot carry over before the live refresh resolves.
 		self:HideNameplateIcon(namePlateFrameBase)
+		self:RefreshNameplateIcon(namePlateFrameBase)
+		return
 	end
 
 	self:ScheduleNameplateRefresh(unitToken)
@@ -3399,7 +3428,6 @@ function QuestTogether:HandleNameplateEvent(eventName, ...)
 		self:ScheduleFullNameplateRefresh(0)
 	elseif
 			eventName == "QUEST_LOG_UPDATE"
-			or eventName == "PLAYER_ENTERING_WORLD"
 			or eventName == "QUEST_REMOVED"
 			or eventName == "QUEST_ACCEPTED"
 			or eventName == "QUEST_ACCEPT_CONFIRM"
@@ -3483,7 +3511,6 @@ function QuestTogether:EnableNameplateAugmentation()
 	RegisterNameplateEvent(self, "UNIT_CONNECTION")
 	RegisterNameplateEvent(self, "UNIT_THREAT_LIST_UPDATE")
 	RegisterNameplateEvent(self, "UNIT_THREAT_SITUATION_UPDATE")
-	RegisterNameplateEvent(self, "PLAYER_ENTERING_WORLD")
 	RegisterNameplateEvent(self, "PLAYER_REGEN_DISABLED")
 	RegisterNameplateEvent(self, "PLAYER_REGEN_ENABLED")
 	RegisterNameplateEvent(self, "DISPLAY_SIZE_CHANGED")

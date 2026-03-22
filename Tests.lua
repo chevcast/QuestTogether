@@ -4335,12 +4335,12 @@ QuestTogether:RegisterTest("scheduled nameplate refresh runs per-unit mutation d
 		end)
 	end)
 
-	AssertEquals(refreshCalls, 5)
+	AssertEquals(refreshCalls, 1)
 end)
 
-QuestTogether:RegisterTest("combat nameplate add clears stale visuals and schedules a live refresh", function()
+QuestTogether:RegisterTest("combat nameplate add clears stale visuals and refreshes the live plate like Plater", function()
 	local hiddenFrame = nil
-	local scheduledUnitToken = nil
+	local refreshedFrame = nil
 	local unitFrame = {
 		unit = "nameplate12",
 		healthBar = {},
@@ -4373,8 +4373,8 @@ QuestTogether:RegisterTest("combat nameplate add clears stale visuals and schedu
 			WithPatchedMethod(QuestTogether, "HideNameplateIcon", function(_, frameBase)
 				hiddenFrame = frameBase
 			end, function()
-				WithPatchedMethod(QuestTogether, "ScheduleNameplateRefresh", function(_, unitToken)
-					scheduledUnitToken = unitToken
+				WithPatchedMethod(QuestTogether, "RefreshNameplateIcon", function(_, frameBase)
+					refreshedFrame = frameBase
 				end, function()
 					QuestTogether:OnNameplateAdded("nameplate12")
 				end)
@@ -4386,7 +4386,7 @@ QuestTogether:RegisterTest("combat nameplate add clears stale visuals and schedu
 	AssertEquals(QuestTogether.nameplateQuestGuidByUnitToken["nameplate12"], nil)
 	AssertEquals(QuestTogether.nameplateHealthTintRetryCountByUnitToken["nameplate12"], nil)
 	AssertEquals(hiddenFrame, namePlateFrameBase)
-	AssertEquals(scheduledUnitToken, "nameplate12")
+	AssertEquals(refreshedFrame, namePlateFrameBase)
 end)
 
 QuestTogether:RegisterTest("combat nameplate remove clears cached quest state", function()
@@ -4536,11 +4536,55 @@ QuestTogether:RegisterTest("nameplate quest state refresh coalesces like Plater 
 	end)
 end)
 
+QuestTogether:RegisterTest("player entering world does not use Plater quest log throttle", function()
+	local scheduledReason = nil
+
+	WithPatchedMethod(QuestTogether, "ScheduleDeferredNameplateQuestStateRefresh", function(_, reason)
+		scheduledReason = reason
+	end, function()
+		QuestTogether:HandleNameplateEvent("PLAYER_ENTERING_WORLD")
+	end)
+
+	AssertEquals(scheduledReason, nil)
+end)
+
+QuestTogether:RegisterTest("Plater startup full refresh schedules visible nameplates individually", function()
+	local scheduledUnitTokens = {}
+
+	WithPatchedMethod(QuestTogether, "ClearNameplateResolvedQuestState", function() end, function()
+		WithPatchedMethod(QuestTogether, "ForEachVisibleNamePlate", function(_, callback)
+			callback({
+				UnitFrame = {
+					namePlateUnitToken = "nameplate21",
+				},
+			})
+			callback({
+				GetUnit = function()
+					return "nameplate22"
+				end,
+				UnitFrame = {
+					healthBar = {},
+				},
+			})
+		end, function()
+			WithPatchedMethod(QuestTogether, "ScheduleNameplateRefresh", function(_, unitToken)
+				scheduledUnitTokens[#scheduledUnitTokens + 1] = unitToken
+			end, function()
+				AssertTrue(QuestTogether:FullRefreshVisibleNameplates("EnableNameplateAugmentationStartupFullRefresh"))
+			end)
+		end)
+	end)
+
+	AssertEquals(scheduledUnitTokens[1], "nameplate21")
+	AssertEquals(scheduledUnitTokens[2], "nameplate22")
+	AssertEquals(#scheduledUnitTokens, 2)
+end)
+
 QuestTogether:RegisterTest("nameplate augmentation schedules Plater startup refresh timing", function()
 	local scheduled = {}
 	local deferredReason = nil
 	local deferredDelay = nil
-	local visibleRefreshReason = nil
+	local fullRefreshReason = nil
 
 	QuestTogether.isEnabled = true
 	QuestTogether.API = CreateApiWithOverrides({
@@ -4556,8 +4600,8 @@ QuestTogether:RegisterTest("nameplate augmentation schedules Plater startup refr
 		deferredReason = reason
 		deferredDelay = delaySeconds
 	end, function()
-		WithPatchedMethod(QuestTogether, "RefreshVisibleNameplates", function(_, reason)
-			visibleRefreshReason = reason
+		WithPatchedMethod(QuestTogether, "FullRefreshVisibleNameplates", function(_, reason)
+			fullRefreshReason = reason
 		end, function()
 			AssertTrue(QuestTogether:SchedulePlaterStartupNameplateRefreshes())
 			AssertEquals(#scheduled, 2)
@@ -4569,9 +4613,55 @@ QuestTogether:RegisterTest("nameplate augmentation schedules Plater startup refr
 			AssertEquals(deferredDelay, 1)
 
 			scheduled[2].callback()
-			AssertEquals(visibleRefreshReason, "EnableNameplateAugmentationStartupFullRefresh")
+			AssertEquals(fullRefreshReason, "EnableNameplateAugmentationStartupFullRefresh")
 		end)
 	end)
+end)
+
+QuestTogether:RegisterTest("scheduled full nameplate refresh runs once like Plater", function()
+	local scheduledCallbacks = {}
+	local refreshCalls = 0
+
+	QuestTogether.isEnabled = true
+	QuestTogether.nameplateFullRefreshGeneration = 0
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(seconds, callback)
+			AssertEquals(seconds, 0.05)
+			scheduledCallbacks[#scheduledCallbacks + 1] = callback
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshVisibleNameplates", function(_, reason)
+		refreshCalls = refreshCalls + 1
+		AssertEquals(reason, "ScheduleFullNameplateRefresh")
+	end, function()
+		QuestTogether:ScheduleFullNameplateRefresh(0.05)
+	end)
+
+	AssertEquals(#scheduledCallbacks, 1)
+	scheduledCallbacks[1]()
+	AssertEquals(refreshCalls, 1)
+end)
+
+QuestTogether:RegisterTest("zero-delay full nameplate refresh runs immediately like Plater combat refresh", function()
+	local refreshCalls = 0
+
+	QuestTogether.isEnabled = true
+	QuestTogether.nameplateFullRefreshGeneration = 0
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function()
+			error("zero-delay full refresh should not defer through Delay")
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "RefreshVisibleNameplates", function(_, reason)
+		refreshCalls = refreshCalls + 1
+		AssertEquals(reason, "ScheduleFullNameplateRefresh")
+	end, function()
+		QuestTogether:ScheduleFullNameplateRefresh(0)
+	end)
+
+	AssertEquals(refreshCalls, 1)
 end)
 
 QuestTogether:RegisterTest("unit quest log changed schedules delayed nameplate refresh for any token", function()
