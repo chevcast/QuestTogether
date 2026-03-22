@@ -2039,12 +2039,10 @@ function QuestTogether:ShouldApplyResolvedQuestVisualState(unitToken, unitFrame,
 		return false
 	end
 
-	-- Preserve gray dead/disconnected/tap-denied states from Blizzard.
-	if
-		not self:IsNameplateUnitConnected(resolvedUnitToken)
-		or self:IsNameplateUnitDead(resolvedUnitToken)
-		or self:IsNameplateUnitTapDenied(resolvedUnitToken)
-	then
+	-- Plater's quest-color path only suppresses tap-denied hostile units
+	-- (local retail Plater.lua:8993-9004). It does not gate quest visuals on
+	-- dead or disconnected state, so keep the visual decision aligned here.
+	if self:IsNameplateUnitTapDenied(resolvedUnitToken) then
 		return false
 	end
 
@@ -3256,21 +3254,20 @@ function QuestTogether:SchedulePlaterStartupNameplateRefreshes()
 	return true
 end
 
--- Mirrors the scheduled-per-plate pass in Plater.FullRefreshAllPlates()
--- (local retail Plater.lua:6697-6701) rather than running a direct visible refresh.
+-- Mirrors the per-plate pass in Plater.FullRefreshAllPlates()
+-- (local retail Plater.lua:6697-6701) rather than routing through UpdateAllPlates().
 function QuestTogether:FullRefreshVisibleNameplates(reason)
+	if self:IsNameplateAugmentationBlockedInCurrentContext() then
+		return self:RefreshVisibleNameplates(reason)
+	end
+
 	self:ClearNameplateResolvedQuestState()
 	self:ForEachVisibleNamePlate(function(frame)
 		if not frame or not frame.UnitFrame then
 			return
 		end
 
-		local unitToken = ResolveNameplateUnitToken(frame, frame.UnitFrame)
-		if not self:IsNameplateUnitToken(unitToken) then
-			return
-		end
-
-		self:ScheduleNameplateRefresh(unitToken)
+		self:RefreshNameplateIcon(frame)
 	end)
 
 	return true
@@ -3422,6 +3419,39 @@ function QuestTogether:HandleNameplateEvent(eventName, ...)
 		self:OnNameplateAdded(...)
 	elseif eventName == "NAME_PLATE_UNIT_REMOVED" then
 		self:OnNameplateRemoved(...)
+	elseif eventName == "PLAYER_ENTERING_WORLD" then
+		-- Plater routes PLAYER_ENTERING_WORLD through a delayed ZONE_CHANGED_NEW_AREA
+		-- pass (local retail Plater.lua:2581-2586). Mirror that with a delayed
+		-- visible-plate refresh instead of treating it as a quest-log event.
+		local delayFn = self.API and self.API.Delay
+		if type(delayFn) == "function" then
+			delayFn(1, function()
+				if QuestTogether.isEnabled then
+					QuestTogether:ScheduleFullNameplateRefresh(0)
+				end
+			end)
+		elseif self.isEnabled then
+			self:ScheduleFullNameplateRefresh(0)
+		end
+	elseif
+			eventName == "ZONE_CHANGED_NEW_AREA"
+			or eventName == "ZONE_CHANGED_INDOORS"
+			or eventName == "ZONE_CHANGED"
+	then
+		-- Plater refreshes all visible plates from ZONE_CHANGED_NEW_AREA and routes
+		-- the other zone events into the same handler (local retail Plater.lua:2537-2578).
+		if self.API and self.API.InCombatLockdown and self.API.InCombatLockdown() then
+			local delayFn = self.API and self.API.Delay
+			if type(delayFn) == "function" then
+				delayFn(1, function()
+					if QuestTogether.isEnabled then
+						QuestTogether:ScheduleFullNameplateRefresh(0)
+					end
+				end)
+				return
+			end
+		end
+		self:ScheduleFullNameplateRefresh(0)
 	elseif eventName == "PLAYER_REGEN_DISABLED" or eventName == "PLAYER_REGEN_ENABLED" then
 		-- Plater refreshes visible plates on both combat enter and leave
 		-- (Plater.lua:2319-2394). Mirror that instead of deferring combat updates.
@@ -3511,6 +3541,10 @@ function QuestTogether:EnableNameplateAugmentation()
 	RegisterNameplateEvent(self, "UNIT_CONNECTION")
 	RegisterNameplateEvent(self, "UNIT_THREAT_LIST_UPDATE")
 	RegisterNameplateEvent(self, "UNIT_THREAT_SITUATION_UPDATE")
+	RegisterNameplateEvent(self, "PLAYER_ENTERING_WORLD")
+	RegisterNameplateEvent(self, "ZONE_CHANGED_NEW_AREA")
+	RegisterNameplateEvent(self, "ZONE_CHANGED_INDOORS")
+	RegisterNameplateEvent(self, "ZONE_CHANGED")
 	RegisterNameplateEvent(self, "PLAYER_REGEN_DISABLED")
 	RegisterNameplateEvent(self, "PLAYER_REGEN_ENABLED")
 	RegisterNameplateEvent(self, "DISPLAY_SIZE_CHANGED")

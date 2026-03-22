@@ -4178,6 +4178,46 @@ QuestTogether:RegisterTest("nameplate health tint no longer requires attackable 
 	end)
 end)
 
+QuestTogether:RegisterTest("quest nameplate visuals no longer suppress dead or disconnected units", function()
+	QuestTogether.isEnabled = true
+	QuestTogether.db.profile.nameplateQuestIconEnabled = true
+	QuestTogether.db.profile.nameplateQuestHealthColorEnabled = true
+	local unitFrame = {
+		namePlateUnitToken = "nameplate1",
+		healthBar = {},
+	}
+
+	WithPatchedMethod(QuestTogether, "IsNameplateAugmentationBlockedInCurrentContext", function()
+		return false
+	end, function()
+		WithPatchedMethod(QuestTogether, "DoesNameplateUnitExist", function(_, unitToken)
+			AssertEquals(unitToken, "nameplate1")
+			return true
+		end, function()
+			WithPatchedMethod(QuestTogether, "IsNameplateUnitPlayer", function(_, unitToken)
+				AssertEquals(unitToken, "nameplate1")
+				return false
+			end, function()
+				WithPatchedMethod(QuestTogether, "IsNameplateUnitConnected", function()
+					error("dead/disconnected gating should not run for quest visuals")
+				end, function()
+					WithPatchedMethod(QuestTogether, "IsNameplateUnitDead", function()
+						error("dead/disconnected gating should not run for quest visuals")
+					end, function()
+						WithPatchedMethod(QuestTogether, "IsNameplateUnitTapDenied", function(_, unitToken)
+							AssertEquals(unitToken, "nameplate1")
+							return false
+						end, function()
+							AssertTrue(QuestTogether:ShouldShowQuestNameplateIconForResolvedState(nil, unitFrame, true))
+							AssertTrue(QuestTogether:ShouldApplyQuestHealthTint(unitFrame, true))
+						end)
+					end)
+				end)
+			end)
+		end)
+	end)
+end)
+
 QuestTogether:RegisterTest("blocked-context nameplate add clears recycled quest visuals immediately", function()
 	local hiddenFrame = nil
 	local scheduledUnitToken = nil
@@ -4548,36 +4588,92 @@ QuestTogether:RegisterTest("player entering world does not use Plater quest log 
 	AssertEquals(scheduledReason, nil)
 end)
 
-QuestTogether:RegisterTest("Plater startup full refresh schedules visible nameplates individually", function()
-	local scheduledUnitTokens = {}
+QuestTogether:RegisterTest("player entering world schedules delayed nameplate refresh like Plater", function()
+	local scheduledSeconds = nil
+	local scheduledCallback = nil
+	local scheduledRefreshDelay = nil
+
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		Delay = function(seconds, callback)
+			scheduledSeconds = seconds
+			scheduledCallback = callback
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "ScheduleFullNameplateRefresh", function(_, delaySeconds)
+		scheduledRefreshDelay = delaySeconds
+	end, function()
+		QuestTogether:HandleNameplateEvent("PLAYER_ENTERING_WORLD")
+	end)
+
+	AssertEquals(scheduledSeconds, 1)
+	AssertTrue(type(scheduledCallback) == "function")
+	scheduledCallback()
+	AssertEquals(scheduledRefreshDelay, 0)
+end)
+
+QuestTogether:RegisterTest("zone changed new area retries after combat like Plater", function()
+	local scheduledSeconds = nil
+	local scheduledCallback = nil
+	local scheduledRefreshDelay = nil
+
+	QuestTogether.isEnabled = true
+	QuestTogether.API = CreateApiWithOverrides({
+		InCombatLockdown = function()
+			return true
+		end,
+		Delay = function(seconds, callback)
+			scheduledSeconds = seconds
+			scheduledCallback = callback
+		end,
+	})
+
+	WithPatchedMethod(QuestTogether, "ScheduleFullNameplateRefresh", function(_, delaySeconds)
+		scheduledRefreshDelay = delaySeconds
+	end, function()
+		QuestTogether:HandleNameplateEvent("ZONE_CHANGED_NEW_AREA")
+	end)
+
+	AssertEquals(scheduledSeconds, 1)
+	AssertTrue(type(scheduledCallback) == "function")
+	AssertEquals(scheduledRefreshDelay, nil)
+	scheduledCallback()
+	AssertEquals(scheduledRefreshDelay, 0)
+end)
+
+QuestTogether:RegisterTest("Plater startup full refresh refreshes visible nameplates directly", function()
+	local refreshedFrames = {}
 
 	WithPatchedMethod(QuestTogether, "ClearNameplateResolvedQuestState", function() end, function()
 		WithPatchedMethod(QuestTogether, "ForEachVisibleNamePlate", function(_, callback)
-			callback({
+			local frameOne = {
 				UnitFrame = {
 					namePlateUnitToken = "nameplate21",
 				},
-			})
-			callback({
+			}
+			local frameTwo = {
 				GetUnit = function()
 					return "nameplate22"
 				end,
 				UnitFrame = {
 					healthBar = {},
 				},
-			})
+			}
+			callback(frameOne)
+			callback(frameTwo)
 		end, function()
-			WithPatchedMethod(QuestTogether, "ScheduleNameplateRefresh", function(_, unitToken)
-				scheduledUnitTokens[#scheduledUnitTokens + 1] = unitToken
+			WithPatchedMethod(QuestTogether, "RefreshNameplateIcon", function(_, frame)
+				refreshedFrames[#refreshedFrames + 1] = frame
 			end, function()
 				AssertTrue(QuestTogether:FullRefreshVisibleNameplates("EnableNameplateAugmentationStartupFullRefresh"))
 			end)
 		end)
 	end)
 
-	AssertEquals(scheduledUnitTokens[1], "nameplate21")
-	AssertEquals(scheduledUnitTokens[2], "nameplate22")
-	AssertEquals(#scheduledUnitTokens, 2)
+	AssertEquals(refreshedFrames[1].UnitFrame.namePlateUnitToken, "nameplate21")
+	AssertEquals(refreshedFrames[2].GetUnit(), "nameplate22")
+	AssertEquals(#refreshedFrames, 2)
 end)
 
 QuestTogether:RegisterTest("nameplate augmentation schedules Plater startup refresh timing", function()
