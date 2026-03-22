@@ -115,12 +115,13 @@ QuestTogether.DEFAULTS = {
 		announceBonusObjectiveAreaLeave = true,
 		announceBonusObjectiveProgress = true,
 		announceBonusObjectiveCompleted = true,
-		showChatBubbles = true,
-		hideMyOwnChatBubbles = false,
-		showChatLogs = true,
-		chatLogDestination = "main",
-		showProgressFor = "party_nearby",
-		devLogAllAnnouncements = false,
+			showChatBubbles = true,
+			hideMyOwnChatBubbles = false,
+			showChatLogs = true,
+			chatLogDestination = "main",
+			mirrorChatLogsToMainChat = false,
+			showProgressFor = "party_nearby",
+			devLogAllAnnouncements = false,
 		chatBubbleSize = 100,
 		chatBubbleDuration = 3,
 		debugMode = false,
@@ -2035,6 +2036,14 @@ function QuestTogether:PrintChatLogSystemMessage(message)
 	self:PrintChatLogRaw("|cff33ff99QuestTogether|r: " .. self:SafeToString(message, ""))
 end
 
+function QuestTogether:ShouldMirrorChatLogsToMainChat()
+	if not self.db or not self.db.profile or self.db.profile.mirrorChatLogsToMainChat ~= true then
+		return false
+	end
+
+	return self:GetResolvedChatLogDestination() == "separate"
+end
+
 function QuestTogether:GetMainChatFrame()
 	return DEFAULT_CHAT_FRAME
 end
@@ -2405,10 +2414,24 @@ function QuestTogether:GetChatLogFrame()
 	return DEFAULT_CHAT_FRAME
 end
 
+function QuestTogether:TryAddMessageToConfiguredChatLogFrames(message)
+	local text = self:SafeToString(message, "")
+	local primaryFrame = self:GetChatLogFrame()
+	local wroteMessage = self:TryAddMessageToChatFrame(primaryFrame, text)
+
+	if self:ShouldMirrorChatLogsToMainChat() then
+		local mainChatFrame = self:GetMainChatFrame()
+		if mainChatFrame and mainChatFrame ~= primaryFrame and self:TryAddMessageToChatFrame(mainChatFrame, text) then
+			wroteMessage = true
+		end
+	end
+
+	return wroteMessage
+end
+
 function QuestTogether:PrintChatLogRaw(message)
-	local text = tostring(message)
-	local chatFrame = self:GetChatLogFrame()
-	if not self:TryAddMessageToChatFrame(chatFrame, text) then
+	local text = self:SafeToString(message, "")
+	if not self:TryAddMessageToConfiguredChatLogFrames(text) then
 		self:PrintRaw(text)
 	end
 end
@@ -3668,6 +3691,9 @@ function QuestTogether:NormalizeAnnouncementDisplayOptions()
 	if not self:IsChatLogDestination(profile.chatLogDestination) then
 		profile.chatLogDestination = self.DEFAULTS.profile.chatLogDestination
 	end
+	if profile.mirrorChatLogsToMainChat == nil then
+		profile.mirrorChatLogsToMainChat = self.DEFAULTS.profile.mirrorChatLogsToMainChat
+	end
 	if not self:IsShowProgressFor(profile.showProgressFor) then
 		profile.showProgressFor = self.DEFAULTS.profile.showProgressFor
 	end
@@ -3729,7 +3755,13 @@ function QuestTogether:SetOption(key, value)
 	if key == "nameplateQuestIconStyle" then
 		self:NormalizeNameplateOptions()
 	end
-	if key == "chatLogDestination" or key == "showProgressFor" or key == "chatBubbleSize" or key == "chatBubbleDuration" then
+	if
+		key == "chatLogDestination"
+		or key == "mirrorChatLogsToMainChat"
+		or key == "showProgressFor"
+		or key == "chatBubbleSize"
+		or key == "chatBubbleDuration"
+	then
 		self:NormalizeAnnouncementDisplayOptions()
 	end
 	if key == "chatLogDestination" and value == "separate" then

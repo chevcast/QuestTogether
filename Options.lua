@@ -451,6 +451,7 @@ local CHECKBOX_OPTION_KEYS = {
 	"showChatBubbles",
 	"hideMyOwnChatBubbles",
 	"showChatLogs",
+	"mirrorChatLogsToMainChat",
 	"nameplateQuestIconEnabled",
 	"nameplateQuestHealthColorEnabled",
 	"emoteOnQuestCompletion",
@@ -687,6 +688,9 @@ function QuestTogether:RefreshHomeWindow()
 	local showProgressForLabel = self:GetShowProgressForLabel(self:GetOption("showProgressFor"))
 	local chatLogsEnabled = self:GetOption("showChatLogs") and "On" or "Off"
 	local chatLogDestination = self:GetChatLogDestinationLabel(self:GetOption("chatLogDestination"))
+	if self:GetOption("chatLogDestination") == "separate" and self:GetOption("mirrorChatLogsToMainChat") == true then
+		chatLogDestination = chatLogDestination .. " + Main Chat"
+	end
 	local chatBubblesEnabled = self:GetOption("showChatBubbles") and "On" or "Off"
 	local questIconEnabled = self:GetOption("nameplateQuestIconEnabled") and "On" or "Off"
 	local questIconStyle = self:GetNameplateQuestIconStyleLabel(self:GetNameplateQuestIconStyle())
@@ -752,6 +756,7 @@ function QuestTogether:RefreshWhereToAnnounceWindow()
 	end
 
 	local showChatLogControls = self:GetOption("showChatLogs")
+	local showMirrorChatLogControl = showChatLogControls and self:GetOption("chatLogDestination") == "separate"
 	if controls.chatLogDestinationDropdown then
 		if UIDropDownMenu_EnableDropDown and UIDropDownMenu_DisableDropDown then
 			if showChatLogControls then
@@ -763,6 +768,15 @@ function QuestTogether:RefreshWhereToAnnounceWindow()
 		controls.chatLogDestinationDropdown:SetAlpha(showChatLogControls and 1 or 0.5)
 		if controls.chatLogDestinationDropdown.title then
 			controls.chatLogDestinationDropdown.title:SetAlpha(showChatLogControls and 1 or 0.5)
+		end
+	end
+	if controls.mirrorChatLogsToMainChat then
+		if controls.mirrorChatLogsToMainChat.SetEnabled then
+			controls.mirrorChatLogsToMainChat:SetEnabled(showMirrorChatLogControl)
+		end
+		controls.mirrorChatLogsToMainChat:SetAlpha(showMirrorChatLogControl and 1 or 0.5)
+		if controls.mirrorChatLogsToMainChat.Label then
+			controls.mirrorChatLogsToMainChat.Label:SetAlpha(showMirrorChatLogControl and 1 or 0.5)
 		end
 	end
 end
@@ -1239,10 +1253,18 @@ function QuestTogether:InitializeWhereToAnnounceWindow(parentCategory)
 		-106
 	)
 	local chatLogDestinationDropdown = CreateChatLogDestinationDropdown(frame, 330, -106)
+	local mirrorChatLogsToMainChat = CreateCheckbox(
+		frame,
+		"mirrorChatLogsToMainChat",
+		"Also Print to Main Chat",
+		"When using the separate QuestTogether chat tab, also print each QuestTogether log line to your main chat window.",
+		36,
+		-152
+	)
 	local showProgressForDropdown = CreateShowProgressForDropdown(frame, 330, -152)
 
 	local bubbleHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	bubbleHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -196)
+	bubbleHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -228)
 	bubbleHeader:SetText("Chat Bubbles")
 
 	local showChatBubbles = CreateCheckbox(
@@ -1251,7 +1273,7 @@ function QuestTogether:InitializeWhereToAnnounceWindow(parentCategory)
 		"Show Chat Bubbles",
 		"Display QuestTogether bubbles over nearby players and on your personal bubble anchor.",
 		16,
-		-220
+		-252
 	)
 	local hideMyOwnChatBubbles = CreateCheckbox(
 		frame,
@@ -1259,12 +1281,12 @@ function QuestTogether:InitializeWhereToAnnounceWindow(parentCategory)
 		"Hide My Own Chat Bubbles",
 		"If enabled, your client still sends local progress to others but does not show your own QuestTogether bubbles.",
 		36,
-		-248
+		-280
 	)
 
 	local openHudEditMode = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	openHudEditMode:SetSize(180, 24)
-	openHudEditMode:SetPoint("TOPLEFT", frame, "TOPLEFT", 36, -280)
+	openHudEditMode:SetPoint("TOPLEFT", frame, "TOPLEFT", 36, -312)
 	openHudEditMode:SetText("Open HUD Edit Mode")
 	openHudEditMode:SetScript("OnClick", function()
 		QuestTogether:Debug("Open HUD Edit Mode button clicked", "options")
@@ -1274,7 +1296,7 @@ function QuestTogether:InitializeWhereToAnnounceWindow(parentCategory)
 	end)
 
 	local personalBubbleEditHint = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	personalBubbleEditHint:SetPoint("TOPLEFT", frame, "TOPLEFT", 36, -312)
+	personalBubbleEditHint:SetPoint("TOPLEFT", frame, "TOPLEFT", 36, -344)
 	personalBubbleEditHint:SetJustifyH("LEFT")
 	personalBubbleEditHint:SetWidth(560)
 	personalBubbleEditHint:SetText(
@@ -1283,10 +1305,11 @@ function QuestTogether:InitializeWhereToAnnounceWindow(parentCategory)
 
 	self.whereToAnnounceControls = {
 		showChatBubbles = showChatBubbles,
-		hideMyOwnChatBubbles = hideMyOwnChatBubbles,
-		showChatLogs = showChatLogs,
-		chatLogDestinationDropdown = chatLogDestinationDropdown,
-		showProgressForDropdown = showProgressForDropdown,
+			hideMyOwnChatBubbles = hideMyOwnChatBubbles,
+			showChatLogs = showChatLogs,
+			chatLogDestinationDropdown = chatLogDestinationDropdown,
+			mirrorChatLogsToMainChat = mirrorChatLogsToMainChat,
+			showProgressForDropdown = showProgressForDropdown,
 		openHudEditMode = openHudEditMode,
 		personalBubbleEditHint = personalBubbleEditHint,
 	}
